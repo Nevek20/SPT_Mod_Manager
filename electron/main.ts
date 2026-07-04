@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from "electron";
 import path from "path";
 import fs from "fs";
 import Store from "electron-store";
@@ -30,6 +30,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

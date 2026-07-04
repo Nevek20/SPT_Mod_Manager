@@ -104,25 +104,6 @@ header {
   gap: 8px;
 }
 
-.status-bar {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  padding: 8px 12px;
-  border-radius: 4px;
-  margin-bottom: 16px;
-  font-size: 13px;
-}
-
-.status-bar.status-ok {
-  border-color: #3f9d5c;
-  color: #7fd99a;
-}
-
-.status-bar.status-error {
-  border-color: var(--danger);
-  color: #e79999;
-}
-
 .search-bar {
   width: 100%;
   background: var(--bg-panel);
@@ -263,6 +244,90 @@ header {
   margin: 0 4px;
 }
 
+.summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.summary-item strong {
+  color: var(--text);
+}
+
+.summary-active strong {
+  color: #7fd99a;
+}
+
+.summary-disabled strong {
+  color: #e79999;
+}
+
+.summary-valid {
+  color: #7fd99a;
+  margin-left: auto;
+}
+
+.no-results {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.toast-stack {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+}
+
+.toast {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  animation: toast-in 0.2s ease-out;
+}
+
+.toast-ok {
+  border-color: #3f9d5c;
+  color: #7fd99a;
+}
+
+.toast-error {
+  border-color: var(--danger);
+  color: #e79999;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .sort-hint {
   font-size: 12px;
   color: var(--text-dim);
@@ -307,11 +372,6 @@ header {
 .action-menu button:hover {
   background: var(--bg);
   border-color: transparent;
-}
-
-.status-message {
-  color: var(--text-dim);
-  font-size: 13px;
 }
 
 section {
@@ -377,11 +437,6 @@ h2 {
   border: 1px solid var(--accent);
   padding: 1px 6px;
   border-radius: 10px;
-}
-
-.mod-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .empty-list {

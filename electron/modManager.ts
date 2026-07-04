@@ -277,28 +277,61 @@ export async function installModFromArchive(sptPath: string, archivePath: string
     ensureDir(tmpExtractDir);
     await extractArchive(archivePath, tmpExtractDir);
 
-    const topLevel = fs.readdirSync(tmpExtractDir, { withFileTypes: true });
+    const mergeRoot = findMergeRoot(tmpExtractDir);
 
-    // Caso 1: zip já contém a estrutura "user/" e/ou "BepInEx/" na raiz
-    const hasUserFolder = topLevel.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
-    const hasBepInExFolder = topLevel.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
+    if (mergeRoot) {
+      const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
+      const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
+      const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
 
-    if (hasUserFolder || hasBepInExFolder) {
-      copyRecursive(tmpExtractDir, sptPath);
-      const verification = verifyCopyRecursive(tmpExtractDir, sptPath);
+      // Antes de copiar/limpar, anota os nomes das pastas de mod reais que estão vindo
+      // (ex: "EpicsAIO" dentro de "user/mods/"), pra registrar cada uma individualmente
+      // depois — em vez de perder essa informação assim que a pasta temporária for apagada.
+      const serverModNames: string[] = [];
+      const clientModNames: string[] = [];
+      if (hasUserFolder) {
+        const srcModsDir = path.join(mergeRoot, "user", "mods");
+        if (fs.existsSync(srcModsDir)) {
+          for (const entry of fs.readdirSync(srcModsDir, { withFileTypes: true })) {
+            if (entry.isDirectory()) serverModNames.push(entry.name);
+          }
+        }
+      }
+      if (hasBepInExFolder) {
+        const srcPluginsDir = path.join(mergeRoot, "BepInEx", "plugins");
+        if (fs.existsSync(srcPluginsDir)) {
+          for (const entry of fs.readdirSync(srcPluginsDir, { withFileTypes: true })) {
+            if (entry.isDirectory() || entry.name.endsWith(".dll")) clientModNames.push(entry.name);
+          }
+        }
+      }
+
+      copyRecursive(mergeRoot, sptPath);
+      const verification = verifyCopyRecursive(mergeRoot, sptPath);
       if (!verification.ok) {
         cleanup(tmpExtractDir);
         return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
       }
       cleanup(tmpExtractDir);
       const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : "client";
-      addToRegistry(sptPath, {
-        id: "estrutura-mesclada-" + Date.now(),
-        displayName: path.parse(archivePath).name,
-        type: mergedType,
-        installedAt: new Date().toISOString(),
-        source: "archive-install"
-      });
+
+      for (const name of serverModNames) {
+        addToRegistry(sptPath, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
+      }
+      for (const name of clientModNames) {
+        addToRegistry(sptPath, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
+      }
+      if (serverModNames.length === 0 && clientModNames.length === 0) {
+        // Fallback: não achou subpastas nomeadas (ex: arquivos soltos direto em user/ ou BepInEx/) —
+        // registra uma entrada genérica só pra não perder o rastro completamente.
+        addToRegistry(sptPath, {
+          id: "estrutura-mesclada-" + Date.now(),
+          displayName: path.parse(archivePath).name,
+          type: mergedType,
+          installedAt: new Date().toISOString(),
+          source: "archive-install"
+        });
+      }
       return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
     }
 
@@ -455,6 +488,29 @@ function cleanup(tmpDir: string) {
   if (fs.existsSync(tmpDir)) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Alguns mods vêm com uma pasta "embrulho" no topo do zip (ex: "SPT/user/mods/NomeDoMod"
+ * em vez de "user/mods/NomeDoMod" direto na raiz — comum quando quem empacotou o mod
+ * simplesmente zipou a pasta da própria instância). Isso procura recursivamente (até
+ * alguns níveis de profundidade) por uma pasta que tenha "user" e/ou "BepInEx" como
+ * filhos diretos, em vez de olhar só o nível mais raso do zip extraído.
+ */
+function findMergeRoot(dir: string, depth = 0): string | null {
+  if (depth > 5) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const hasUser = entries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
+  const hasBepInEx = entries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
+  if (hasUser || hasBepInEx) return dir;
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const found = findMergeRoot(path.join(dir, entry.name), depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 /**

@@ -1,7 +1,10 @@
 {
   "name": "spt-mod-manager",
   "version": "0.1.0",
-  "description": "Gerenciador de mods estilo Vortex para Single Player Tarkov (SPT)",
+  "description": "Gerenciador de mods estilo Vortex/MO2 para Single Player Tarkov (SPT)",
+  "license": "MIT",
+  "author": "Emir",
+  "keywords": ["spt", "single-player-tarkov", "mod-manager", "electron", "tarkov"],
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

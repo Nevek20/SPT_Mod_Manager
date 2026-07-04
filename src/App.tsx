@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, type DragEvent } from "react";
 import { ModInfo, ModType } from "./types";
 
-interface StatusMessage {
+interface Toast {
+  id: number;
   text: string;
   ok: boolean;
 }
@@ -16,11 +17,26 @@ function selectionKey(mod: ModInfo): string {
   return `${mod.type}:${mod.id}`;
 }
 
+function ToastStack({ toasts }: { toasts: Toast[] }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.ok ? "toast-ok" : "toast-error"}`}>
+          {t.ok ? "✔ " : "❌ "}
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [sptPath, setSptPath] = useState<string | null>(null);
   const [mods, setMods] = useState<ModInfo[]>([]);
-  const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mutating, setMutating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -36,6 +52,14 @@ export default function App() {
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
 
+  const pushToast = useCallback((text: string, ok: boolean) => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, text, ok }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
   const refreshMods = useCallback(async () => {
     const list = await window.modManagerAPI.scanMods();
     setMods(list);
@@ -50,6 +74,14 @@ export default function App() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  const summary = useMemo(() => {
+    const server = mods.filter((m) => m.type === "server").length;
+    const client = mods.filter((m) => m.type === "client").length;
+    const active = mods.filter((m) => m.enabled).length;
+    const disabled = mods.length - active;
+    return { total: mods.length, server, client, active, disabled };
+  }, [mods]);
 
   const filteredMods = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -88,6 +120,15 @@ export default function App() {
     return sorted;
   }, [mods, searchQuery, typeFilter, statusFilter, originFilter, sortField, sortDirection]);
 
+  const filtersActive = searchQuery.trim() !== "" || typeFilter !== "all" || statusFilter !== "all" || originFilter !== "all";
+
+  function clearFilters() {
+    setSearchQuery("");
+    setTypeFilter("all");
+    setStatusFilter("all");
+    setOriginFilter("all");
+  }
+
   useEffect(() => {
     (async () => {
       const path = await window.modManagerAPI.getSptPath();
@@ -100,10 +141,10 @@ export default function App() {
     const result = await window.modManagerAPI.selectSptFolder();
     if (result.success && result.path) {
       setSptPath(result.path);
-      setStatusMessage({ text: result.message ?? "Instância configurada.", ok: true });
+      pushToast(result.message ?? "Instância configurada.", true);
       refreshMods();
     } else {
-      setStatusMessage({ text: result.message ?? "Não foi possível selecionar a pasta.", ok: false });
+      pushToast(result.message ?? "Não foi possível selecionar a pasta.", false);
     }
   }
 
@@ -114,7 +155,7 @@ export default function App() {
   async function handleInstall() {
     setLoading(true);
     const result = await window.modManagerAPI.installMod();
-    setStatusMessage({ text: result.message, ok: result.success });
+    pushToast(result.message, result.success);
     setLoading(false);
     if (result.success) refreshMods();
   }
@@ -149,7 +190,7 @@ export default function App() {
     const archives = files.filter((f) => /\.(zip|7z)$/i.test(f.name));
 
     if (archives.length === 0) {
-      setStatusMessage({ text: "Solte um arquivo .zip ou .7z pra instalar.", ok: false });
+      pushToast("Solte um arquivo .zip ou .7z pra instalar.", false);
       return;
     }
 
@@ -161,36 +202,48 @@ export default function App() {
       if (!filePath) continue;
       const result = await window.modManagerAPI.installModFromPath(filePath);
       if (result.success) successCount++;
-      setStatusMessage({ text: result.message, ok: result.success });
+      pushToast(result.message, result.success);
     }
     setLoading(false);
     if (successCount > 0) refreshMods();
-    if (archives.length > 1) {
-      setStatusMessage({ text: `${successCount}/${archives.length} mod(s) instalado(s) com sucesso.`, ok: successCount === archives.length });
-    }
   }
 
   async function handleToggle(mod: ModInfo) {
+    setMutating(true);
     const result = await window.modManagerAPI.toggleMod(mod);
-    setStatusMessage({ text: result.message, ok: result.success });
-    if (result.success) refreshMods();
+    pushToast(result.message, result.success);
+    if (result.success) {
+      // Atualização local (sem re-escanear o disco inteiro) — bem mais rápido com muitos mods.
+      setMods((prev) => prev.map((m) => (m.id === mod.id && m.type === mod.type ? { ...m, enabled: !m.enabled } : m)));
+    }
+    setMutating(false);
   }
 
   async function handleUninstall(mod: ModInfo) {
     const confirmed = window.confirm(`Remover "${mod.name}" permanentemente?`);
     if (!confirmed) return;
+    setMutating(true);
     const result = await window.modManagerAPI.uninstallMod(mod);
-    setStatusMessage({ text: result.message, ok: result.success });
-    if (result.success) refreshMods();
+    pushToast(result.message, result.success);
+    if (result.success) {
+      const key = selectionKey(mod);
+      setMods((prev) => prev.filter((m) => selectionKey(m) !== key));
+      setSelectedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+    setMutating(false);
   }
 
   async function handleOpenFolder(mod: ModInfo) {
     const result = await window.modManagerAPI.openModFolder(mod);
-    if (!result.success) setStatusMessage({ text: result.message, ok: false });
+    if (!result.success) pushToast(result.message, false);
   }
 
   async function handleReinstall() {
-    setStatusMessage({ text: "Selecione o arquivo atualizado do mod (.zip / .7z)...", ok: true });
+    pushToast("Selecione o arquivo atualizado do mod (.zip / .7z)...", true);
     await handleInstall();
   }
 
@@ -204,7 +257,8 @@ export default function App() {
     [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
 
     const result = await window.modManagerAPI.reorderMods(reordered.map((m) => m.id));
-    setStatusMessage({ text: result.message, ok: result.success });
+    pushToast(result.message, result.success);
+    // Renumerar mexe nos nomes das pastas de vários mods de uma vez, então aqui vale a pena re-escanear.
     if (result.success) refreshMods();
   }
 
@@ -220,11 +274,15 @@ export default function App() {
   }
 
   async function confirmRename(mod: ModInfo) {
-    const newAlias = editingValue.trim() === mod.originalName ? "" : editingValue;
+    const trimmed = editingValue.trim();
+    const newAlias = trimmed === mod.originalName ? "" : trimmed;
     const result = await window.modManagerAPI.renameMod(mod.id, newAlias);
-    setStatusMessage({ text: result.message, ok: result.success });
+    pushToast(result.message, result.success);
     setEditingKey(null);
-    if (result.success) refreshMods();
+    if (result.success) {
+      const displayName = newAlias || mod.originalName;
+      setMods((prev) => prev.map((m) => (m.id === mod.id && m.type === mod.type ? { ...m, name: displayName } : m)));
+    }
   }
 
   function toggleSelect(mod: ModInfo) {
@@ -245,10 +303,7 @@ export default function App() {
     setSelectedKeys(new Set());
   }
 
-  const selectedMods = useMemo(
-    () => mods.filter((m) => selectedKeys.has(selectionKey(m))),
-    [mods, selectedKeys]
-  );
+  const selectedMods = useMemo(() => mods.filter((m) => selectedKeys.has(selectionKey(m))), [mods, selectedKeys]);
 
   async function runBulk(action: "enable" | "disable" | "remove") {
     if (selectedMods.length === 0) return;
@@ -256,36 +311,25 @@ export default function App() {
       const confirmed = window.confirm(`Remover ${selectedMods.length} mod(s) permanentemente?`);
       if (!confirmed) return;
     }
-    let successCount = 0;
+    setMutating(true);
+    const succeededKeys = new Set<string>();
     for (const mod of selectedMods) {
       if (action === "enable" && mod.enabled) continue;
       if (action === "disable" && !mod.enabled) continue;
-      const result =
-        action === "remove"
-          ? await window.modManagerAPI.uninstallMod(mod)
-          : await window.modManagerAPI.toggleMod(mod);
-      if (result.success) successCount++;
+      const result = action === "remove" ? await window.modManagerAPI.uninstallMod(mod) : await window.modManagerAPI.toggleMod(mod);
+      if (result.success) succeededKeys.add(selectionKey(mod));
     }
-    setStatusMessage({ text: `${successCount}/${selectedMods.length} mod(s) processado(s).`, ok: true });
+
+    if (action === "remove") {
+      setMods((prev) => prev.filter((m) => !succeededKeys.has(selectionKey(m))));
+    } else {
+      setMods((prev) => prev.map((m) => (succeededKeys.has(selectionKey(m)) ? { ...m, enabled: action === "enable" } : m)));
+    }
+
+    pushToast(`${succeededKeys.size}/${selectedMods.length} mod(s) processado(s).`, true);
     clearSelection();
-    refreshMods();
+    setMutating(false);
   }
-
-  if (!sptPath) {
-    return (
-      <div className="empty-state">
-        <h1>SPT Mod Manager</h1>
-        <p>Selecione a pasta da sua instância SPT pra começar.</p>
-        <button onClick={handleSelectFolder}>Selecionar pasta da instância</button>
-        <button onClick={handleOpenModHub}>Baixar mods (hub.sp-tarkov.com)</button>
-        {statusMessage && <p className="status-message">{statusMessage.text}</p>}
-      </div>
-    );
-  }
-
-  const serverMods = filteredMods.filter((m) => m.type === "server");
-  const clientMods = filteredMods.filter((m) => m.type === "client");
-  const otherMods = filteredMods.filter((m) => m.type === "hybrid" || m.type === "unknown");
 
   const listProps = {
     onToggle: handleToggle,
@@ -301,127 +345,151 @@ export default function App() {
     selectedKeys,
     onToggleSelect: toggleSelect,
     openMenuKey,
-    onSetOpenMenuKey: setOpenMenuKey
+    onSetOpenMenuKey: setOpenMenuKey,
+    disabled: mutating
   };
 
   return (
-    <div
-      className="app"
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      {isDraggingFile && (
-        <div className="drop-overlay">
-          <div className="drop-overlay-box">Solte o(s) arquivo(s) .zip / .7z aqui pra instalar</div>
-        </div>
-      )}
-      <header>
-        <div>
+    <>
+      <ToastStack toasts={toasts} />
+
+      {!sptPath ? (
+        <div className="empty-state">
           <h1>SPT Mod Manager</h1>
-          <span className="instance-path">{sptPath}</span>
+          <p>Selecione a pasta da sua instância SPT pra começar.</p>
+          <button onClick={handleSelectFolder}>Selecionar pasta da instância</button>
+          <button onClick={handleOpenModHub}>Baixar mods (hub.sp-tarkov.com)</button>
         </div>
-        <div className="header-actions">
-          <button onClick={handleOpenModHub}>Baixar mods</button>
-          <button onClick={handleSelectFolder}>Trocar instância</button>
-          <button onClick={handleInstall} disabled={loading} className="primary">
-            {loading ? "Instalando..." : "Instalar mod (.zip / .7z)"}
-          </button>
-        </div>
-      </header>
-
-      {statusMessage && (
-        <div className={`status-bar ${statusMessage.ok ? "status-ok" : "status-error"}`}>
-          {statusMessage.ok ? "✔ " : "❌ "}
-          {statusMessage.text}
-        </div>
-      )}
-
-      <input
-        className="search-bar"
-        type="text"
-        placeholder="Pesquisar mod pelo nome..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-      />
-
-      <div className="filter-bar">
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}>
-          <option value="all">Todos os tipos</option>
-          <option value="server">Server</option>
-          <option value="client">Client</option>
-          <option value="hybrid">Hybrid</option>
-          <option value="unknown">Unknown</option>
-        </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
-          <option value="all">Ativos e desativados</option>
-          <option value="enabled">Só ativos</option>
-          <option value="disabled">Só desativados</option>
-        </select>
-        <select value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)}>
-          <option value="all">Qualquer origem</option>
-          <option value="manual">Instalados manualmente</option>
-          <option value="manager">Instalados pelo Manager</option>
-        </select>
-
-        <span className="filter-separator" />
-
-        <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)}>
-          <option value="name">Ordenar por Nome</option>
-          <option value="type">Ordenar por Tipo</option>
-          <option value="status">Ordenar por Status</option>
-          <option value="origin">Ordenar por Origem</option>
-          <option value="installedAt">Ordenar por Data de instalação</option>
-        </select>
-        <button
-          onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))}
-          title="Inverter direção da ordenação"
+      ) : (
+        <div
+          className="app"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
-          {sortDirection === "asc" ? "↑ Crescente" : "↓ Decrescente"}
-        </button>
+          {isDraggingFile && (
+            <div className="drop-overlay">
+              <div className="drop-overlay-box">Solte o(s) arquivo(s) .zip / .7z aqui pra instalar</div>
+            </div>
+          )}
+          <header>
+            <div>
+              <h1>SPT Mod Manager</h1>
+              <span className="instance-path" title={sptPath}>{sptPath}</span>
+            </div>
+            <div className="header-actions">
+              <button onClick={handleOpenModHub} title="Abrir hub.sp-tarkov.com no navegador">Baixar mods</button>
+              <button onClick={handleSelectFolder} title="Selecionar outra instância SPT">Trocar instância</button>
+              <button onClick={handleInstall} disabled={loading} className="primary" title="Escolher um .zip ou .7z pra instalar">
+                {loading ? "Instalando..." : "Instalar mod (.zip / .7z)"}
+              </button>
+            </div>
+          </header>
 
-        <span className="filter-separator" />
-
-        <button onClick={selectAllVisible}>Selecionar todos (visíveis)</button>
-        {selectedKeys.size > 0 && <button onClick={clearSelection}>Limpar seleção</button>}
-      </div>
-
-      {sortField !== "name" && (
-        <p className="sort-hint">
-          A ordem de carregamento (▲▼) sempre segue o load order real — ordenar por outro campo só muda a exibição, não o load order.
-        </p>
-      )}
-
-      {selectedKeys.size > 0 && (
-        <div className="bulk-bar">
-          <span>{selectedKeys.size} selecionado(s)</span>
-          <div className="bulk-actions">
-            <button onClick={() => runBulk("enable")}>Habilitar</button>
-            <button onClick={() => runBulk("disable")}>Desabilitar</button>
-            <button onClick={() => runBulk("remove")} className="danger">Remover</button>
-            <button onClick={clearSelection}>Cancelar seleção</button>
+          <div className="summary-bar">
+            <span className="summary-item">
+              <strong>{summary.total}</strong> mod(s) instalado(s)
+            </span>
+            <span className="summary-item">Server: <strong>{summary.server}</strong></span>
+            <span className="summary-item">Client: <strong>{summary.client}</strong></span>
+            <span className="summary-item summary-active">Ativos: <strong>{summary.active}</strong></span>
+            <span className="summary-item summary-disabled">Desativados: <strong>{summary.disabled}</strong></span>
+            <span className="summary-item summary-valid" title="A pasta selecionada passou na validação de instância SPT">✔ Instância válida</span>
           </div>
+
+          <input
+            className="search-bar"
+            type="text"
+            placeholder="Pesquisar mod pelo nome..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+
+          <div className="filter-bar">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TypeFilter)} title="Filtrar por tipo">
+              <option value="all">Todos os tipos</option>
+              <option value="server">Server</option>
+              <option value="client">Client</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} title="Filtrar por status">
+              <option value="all">Ativos e desativados</option>
+              <option value="enabled">Só ativos</option>
+              <option value="disabled">Só desativados</option>
+            </select>
+            <select value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)} title="Filtrar por origem">
+              <option value="all">Qualquer origem</option>
+              <option value="manual">Instalados manualmente</option>
+              <option value="manager">Instalados pelo Manager</option>
+            </select>
+
+            <span className="filter-separator" />
+
+            <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)} title="Ordenar por">
+              <option value="name">Ordenar por Nome</option>
+              <option value="type">Ordenar por Tipo</option>
+              <option value="status">Ordenar por Status</option>
+              <option value="origin">Ordenar por Origem</option>
+              <option value="installedAt">Ordenar por Data de instalação</option>
+            </select>
+            <button onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))} title="Inverter direção da ordenação">
+              {sortDirection === "asc" ? "↑ Crescente" : "↓ Decrescente"}
+            </button>
+
+            <span className="filter-separator" />
+
+            <button onClick={selectAllVisible} title="Selecionar todos os mods visíveis com os filtros atuais">Selecionar todos (visíveis)</button>
+            {selectedKeys.size > 0 && <button onClick={clearSelection}>Limpar seleção</button>}
+          </div>
+
+          {sortField !== "name" && (
+            <p className="sort-hint">
+              A ordem de carregamento (▲▼) sempre segue o load order real — ordenar por outro campo só muda a exibição.
+            </p>
+          )}
+
+          {selectedKeys.size > 0 && (
+            <div className="bulk-bar">
+              <span>{selectedKeys.size} selecionado(s)</span>
+              <div className="bulk-actions">
+                <button onClick={() => runBulk("enable")} disabled={mutating}>Habilitar</button>
+                <button onClick={() => runBulk("disable")} disabled={mutating}>Desabilitar</button>
+                <button onClick={() => runBulk("remove")} className="danger" disabled={mutating}>Remover</button>
+                <button onClick={clearSelection}>Cancelar seleção</button>
+              </div>
+            </div>
+          )}
+
+          {filtersActive && filteredMods.length === 0 && mods.length > 0 && (
+            <div className="no-results">
+              Nenhum mod bate com os filtros/busca atuais.
+              <button onClick={clearFilters}>Limpar filtros</button>
+            </div>
+          )}
+
+          <Section title="Server Mods" mods={filteredMods.filter((m) => m.type === "server")} onMove={handleMove} reorderable {...listProps} />
+          <Section title="Client Mods" mods={filteredMods.filter((m) => m.type === "client")} {...listProps} />
+          {mods.some((m) => m.type === "hybrid" || m.type === "unknown") && (
+            <Section title="Hybrid / Unknown" mods={filteredMods.filter((m) => m.type === "hybrid" || m.type === "unknown")} {...listProps} />
+          )}
         </div>
       )}
+    </>
+  );
+}
 
-      <section>
-        <h2>Server Mods ({serverMods.length})</h2>
-        <ModList mods={serverMods} onMove={handleMove} reorderable {...listProps} />
-      </section>
-
-      <section>
-        <h2>Client Mods ({clientMods.length})</h2>
-        <ModList mods={clientMods} {...listProps} />
-      </section>
-
-      {otherMods.length > 0 && (
-        <section>
-          <h2>Hybrid / Unknown ({otherMods.length})</h2>
-          <ModList mods={otherMods} {...listProps} />
-        </section>
-      )}
-    </div>
+function Section({
+  title,
+  mods,
+  ...listProps
+}: { title: string; mods: ModInfo[] } & Omit<Parameters<typeof ModList>[0], "mods">) {
+  return (
+    <section>
+      <h2>{title} ({mods.length})</h2>
+      <ModList mods={mods} {...listProps} />
+    </section>
   );
 }
 
@@ -442,7 +510,8 @@ function ModList({
   selectedKeys,
   onToggleSelect,
   openMenuKey,
-  onSetOpenMenuKey
+  onSetOpenMenuKey,
+  disabled = false
 }: {
   mods: ModInfo[];
   onToggle: (mod: ModInfo) => void;
@@ -461,9 +530,10 @@ function ModList({
   onToggleSelect: (mod: ModInfo) => void;
   openMenuKey: string | null;
   onSetOpenMenuKey: (key: string | null) => void;
+  disabled?: boolean;
 }) {
   if (mods.length === 0) {
-    return <p className="empty-list">Nenhum mod encontrado aqui.</p>;
+    return <p className="empty-list">Nenhum mod nessa categoria.</p>;
   }
 
   return (
@@ -479,12 +549,13 @@ function ModList({
               checked={selectedKeys.has(key)}
               onChange={() => onToggleSelect(mod)}
               className="mod-checkbox"
+              disabled={disabled}
             />
             <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
             {reorderable && mod.enabled && (
               <div className="reorder-buttons">
-                <button onClick={() => onMove?.(mod, -1)} title="Mover pra cima">▲</button>
-                <button onClick={() => onMove?.(mod, 1)} title="Mover pra baixo">▼</button>
+                <button onClick={() => onMove?.(mod, -1)} title="Mover pra cima" disabled={disabled}>▲</button>
+                <button onClick={() => onMove?.(mod, 1)} title="Mover pra baixo" disabled={disabled}>▼</button>
               </div>
             )}
             <div className="mod-info">
@@ -501,7 +572,7 @@ function ModList({
                   onBlur={() => onRenameConfirm(mod)}
                 />
               ) : (
-                <span className="mod-name" title={mod.originalName} onDoubleClick={() => onRenameStart(mod)}>
+                <span className="mod-name" title={`${mod.originalName} (duplo-clique pra renomear)`} onDoubleClick={() => onRenameStart(mod)}>
                   {mod.name}
                 </span>
               )}
@@ -516,49 +587,18 @@ function ModList({
               </div>
             </div>
             <div className="action-menu-wrapper">
-              <button
-                className="menu-trigger"
-                onClick={() => onSetOpenMenuKey(isMenuOpen ? null : key)}
-                title="Ações"
-              >
+              <button className="menu-trigger" onClick={() => onSetOpenMenuKey(isMenuOpen ? null : key)} title="Ações" disabled={disabled}>
                 ⋮
               </button>
               {isMenuOpen && (
                 <div className="action-menu">
-                  <button
-                    onClick={() => {
-                      onToggle(mod);
-                      onSetOpenMenuKey(null);
-                    }}
-                  >
+                  <button onClick={() => { onToggle(mod); onSetOpenMenuKey(null); }}>
                     {mod.enabled ? "Desabilitar" : "Habilitar"}
                   </button>
-                  <button
-                    onClick={() => {
-                      onOpenFolder(mod);
-                      onSetOpenMenuKey(null);
-                    }}
-                  >
-                    Abrir pasta
-                  </button>
+                  <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>Abrir pasta</button>
                   <button onClick={() => onRenameStart(mod)}>Renomear</button>
-                  <button
-                    onClick={() => {
-                      onReinstall(mod);
-                      onSetOpenMenuKey(null);
-                    }}
-                  >
-                    Reinstalar
-                  </button>
-                  <button
-                    className="danger"
-                    onClick={() => {
-                      onUninstall(mod);
-                      onSetOpenMenuKey(null);
-                    }}
-                  >
-                    Remover
-                  </button>
+                  <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>Reinstalar</button>
+                  <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>Remover</button>
                 </div>
               )}
             </div>
