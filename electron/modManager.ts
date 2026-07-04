@@ -53,24 +53,82 @@ function ensureDir(dirPath: string) {
 }
 
 /**
- * Confirma que a pasta selecionada é realmente uma instância SPT válida.
- * Checamos por marcadores conhecidos em vez de confiar cegamente no usuário.
+ * Lê version/author do package.json do mod, quando existe. É best-effort:
+ * client mods (BepInEx) raramente têm isso, então retorna vazio sem erro nesses casos.
  */
+function readModMetadata(modPath: string): { version?: string; author?: string } {
+  try {
+    if (!fs.existsSync(modPath) || !fs.statSync(modPath).isDirectory()) return {};
+    const pkgPath = path.join(modPath, "package.json");
+    if (!fs.existsSync(pkgPath)) return {};
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
+    return { version: typeof pkg.version === "string" ? pkg.version : undefined, author };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve o caminho absoluto (pasta ou arquivo) de um mod já escaneado, considerando
+ * se está ativo ou desabilitado. Usado pra "Abrir pasta" e outras ações pontuais.
+ */
+export function resolveModPath(sptPath: string, mod: Pick<ModInfo, "id" | "type" | "enabled">): string {
+  const isServer = mod.type === "server";
+  const dir = p(
+    sptPath,
+    mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR
+  );
+  return path.join(dir, mod.id);
+}
+const SERVER_EXE_CANDIDATES = ["SPT.Server.exe", "Aki.Server.exe"];
+const CLIENT_EXE_CANDIDATES = ["EscapeFromTarkov.exe"];
+
 export function validateSptPath(sptPath: string): { valid: boolean; reason?: string } {
   if (!fs.existsSync(sptPath)) {
     return { valid: false, reason: "Pasta não existe." };
   }
-  const hasServerExe = fs.existsSync(path.join(sptPath, "SPT.Server.exe"));
+  if (!fs.statSync(sptPath).isDirectory()) {
+    return { valid: false, reason: "O caminho selecionado não é uma pasta." };
+  }
+
+  const hasServerExe = SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(sptPath, exe)));
+  const hasClientExe = CLIENT_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(sptPath, exe)));
   const hasUserFolder = fs.existsSync(path.join(sptPath, "user"));
   const hasBepInEx = fs.existsSync(path.join(sptPath, "BepInEx"));
 
-  if (!hasServerExe && !(hasUserFolder && hasBepInEx)) {
+  // Válida se achar qualquer marcador forte (exe conhecido) OU a combinação das duas pastas típicas.
+  const valid = hasServerExe || hasClientExe || (hasUserFolder && hasBepInEx);
+
+  if (!valid) {
     return {
       valid: false,
-      reason: "Não parece ser uma pasta de instância SPT (faltando SPT.Server.exe, user/ ou BepInEx/)."
+      reason:
+        "Não parece ser uma instância SPT válida. Esperava encontrar SPT.Server.exe, EscapeFromTarkov.exe, ou as pastas user/ e BepInEx/ juntas."
     };
   }
   return { valid: true };
+}
+
+/**
+ * Se a pasta escolhida não for válida, tenta achar a instância automaticamente numa
+ * subpasta direta (cobre o caso comum de selecionar a pasta pai, tipo "Desktop", em vez
+ * de entrar e escolher a pasta "SPT" em si).
+ */
+export function resolveSptPath(chosenPath: string): { path: string; autoDetected: boolean } | null {
+  const direct = validateSptPath(chosenPath);
+  if (direct.valid) return { path: chosenPath, autoDetected: false };
+
+  if (!fs.existsSync(chosenPath)) return null;
+
+  const subEntries = fs.readdirSync(chosenPath, { withFileTypes: true }).filter((e) => e.isDirectory());
+  for (const entry of subEntries) {
+    const candidate = path.join(chosenPath, entry.name);
+    if (validateSptPath(candidate).valid) {
+      return { path: candidate, autoDetected: true };
+    }
+  }
+  return null;
 }
 
 // --- Registro local de mods instalados via app (pra saber a diferença de "instalado manualmente") ---
@@ -104,6 +162,38 @@ function removeFromRegistry(sptPath: string, id: string) {
   saveRegistry(sptPath, reg.filter((e) => e.id !== id));
 }
 
+// --- Aliases (nome de exibição customizado, não mexe em arquivo nenhum) ---
+function getAliasesPath(sptPath: string): string {
+  return path.join(sptPath, ".spt-mod-manager-aliases.json");
+}
+
+function loadAliases(sptPath: string): Record<string, string> {
+  const aliasPath = getAliasesPath(sptPath);
+  if (!fs.existsSync(aliasPath)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(aliasPath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveAliases(sptPath: string, aliases: Record<string, string>) {
+  fs.writeFileSync(getAliasesPath(sptPath), JSON.stringify(aliases, null, 2), "utf-8");
+}
+
+export function setModAlias(sptPath: string, modId: string, alias: string): { success: boolean; message: string } {
+  const aliases = loadAliases(sptPath);
+  const trimmed = alias.trim();
+  if (trimmed.length === 0) {
+    delete aliases[modId];
+    saveAliases(sptPath, aliases);
+    return { success: true, message: "Nome restaurado pro original." };
+  }
+  aliases[modId] = trimmed;
+  saveAliases(sptPath, aliases);
+  return { success: true, message: "Nome atualizado." };
+}
+
 // --- Load order (server mods carregam em ordem alfabética; prefixamos com número) ---
 function stripLoadOrderPrefix(name: string): { order: number; cleanName: string } {
   const match = name.match(/^(\d{2})_(.+)$/);
@@ -117,7 +207,25 @@ function stripLoadOrderPrefix(name: string): { order: number; cleanName: string 
 export function scanMods(sptPath: string): ModInfo[] {
   const registry = loadRegistry(sptPath);
   const registryIds = new Set(registry.map((r) => r.id));
+  const aliases = loadAliases(sptPath);
   const mods: ModInfo[] = [];
+
+  function pushMod(id: string, cleanName: string, type: ModType, enabled: boolean, loadOrder: number, modPath?: string) {
+    const metadata = modPath ? readModMetadata(modPath) : {};
+    const registryEntry = registry.find((r) => r.id === id);
+    mods.push({
+      id,
+      name: aliases[id] ?? cleanName,
+      originalName: cleanName,
+      type,
+      enabled,
+      installedManually: !registryIds.has(id),
+      loadOrder,
+      version: metadata.version,
+      author: metadata.author,
+      installedAt: registryEntry?.installedAt
+    });
+  }
 
   // Server mods (ativos)
   const serverDir = p(sptPath, SERVER_MODS_DIR);
@@ -125,14 +233,7 @@ export function scanMods(sptPath: string): ModInfo[] {
     for (const entry of fs.readdirSync(serverDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const { order, cleanName } = stripLoadOrderPrefix(entry.name);
-      mods.push({
-        id: entry.name,
-        name: cleanName,
-        type: "server",
-        enabled: true,
-        installedManually: !registryIds.has(entry.name),
-        loadOrder: order
-      });
+      pushMod(entry.name, cleanName, "server", true, order, path.join(serverDir, entry.name));
     }
   }
 
@@ -142,14 +243,7 @@ export function scanMods(sptPath: string): ModInfo[] {
     for (const entry of fs.readdirSync(serverDisabledDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const { order, cleanName } = stripLoadOrderPrefix(entry.name);
-      mods.push({
-        id: entry.name,
-        name: cleanName,
-        type: "server",
-        enabled: false,
-        installedManually: !registryIds.has(entry.name),
-        loadOrder: order
-      });
+      pushMod(entry.name, cleanName, "server", false, order, path.join(serverDisabledDir, entry.name));
     }
   }
 
@@ -158,14 +252,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   if (fs.existsSync(clientDir)) {
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
-        mods.push({
-          id: entry.name,
-          name: entry.name.replace(/\.dll$/i, ""),
-          type: "client",
-          enabled: true,
-          installedManually: !registryIds.has(entry.name),
-          loadOrder: 0
-        });
+        pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", true, 0, path.join(clientDir, entry.name));
       }
     }
   }
@@ -175,14 +262,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   if (fs.existsSync(clientDisabledDir)) {
     for (const entry of fs.readdirSync(clientDisabledDir, { withFileTypes: true })) {
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
-        mods.push({
-          id: entry.name,
-          name: entry.name.replace(/\.dll$/i, ""),
-          type: "client",
-          enabled: false,
-          installedManually: !registryIds.has(entry.name),
-          loadOrder: 0
-        });
+        pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", false, 0, path.join(clientDisabledDir, entry.name));
       }
     }
   }
@@ -205,15 +285,21 @@ export async function installModFromArchive(sptPath: string, archivePath: string
 
     if (hasUserFolder || hasBepInExFolder) {
       copyRecursive(tmpExtractDir, sptPath);
+      const verification = verifyCopyRecursive(tmpExtractDir, sptPath);
+      if (!verification.ok) {
+        cleanup(tmpExtractDir);
+        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+      }
       cleanup(tmpExtractDir);
+      const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : "client";
       addToRegistry(sptPath, {
         id: "estrutura-mesclada-" + Date.now(),
         displayName: path.parse(archivePath).name,
-        type: hasUserFolder && hasBepInExFolder ? "server" : hasUserFolder ? "server" : "client",
+        type: mergedType,
         installedAt: new Date().toISOString(),
         source: "archive-install"
       });
-      return { success: true, message: "Mod instalado (estrutura completa detectada)." };
+      return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
     }
 
     // Caso 2: zip contém DLLs soltas ou uma única pasta -> tentar identificar client vs server
@@ -232,7 +318,13 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       modId = singleDir ?? path.parse(archivePath).name;
       destBase = p(sptPath, SERVER_MODS_DIR);
       ensureDir(destBase);
-      copyRecursive(sourceDir, path.join(destBase, modId));
+      const serverDest = path.join(destBase, modId);
+      copyRecursive(sourceDir, serverDest);
+      const verification = verifyCopyRecursive(sourceDir, serverDest);
+      if (!verification.ok) {
+        cleanup(tmpExtractDir);
+        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+      }
       type = "server";
     } else if (dllFiles.length > 0) {
       // Client mod: copia pasta (ou soltas) pra BepInEx/plugins
@@ -242,10 +334,22 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       const singleDir = rootEntries.length === 1 && rootEntries[0].isDirectory() ? rootEntries[0].name : null;
       if (singleDir) {
         modId = singleDir;
-        copyRecursive(path.join(tmpExtractDir, singleDir), path.join(destBase, singleDir));
+        const clientDest = path.join(destBase, singleDir);
+        copyRecursive(path.join(tmpExtractDir, singleDir), clientDest);
+        const verification = verifyCopyRecursive(path.join(tmpExtractDir, singleDir), clientDest);
+        if (!verification.ok) {
+          cleanup(tmpExtractDir);
+          return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+        }
       } else {
         modId = path.parse(archivePath).name;
-        copyRecursive(tmpExtractDir, path.join(destBase, modId));
+        const clientDest = path.join(destBase, modId);
+        copyRecursive(tmpExtractDir, clientDest);
+        const verification = verifyCopyRecursive(tmpExtractDir, clientDest);
+        if (!verification.ok) {
+          cleanup(tmpExtractDir);
+          return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+        }
       }
       type = "client";
     } else {
@@ -264,7 +368,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       installedAt: new Date().toISOString(),
       source: "archive-install"
     });
-    return { success: true, message: `Mod "${modId}" instalado como ${type === "server" ? "server mod" : "client mod"}.` };
+    return { success: true, message: `Mod "${modId}" instalado e verificado como ${type === "server" ? "server mod" : "client mod"}.` };
   } catch (err) {
     cleanup(tmpExtractDir);
     return { success: false, message: "Erro ao instalar: " + (err as Error).message };
@@ -351,4 +455,26 @@ function cleanup(tmpDir: string) {
   if (fs.existsSync(tmpDir)) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Confere, arquivo por arquivo, que tudo que existia em src também existe em dest
+ * (mesmo tamanho). Usado pra confirmar que uma instalação realmente terminou com sucesso,
+ * em vez de assumir que copyRecursive não falhou silenciosamente.
+ */
+function verifyCopyRecursive(src: string, dest: string): { ok: boolean; missing?: string } {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      const result = verifyCopyRecursive(srcPath, destPath);
+      if (!result.ok) return result;
+    } else {
+      if (!fs.existsSync(destPath)) return { ok: false, missing: destPath };
+      if (fs.statSync(srcPath).size !== fs.statSync(destPath).size) {
+        return { ok: false, missing: destPath };
+      }
+    }
+  }
+  return { ok: true };
 }

@@ -1,8 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import path from "path";
+import fs from "fs";
 import Store from "electron-store";
-import { validateSptPath, scanMods, installModFromArchive, toggleMod, uninstallMod, reorderServerMods } from "./modManager";
+import { resolveSptPath, scanMods, installModFromArchive, toggleMod, uninstallMod, reorderServerMods, setModAlias, resolveModPath } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
+
+const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
 
 const store = new Store<InstanceConfig>({ defaults: { sptPath: null } });
 
@@ -40,17 +43,28 @@ app.on("window-all-closed", () => {
 // --- IPC: configuração da instância ---
 ipcMain.handle("get-spt-path", () => store.get("sptPath"));
 
+ipcMain.handle("open-mod-hub", () => {
+  shell.openExternal(MOD_HUB_URL);
+});
+
 ipcMain.handle("select-spt-folder", async () => {
   const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
   if (result.canceled || result.filePaths.length === 0) return { success: false };
 
   const chosen = result.filePaths[0];
-  const validation = validateSptPath(chosen);
-  if (!validation.valid) {
-    return { success: false, message: validation.reason };
+  const resolved = resolveSptPath(chosen);
+  if (!resolved) {
+    return {
+      success: false,
+      message: "Não achei uma instância SPT nessa pasta nem nas subpastas diretas dela. Selecione a pasta que tem o SPT.Server.exe."
+    };
   }
-  store.set("sptPath", chosen);
-  return { success: true, path: chosen };
+  store.set("sptPath", resolved.path);
+  return {
+    success: true,
+    path: resolved.path,
+    message: resolved.autoDetected ? `Instância encontrada automaticamente em: ${resolved.path}` : undefined
+  };
 });
 
 // --- IPC: mods ---
@@ -73,6 +87,18 @@ ipcMain.handle("install-mod", async () => {
   return installModFromArchive(sptPath, result.filePaths[0]);
 });
 
+ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext !== ".zip" && ext !== ".7z") {
+    return { success: false, message: `Arquivo "${path.basename(filePath)}" não é .zip nem .7z.` };
+  }
+
+  return installModFromArchive(sptPath, filePath);
+});
+
 ipcMain.handle("toggle-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
@@ -89,4 +115,26 @@ ipcMain.handle("reorder-mods", (_event, orderedIds: string[]) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
   return reorderServerMods(sptPath, orderedIds);
+});
+
+ipcMain.handle("rename-mod", (_event, modId: string, alias: string) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  return setModAlias(sptPath, modId, alias);
+});
+
+ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+
+  const target = resolveModPath(sptPath, mod);
+  if (!fs.existsSync(target)) {
+    return { success: false, message: "Caminho do mod não encontrado: " + target };
+  }
+  if (fs.statSync(target).isDirectory()) {
+    shell.openPath(target);
+  } else {
+    shell.showItemInFolder(target);
+  }
+  return { success: true, message: "Pasta aberta." };
 });
