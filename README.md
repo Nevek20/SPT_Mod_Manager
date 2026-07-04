@@ -1,148 +1,147 @@
 # SPT Mod Manager
 
-Um gerenciador de mods estilo **Vortex / Mod Organizer 2**, feito especificamente pro **Single Player Tarkov (SPT)**.
+A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
 
-Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, habilitar/desabilitar e remover mods sem precisar mexer manualmente em pastas — mantendo compatibilidade com mods que você já instalou na mão.
+A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
 
-> ⚠️ Projeto pessoal, não afiliado à equipe do SPT nem à Battlestate Games. Tarkov e Escape from Tarkov são marcas de seus respectivos donos.
+> Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners.
 
 ---
 
-## ✨ Funcionalidades
+## Features
 
-**Instalação**
-- Instalar mods a partir de `.zip` ou `.7z`, via seletor de arquivo **ou arrastando e soltando** direto na janela
-- Detecção automática de estrutura — funciona mesmo quando o mod vem "embrulhado" em pastas extras (ex: `SPT/user/mods/NomeDoMod/...`)
-- Detecção de tipo: **Server**, **Client** ou **Hybrid** (quando o mod tem as duas partes)
-- Verificação pós-instalação: confere arquivo por arquivo que tudo foi copiado corretamente antes de reportar sucesso
+**Installation**
+- Install mods from `.zip`, `.7z`, or `.rar`, via file picker or drag-and-drop straight into the window
+- Automatic structure detection — works even when the mod is wrapped in extra folders (e.g. `SPT/user/mods/ModName/...`)
+- Type detection: Server, Client, or Hybrid (when the mod has both parts)
+- Post-install verification: checks file by file that everything was copied correctly before reporting success
 
-**Organização**
-- Habilitar/desabilitar mods sem apagar nada (move entre pasta ativa e uma pasta `.disabled`)
-- Reordenar load order de server mods (setas ▲▼, com prefixo numérico nas pastas — é assim que o SPT respeita ordem de carregamento)
-- Renomear a exibição de um mod (alias) sem tocar em nenhum arquivo ou pasta real
-- Detecta mods instalados manualmente (fora do app) e diferencia de "instalado pelo Manager"
+**Organization**
+- Enable/disable mods without deleting anything (moves between an active folder and a `.disabled` one)
+- Reorder server mod load order (up/down buttons, using numeric folder prefixes — that's how SPT respects load order)
+- Rename a mod's display name (alias) without touching any real file or folder
+- Detects manually installed mods (outside the app) and distinguishes them from "installed by the Manager"
+- Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra — it doesn't reinstall anything automatically, since the app doesn't keep the original archives)
 
-**Encontrar o que você precisa**
-- Busca em tempo real por nome
-- Filtros por tipo, status (ativo/desativado) e origem (manual/Manager)
-- Ordenação por nome, tipo, status, origem ou data de instalação
-- Seleção múltipla com ações em lote (habilitar/desabilitar/remover vários de uma vez)
+**Finding what you need**
+- Real-time search by name
+- Filters by type, status (enabled/disabled), and origin (manual/Manager)
+- Sort by name, type, status, origin, or install date
+- Multi-select with bulk actions (enable/disable/remove several at once), including Shift+Click for range selection
 
 **Interface**
-- Cards com tipo, status, origem e — quando disponível — versão e autor do mod
-- Menu de ações por mod (`⋮`): habilitar/desabilitar, abrir pasta, renomear, reinstalar, remover
-- Resumo da instância no cabeçalho (total de mods, quebra por tipo, ativos/desativados)
-- Notificações temporárias de sucesso/erro
+- Cards showing type, status, origin, and — when available — mod version and author
+- Per-mod action menu: enable/disable, open folder, rename, reinstall, remove
+- Instance summary in the header (total mods, breakdown by type, enabled/disabled)
+- Temporary success/error notifications
 
 ---
 
-## 📸 Screenshots
+## Screenshots
 
-[tela principal](docs/screenshot.png)
+*(add a screenshot of the main screen here — I'd suggest putting it at `docs/screenshot.png` and referencing it with `![main screen](docs/screenshot.png)`)*
 
 ---
 
-## 🚀 Como rodar
+## Getting Started
 
-### Pré-requisitos
-- [Node.js](https://nodejs.org/) 18 ou superior
-- Windows (o app assume convenções de pasta do SPT no Windows; não testado em Linux/macOS)
-- Uma instância do SPT já instalada em algum lugar do seu PC
+### Prerequisites
+- [Node.js](https://nodejs.org/) 18 or later
+- Windows (the app assumes Windows-style SPT folder conventions; not tested on Linux/macOS)
+- An existing SPT instance installed somewhere on your PC
 
-### Desenvolvimento
+### Development
 
 ```bash
-git clone https://github.com/SEU_USUARIO/spt-mod-manager.git
+git clone https://github.com/YOUR_USERNAME/spt-mod-manager.git
 cd spt-mod-manager
 npm install
 npm run electron:dev
 ```
 
-Isso builda o renderer (Vite) + o processo main (`tsc`) e abre a janela do Electron.
+This builds the renderer (Vite) + the main process (`tsc`) and opens the Electron window.
 
-Se quiser só mexer na UI, sem abrir o Electron (mais rápido pra iterar em CSS/layout):
+If you just want to work on the UI without opening Electron (faster to iterate on CSS/layout):
 ```bash
 npm run dev
 ```
-Nesse modo `window.modManagerAPI` não existe, então as chamadas que dependem do backend vão falhar — serve só pra visual.
+In this mode `window.modManagerAPI` doesn't exist, so anything depending on the backend will fail — it's just for visuals.
 
-### Gerando o instalador (Windows)
+### Building the installer (Windows)
 
 ```bash
 npm run electron:build
 ```
-Gera um `.exe` via `electron-builder` (configuração já definida no `package.json`).
+Generates a `.exe` via `electron-builder` (configuration already set in `package.json`).
 
 ---
 
-## 🗂️ Estrutura do projeto
+## Project structure
 
 ```
 spt-mod-manager/
 ├── electron/
-│   ├── main.ts         # janela do Electron + handlers de IPC
-│   ├── preload.ts       # expõe window.modManagerAPI pro renderer (contextIsolation)
-│   ├── modManager.ts    # toda a lógica de arquivo (escanear, instalar, habilitar, etc)
-│   └── types.ts         # tipos compartilhados do lado Electron
+│   ├── main.ts         # Electron window + IPC handlers
+│   ├── preload.ts       # exposes window.modManagerAPI to the renderer (contextIsolation)
+│   ├── modManager.ts    # all the filesystem logic (scan, install, enable, etc)
+│   └── types.ts         # shared types on the Electron side
 ├── src/
-│   ├── App.tsx           # UI React inteira
-│   ├── App.css           # estilos
-│   ├── main.tsx           # entry point do React
-│   └── types.ts           # tipos + interface da API exposta pelo preload
+│   ├── App.tsx           # the whole React UI
+│   ├── App.css           # styles
+│   ├── main.tsx           # React entry point
+│   └── types.ts           # types + interface for the API exposed by preload
 ├── package.json
 └── vite.config.ts
 ```
 
 ---
 
-## ⚙️ Como funciona por baixo dos panos
+## How it works under the hood
 
-### Convenções de pasta usadas
-| O quê | Onde |
+### Folder conventions used
+| What | Where |
 |---|---|
-| Server mods ativos | `<instância>/user/mods/` |
-| Server mods desabilitados | `<instância>/user/mods.disabled/` |
-| Client mods ativos | `<instância>/BepInEx/plugins/` |
-| Client mods desabilitados | `<instância>/BepInEx/plugins.disabled/` |
+| Active server mods | `<instance>/user/mods/` |
+| Disabled server mods | `<instance>/user/mods.disabled/` |
+| Active client mods | `<instance>/BepInEx/plugins/` |
+| Disabled client mods | `<instance>/BepInEx/plugins.disabled/` |
 
 ### Load order
-SPT carrega server mods em ordem alfabética. O app controla isso prefixando a pasta do mod com um número de 2 dígitos (`01_nomedomod`, `02_outromod`, ...), que é atualizado sempre que você usa as setas ▲▼.
+SPT loads server mods in alphabetical order. The app controls this by prefixing the mod's folder with a 2-digit number (`01_modname`, `02_othermod`, ...), which gets updated whenever you use the reorder buttons.
 
-### Arquivos de controle (na raiz da instância)
-- `.spt-mod-manager-registry.json` — quais mods foram instalados pelo app (pra diferenciar de "instalado manualmente")
-- `.spt-mod-manager-aliases.json` — nomes de exibição customizados (renomear não mexe em arquivo real)
+### Control files (at the instance root)
+- `.spt-mod-manager-registry.json` — tracks which mods were installed by the app (to tell them apart from "manually installed")
+- `.spt-mod-manager-aliases.json` — custom display names (renaming doesn't touch any real file)
 
-### Instalação "inteligente"
-Ao instalar um `.zip`/`.7z`, o app procura recursivamente (não só na raiz do arquivo) por uma pasta que contenha `user/` e/ou `BepInEx/` — isso cobre tanto mods "prontos pra copiar" quanto mods embrulhados numa pasta extra. Se não achar essa estrutura, tenta identificar se é um server mod (por `package.json`) ou client mod (por `.dll`) e instala na pasta certa.
-
----
-
-## 🐛 Limitações conhecidas
-
-- **Sem suporte a `.rar`** — o 7-Zip lê `.rar`, mas isso exige um codec extra que não vem incluso por licenciamento. Se isso for um problema real no seu uso, dá pra integrar `node-unrar-js` depois.
-- **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) não geram uma linha própria pra habilitar/desabilitar como unidade — os arquivos se misturam nas pastas existentes. Resolver isso direito exigiria um manifesto de instalação rastreando arquivo por arquivo.
-- **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
-- **Sem detecção de conflitos** entre mods (dois mods sobrescrevendo o mesmo arquivo).
-- **Sem busca/download integrado** do [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — de propósito, pra não depender de uma API externa que pode mudar sem aviso (o app só abre o link no navegador).
-- Testado só no Windows.
+### "Smart" installation
+When installing a `.zip`/`.7z`, the app searches recursively (not just at the archive's root) for a folder containing `user/` and/or `BepInEx/` — this covers both "ready to copy" mods and mods wrapped in an extra folder. If that structure isn't found, it tries to identify whether it's a server mod (via `package.json`) or a client mod (via `.dll`) and installs it in the right place.
 
 ---
 
-## 🗺️ Roadmap
+## Known limitations
 
-- [ ] Suporte a `.rar`
-- [ ] Export/import de lista de mods (JSON com nomes + fontes)
-- [ ] Detecção de conflitos entre mods
-- [ ] Ctrl+Clique / Shift+Clique pra seleção em range
-- [ ] Versão do SPT detectada automaticamente no resumo do cabeçalho
-- [ ] Manifesto de instalação pra mods hybrid (permitir gerenciar como unidade)
+- **"Hybrid" mods installed via merge** (a single archive bringing `user/` and `BepInEx/` together, without named subfolders inside) don't get their own row to enable/disable as a unit — their files blend into existing folders. Handling this properly would require an install manifest tracking file-by-file ownership.
+- **"Reinstall"** in the action menu opens the generic file picker (it doesn't keep the original `.zip`/`.7z`/`.rar`) — works well for updating a mod to a new version, but isn't a true one-click "reinstall this exact thing."
+- **No conflict detection** between mods (two mods overwriting the same file).
+- **No integrated search/download** from [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — intentionally, to avoid depending on an external API that can change without notice (the app just opens the link in your browser).
+- Only tested on Windows.
 
 ---
 
-## 🤝 Contribuindo
+## Roadmap
 
-Projeto pessoal, mas issues e PRs são bem-vindos. Se for mexer em algo grande, abre uma issue antes pra alinhar.
+- [ ] Conflict detection between mods
+- [ ] Automatic SPT version detection in the header summary
+- [ ] Install manifest for hybrid mods (manage them as a unit)
 
-## 📄 Licença
+---
+
+## Contributing
+
+Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
+
+## License
 
 [MIT](LICENSE)
+
+`.rar` extraction is powered by [node-unrar-js](https://github.com/YuJianrong/node-unrar.js), a WASM build of the official UnRAR source, which is free to use but distributed under its own license (not MIT) — see the package's `LICENSE.md` for details.

@@ -30,3 +30,8 @@ export interface InstallResult {
   message: string;
   mod?: ModInfo;
 }
+
+export interface ModListComparison {
+  missing: string[]; // presentes na lista importada, mas não encontrados na instância atual
+  extra: string[]; // presentes na instância atual, mas não estavam na lista importada
+}

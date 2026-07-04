@@ -12,5 +12,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   uninstallMod: (mod: ModInfo) => ipcRenderer.invoke("uninstall-mod", mod),
   reorderMods: (orderedIds: string[]) => ipcRenderer.invoke("reorder-mods", orderedIds),
   renameMod: (modId: string, alias: string) => ipcRenderer.invoke("rename-mod", modId, alias),
-  openModFolder: (mod: ModInfo) => ipcRenderer.invoke("open-mod-folder", mod)
+  openModFolder: (mod: ModInfo) => ipcRenderer.invoke("open-mod-folder", mod),
+  exportModList: () => ipcRenderer.invoke("export-mod-list"),
+  importModList: () => ipcRenderer.invoke("import-mod-list")
 });

@@ -2,7 +2,18 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from "electron";
 import path from "path";
 import fs from "fs";
 import Store from "electron-store";
-import { resolveSptPath, scanMods, installModFromArchive, toggleMod, uninstallMod, reorderServerMods, setModAlias, resolveModPath } from "./modManager";
+import {
+  resolveSptPath,
+  scanMods,
+  installModFromArchive,
+  toggleMod,
+  uninstallMod,
+  reorderServerMods,
+  setModAlias,
+  resolveModPath,
+  exportModListData,
+  compareModList
+} from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
 const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
@@ -81,7 +92,7 @@ ipcMain.handle("install-mod", async () => {
 
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [{ name: "Arquivo de mod", extensions: ["zip", "7z"] }]
+    filters: [{ name: "Arquivo de mod", extensions: ["zip", "7z", "rar"] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelado." };
 
@@ -93,8 +104,8 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
 
   const ext = path.extname(filePath).toLowerCase();
-  if (ext !== ".zip" && ext !== ".7z") {
-    return { success: false, message: `Arquivo "${path.basename(filePath)}" não é .zip nem .7z.` };
+  if (ext !== ".zip" && ext !== ".7z" && ext !== ".rar") {
+    return { success: false, message: `Arquivo "${path.basename(filePath)}" não é .zip, .7z nem .rar.` };
   }
 
   return installModFromArchive(sptPath, filePath);
@@ -138,4 +149,49 @@ ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {
     shell.showItemInFolder(target);
   }
   return { success: true, message: "Pasta aberta." };
+});
+
+ipcMain.handle("export-mod-list", async () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+
+  const data = exportModListData(sptPath);
+  const result = await dialog.showSaveDialog({
+    defaultPath: "spt-modlist.json",
+    filters: [{ name: "JSON", extensions: ["json"] }]
+  });
+  if (result.canceled || !result.filePath) return { success: false, message: "Cancelado." };
+
+  fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2), "utf-8");
+  return { success: true, message: `Lista exportada com ${data.mods.length} mod(s) para ${path.basename(result.filePath)}.` };
+});
+
+ipcMain.handle("import-mod-list", async () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+
+  const result = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "JSON", extensions: ["json"] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelado." };
+
+  try {
+    const raw = fs.readFileSync(result.filePaths[0], "utf-8");
+    const parsed = JSON.parse(raw);
+    const names: string[] = Array.isArray(parsed.mods)
+      ? parsed.mods.map((m: { name?: string }) => m.name).filter((n: unknown): n is string => typeof n === "string")
+      : [];
+    if (names.length === 0) {
+      return { success: false, message: "Esse arquivo não parece uma lista de mods exportada por este app." };
+    }
+    const comparison = compareModList(sptPath, names);
+    return {
+      success: true,
+      message: `Comparado com ${names.length} mod(s) da lista importada.`,
+      comparison
+    };
+  } catch (err) {
+    return { success: false, message: "Erro ao ler o arquivo: " + (err as Error).message };
+  }
 });

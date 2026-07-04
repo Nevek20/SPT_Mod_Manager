@@ -3,26 +3,22 @@ import path from "path";
 import AdmZip from "adm-zip";
 import Seven from "node-7z";
 import { path7za } from "7zip-bin";
-import { ModInfo, ModType, RegistryEntry } from "./types";
+import { createExtractorFromFile } from "node-unrar-js";
+import { ModInfo, ModType, RegistryEntry, ModListComparison } from "./types";
 
 /**
- * Extrai .zip ou .7z pra uma pasta de destino.
+ * Extrai .zip, .7z ou .rar pra uma pasta de destino.
  * .zip usa adm-zip (puro JS, sem binário externo).
  * .7z usa o binário 7za empacotado via 7zip-bin, através do node-7z.
+ * .rar usa node-unrar-js (WASM da biblioteca oficial unrar, sem binário externo).
  */
-function extractArchive(archivePath: string, destDir: string): Promise<void> {
+async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   const ext = path.extname(archivePath).toLowerCase();
 
   if (ext === ".zip") {
-    return new Promise((resolve, reject) => {
-      try {
-        const zip = new AdmZip(archivePath);
-        zip.extractAllTo(destDir, true);
-        resolve();
-      } catch (err) {
-        reject(err);
-      }
-    });
+    const zip = new AdmZip(archivePath);
+    zip.extractAllTo(destDir, true);
+    return;
   }
 
   if (ext === ".7z") {
@@ -33,7 +29,18 @@ function extractArchive(archivePath: string, destDir: string): Promise<void> {
     });
   }
 
-  return Promise.reject(new Error(`Formato de arquivo não suportado: ${ext}. Use .zip ou .7z.`));
+  if (ext === ".rar") {
+    const extractor = await createExtractorFromFile({ filepath: archivePath, targetPath: destDir });
+    // A extração é "lazy" (generator) — precisa iterar pra realmente escrever os arquivos em disco.
+    const { files } = extractor.extract();
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for (const _file of files) {
+      // só percorrendo pra forçar a extração de cada entrada
+    }
+    return;
+  }
+
+  throw new Error(`Formato de arquivo não suportado: ${ext}. Use .zip, .7z ou .rar.`);
 }
 
 // --- Pastas relevantes dentro de uma instância SPT ---
@@ -204,6 +211,40 @@ function stripLoadOrderPrefix(name: string): { order: number; cleanName: string 
 }
 
 // --- Escanear mods instalados ---
+/**
+ * Monta os dados de export da lista de mods atual — reaproveita o scanMods, então
+ * reflete exatamente o que a UI mostra (nome original, tipo, status, versão/autor quando há).
+ */
+export function exportModListData(sptPath: string) {
+  const mods = scanMods(sptPath);
+  return {
+    exportedAt: new Date().toISOString(),
+    mods: mods.map((m) => ({
+      name: m.originalName,
+      type: m.type,
+      enabled: m.enabled,
+      version: m.version,
+      author: m.author
+    }))
+  };
+}
+
+/**
+ * Compara uma lista de nomes de mods importada (de um export anterior, seu ou de outra
+ * pessoa) contra o que está instalado agora. Não instala nada automaticamente — a gente
+ * não guarda os arquivos originais dos mods, então o mais honesto é mostrar a diferença
+ * pra você decidir o que reinstalar manualmente.
+ */
+export function compareModList(sptPath: string, importedNames: string[]): ModListComparison {
+  const currentNames = scanMods(sptPath).map((m) => m.originalName);
+  const currentSet = new Set(currentNames);
+  const importedSet = new Set(importedNames);
+  return {
+    missing: importedNames.filter((n) => !currentSet.has(n)),
+    extra: currentNames.filter((n) => !importedSet.has(n))
+  };
+}
+
 export function scanMods(sptPath: string): ModInfo[] {
   const registry = loadRegistry(sptPath);
   const registryIds = new Set(registry.map((r) => r.id));

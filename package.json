@@ -4,7 +4,13 @@
   "description": "Gerenciador de mods estilo Vortex/MO2 para Single Player Tarkov (SPT)",
   "license": "MIT",
   "author": "Emir",
-  "keywords": ["spt", "single-player-tarkov", "mod-manager", "electron", "tarkov"],
+  "keywords": [
+    "spt",
+    "single-player-tarkov",
+    "mod-manager",
+    "electron",
+    "tarkov"
+  ],
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -17,6 +23,7 @@
     "adm-zip": "^0.5.16",
     "electron-store": "^8.2.0",
     "node-7z": "^3.0.0",
+    "node-unrar-js": "^2.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

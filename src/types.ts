@@ -13,6 +13,11 @@ export interface ModInfo {
   installedAt?: string;
 }
 
+export interface ModListComparison {
+  missing: string[];
+  extra: string[];
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<string | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
@@ -25,6 +30,8 @@ export interface ModManagerAPI {
   reorderMods: (orderedIds: string[]) => Promise<{ success: boolean; message: string }>;
   renameMod: (modId: string, alias: string) => Promise<{ success: boolean; message: string }>;
   openModFolder: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
+  exportModList: () => Promise<{ success: boolean; message: string }>;
+  importModList: () => Promise<{ success: boolean; message: string; comparison?: ModListComparison }>;
 }
 
 declare global {

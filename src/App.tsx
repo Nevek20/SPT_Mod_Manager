@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, type DragEvent } from "react";
+import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ModInfo, ModType } from "./types";
 
 interface Toast {
@@ -51,6 +51,7 @@ export default function App() {
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
+  const [compareResult, setCompareResult] = useState<{ missing: string[]; extra: string[] } | null>(null);
 
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
@@ -187,10 +188,10 @@ export default function App() {
     setDragCounter(0);
 
     const files = Array.from(e.dataTransfer.files);
-    const archives = files.filter((f) => /\.(zip|7z)$/i.test(f.name));
+    const archives = files.filter((f) => /\.(zip|7z|rar)$/i.test(f.name));
 
     if (archives.length === 0) {
-      pushToast("Solte um arquivo .zip ou .7z pra instalar.", false);
+      pushToast("Solte um arquivo .zip, .7z ou .rar pra instalar.", false);
       return;
     }
 
@@ -243,8 +244,21 @@ export default function App() {
   }
 
   async function handleReinstall() {
-    pushToast("Selecione o arquivo atualizado do mod (.zip / .7z)...", true);
+    pushToast("Selecione o arquivo atualizado do mod (.zip / .7z / .rar)...", true);
     await handleInstall();
+  }
+
+  async function handleExportList() {
+    const result = await window.modManagerAPI.exportModList();
+    pushToast(result.message, result.success);
+  }
+
+  async function handleImportList() {
+    const result = await window.modManagerAPI.importModList();
+    pushToast(result.message, result.success);
+    if (result.success && result.comparison) {
+      setCompareResult(result.comparison);
+    }
   }
 
   async function handleMove(mod: ModInfo, direction: -1 | 1) {
@@ -331,6 +345,10 @@ export default function App() {
     setMutating(false);
   }
 
+  function selectRange(keys: string[]) {
+    setSelectedKeys((prev) => new Set([...prev, ...keys]));
+  }
+
   const listProps = {
     onToggle: handleToggle,
     onUninstall: handleUninstall,
@@ -344,6 +362,7 @@ export default function App() {
     onEditingValueChange: setEditingValue,
     selectedKeys,
     onToggleSelect: toggleSelect,
+    onRangeSelect: selectRange,
     openMenuKey,
     onSetOpenMenuKey: setOpenMenuKey,
     disabled: mutating
@@ -370,7 +389,7 @@ export default function App() {
         >
           {isDraggingFile && (
             <div className="drop-overlay">
-              <div className="drop-overlay-box">Solte o(s) arquivo(s) .zip / .7z aqui pra instalar</div>
+              <div className="drop-overlay-box">Solte o(s) arquivo(s) .zip / .7z / .rar aqui pra instalar</div>
             </div>
           )}
           <header>
@@ -381,8 +400,8 @@ export default function App() {
             <div className="header-actions">
               <button onClick={handleOpenModHub} title="Abrir hub.sp-tarkov.com no navegador">Baixar mods</button>
               <button onClick={handleSelectFolder} title="Selecionar outra instância SPT">Trocar instância</button>
-              <button onClick={handleInstall} disabled={loading} className="primary" title="Escolher um .zip ou .7z pra instalar">
-                {loading ? "Instalando..." : "Instalar mod (.zip / .7z)"}
+              <button onClick={handleInstall} disabled={loading} className="primary" title="Escolher um .zip, .7z ou .rar pra instalar">
+                {loading ? "Instalando..." : "Instalar mod (.zip / .7z / .rar)"}
               </button>
             </div>
           </header>
@@ -442,12 +461,46 @@ export default function App() {
 
             <button onClick={selectAllVisible} title="Selecionar todos os mods visíveis com os filtros atuais">Selecionar todos (visíveis)</button>
             {selectedKeys.size > 0 && <button onClick={clearSelection}>Limpar seleção</button>}
+
+            <span className="filter-separator" />
+
+            <button onClick={handleExportList} title="Salvar a lista atual de mods num arquivo JSON">Exportar lista</button>
+            <button onClick={handleImportList} title="Comparar a instância atual com uma lista exportada antes">Importar / Comparar</button>
           </div>
 
           {sortField !== "name" && (
             <p className="sort-hint">
               A ordem de carregamento (▲▼) sempre segue o load order real — ordenar por outro campo só muda a exibição.
             </p>
+          )}
+
+          {compareResult && (
+            <div className="compare-panel">
+              <div className="compare-header">
+                <strong>Comparação com a lista importada</strong>
+                <button onClick={() => setCompareResult(null)}>Fechar</button>
+              </div>
+              {compareResult.missing.length === 0 && compareResult.extra.length === 0 ? (
+                <p>As duas listas são idênticas.</p>
+              ) : (
+                <>
+                  {compareResult.missing.length > 0 && (
+                    <p>
+                      <strong>Faltando aqui ({compareResult.missing.length}):</strong> {compareResult.missing.join(", ")}
+                    </p>
+                  )}
+                  {compareResult.extra.length > 0 && (
+                    <p>
+                      <strong>A mais aqui, fora da lista importada ({compareResult.extra.length}):</strong> {compareResult.extra.join(", ")}
+                    </p>
+                  )}
+                </>
+              )}
+              <p className="compare-note">
+                Isso é só uma comparação — o app não guarda os arquivos originais dos mods, então reinstalar os que
+                estão faltando precisa ser feito manualmente.
+              </p>
+            </div>
           )}
 
           {selectedKeys.size > 0 && (
@@ -509,6 +562,7 @@ function ModList({
   onEditingValueChange,
   selectedKeys,
   onToggleSelect,
+  onRangeSelect,
   openMenuKey,
   onSetOpenMenuKey,
   disabled = false
@@ -528,12 +582,25 @@ function ModList({
   onEditingValueChange: (value: string) => void;
   selectedKeys: Set<string>;
   onToggleSelect: (mod: ModInfo) => void;
+  onRangeSelect: (keys: string[]) => void;
   openMenuKey: string | null;
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
 }) {
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+
   if (mods.length === 0) {
     return <p className="empty-list">Nenhum mod nessa categoria.</p>;
+  }
+
+  function handleCheckboxClick(e: ReactMouseEvent<HTMLInputElement>, mod: ModInfo, index: number) {
+    if (e.shiftKey && lastClickedIndex !== null) {
+      const [start, end] = lastClickedIndex < index ? [lastClickedIndex, index] : [index, lastClickedIndex];
+      onRangeSelect(mods.slice(start, end + 1).map(selectionKey));
+    } else {
+      onToggleSelect(mod);
+    }
+    setLastClickedIndex(index);
   }
 
   return (
@@ -547,9 +614,11 @@ function ModList({
             <input
               type="checkbox"
               checked={selectedKeys.has(key)}
-              onChange={() => onToggleSelect(mod)}
+              onClick={(e) => handleCheckboxClick(e, mod, index)}
+              onChange={() => {}}
               className="mod-checkbox"
               disabled={disabled}
+              title="Clique para selecionar, Shift+Clique para selecionar um intervalo"
             />
             <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
             {reorderable && mod.enabled && (
