@@ -1,5 +1,7 @@
 # SPT Mod Manager
 
+🇺🇸 Read in English: [README.md](README.md)
+
 Um gerenciador de mods estilo **Vortex / Mod Organizer 2**, feito especificamente pro **Single Player Tarkov (SPT)**.
 
 Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, habilitar/desabilitar e remover mods sem precisar mexer manualmente em pastas — mantendo compatibilidade com mods que você já instalou na mão.
