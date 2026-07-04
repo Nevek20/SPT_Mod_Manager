@@ -38,7 +38,7 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 
 ## 📸 Screenshots
 
-*(adicione aqui uma screenshot da tela principal — recomendo colocar em `docs/screenshot.png` e referenciar com `![tela principal](docs/screenshot.png)`)*
+[tela principal](docs/screenshot.png)
 
 ---
 
