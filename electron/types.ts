@@ -11,6 +11,7 @@ export interface ModInfo {
   version?: string; // extraído do package.json do mod, quando existe
   author?: string; // extraído do package.json do mod, quando existe
   installedAt?: string; // data ISO de quando foi instalado pelo app (registro local)
+  manifestOnly?: boolean; // true = mod "órfão" rastreado por manifesto (sem pasta nomeada própria); não suporta habilitar/desabilitar
 }
 
 export interface InstanceConfig {

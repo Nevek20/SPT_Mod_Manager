@@ -14,5 +14,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   renameMod: (modId: string, alias: string) => ipcRenderer.invoke("rename-mod", modId, alias),
   openModFolder: (mod: ModInfo) => ipcRenderer.invoke("open-mod-folder", mod),
   exportModList: () => ipcRenderer.invoke("export-mod-list"),
-  importModList: () => ipcRenderer.invoke("import-mod-list")
+  importModList: () => ipcRenderer.invoke("import-mod-list"),
+  getSptVersion: () => ipcRenderer.invoke("get-spt-version"),
+  detectConflicts: () => ipcRenderer.invoke("detect-conflicts")
 });

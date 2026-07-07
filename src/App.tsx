@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ModInfo, ModType } from "./types";
+import { ModInfo, ModType, ConflictReport } from "./types";
 
 interface Toast {
   id: number;
@@ -52,6 +52,9 @@ export default function App() {
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
   const [compareResult, setCompareResult] = useState<{ missing: string[]; extra: string[] } | null>(null);
+  const [sptVersion, setSptVersion] = useState<string | undefined>(undefined);
+  const [conflictReport, setConflictReport] = useState<ConflictReport | null>(null);
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
 
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
@@ -134,7 +137,10 @@ export default function App() {
     (async () => {
       const path = await window.modManagerAPI.getSptPath();
       setSptPath(path);
-      if (path) refreshMods();
+      if (path) {
+        refreshMods();
+        setSptVersion(await window.modManagerAPI.getSptVersion());
+      }
     })();
   }, [refreshMods]);
 
@@ -144,6 +150,7 @@ export default function App() {
       setSptPath(result.path);
       pushToast(result.message ?? "Instância configurada.", true);
       refreshMods();
+      setSptVersion(await window.modManagerAPI.getSptVersion());
     } else {
       pushToast(result.message ?? "Não foi possível selecionar a pasta.", false);
     }
@@ -259,6 +266,15 @@ export default function App() {
     if (result.success && result.comparison) {
       setCompareResult(result.comparison);
     }
+  }
+
+  async function handleDetectConflicts() {
+    setCheckingConflicts(true);
+    const report = await window.modManagerAPI.detectConflicts();
+    setConflictReport(report);
+    setCheckingConflicts(false);
+    const total = report.clientFileConflicts.length + report.duplicateServerNames.length;
+    pushToast(total === 0 ? "Nenhum conflito óbvio encontrado." : `${total} possível(is) conflito(s) encontrado(s).`, total === 0);
   }
 
   async function handleMove(mod: ModInfo, direction: -1 | 1) {
@@ -414,6 +430,11 @@ export default function App() {
             <span className="summary-item">Client: <strong>{summary.client}</strong></span>
             <span className="summary-item summary-active">Ativos: <strong>{summary.active}</strong></span>
             <span className="summary-item summary-disabled">Desativados: <strong>{summary.disabled}</strong></span>
+            {sptVersion && (
+              <span className="summary-item" title="Versão lida de SPT_Data/Server/configs/core.json">
+                SPT <strong>{sptVersion}</strong>
+              </span>
+            )}
             <span className="summary-item summary-valid" title="A pasta selecionada passou na validação de instância SPT">✔ Instância válida</span>
           </div>
 
@@ -466,6 +487,9 @@ export default function App() {
 
             <button onClick={handleExportList} title="Salvar a lista atual de mods num arquivo JSON">Exportar lista</button>
             <button onClick={handleImportList} title="Comparar a instância atual com uma lista exportada antes">Importar / Comparar</button>
+            <button onClick={handleDetectConflicts} disabled={checkingConflicts} title="Procura DLLs duplicadas entre client mods e nomes duplicados entre server mods">
+              {checkingConflicts ? "Verificando..." : "Verificar conflitos"}
+            </button>
           </div>
 
           {sortField !== "name" && (
@@ -499,6 +523,34 @@ export default function App() {
               <p className="compare-note">
                 Isso é só uma comparação — o app não guarda os arquivos originais dos mods, então reinstalar os que
                 estão faltando precisa ser feito manualmente.
+              </p>
+            </div>
+          )}
+
+          {conflictReport && (
+            <div className="compare-panel">
+              <div className="compare-header">
+                <strong>Verificação de conflitos</strong>
+                <button onClick={() => setConflictReport(null)}>Fechar</button>
+              </div>
+              {conflictReport.clientFileConflicts.length === 0 && conflictReport.duplicateServerNames.length === 0 ? (
+                <p>Nenhum conflito óbvio encontrado.</p>
+              ) : (
+                <>
+                  {conflictReport.clientFileConflicts.map((c) => (
+                    <p key={`dll-${c.fileName}`}>
+                      <strong>DLL "{c.fileName}"</strong> aparece em: {c.mods.join(", ")}
+                    </p>
+                  ))}
+                  {conflictReport.duplicateServerNames.map((d) => (
+                    <p key={`name-${d.declaredName}`}>
+                      <strong>Nome "{d.declaredName}"</strong> declarado em mais de uma pasta: {d.mods.join(", ")}
+                    </p>
+                  ))}
+                </>
+              )}
+              <p className="compare-note">
+                Checagem no nível de arquivo — sinaliza sobreposição, não garante incompatibilidade de verdade.
               </p>
             </div>
           )}
@@ -653,6 +705,11 @@ function ModList({
                 <span className="origin-chip">{mod.installedManually ? "Manual" : "Manager"}</span>
                 {mod.version && <span className="meta-chip">v{mod.version}</span>}
                 {mod.author && <span className="meta-chip">por {mod.author}</span>}
+                {mod.manifestOnly && (
+                  <span className="meta-chip" title="Arquivos soltos rastreados por manifesto (sem pasta própria) — só dá pra remover">
+                    Órfão
+                  </span>
+                )}
               </div>
             </div>
             <div className="action-menu-wrapper">
@@ -661,10 +718,14 @@ function ModList({
               </button>
               {isMenuOpen && (
                 <div className="action-menu">
-                  <button onClick={() => { onToggle(mod); onSetOpenMenuKey(null); }}>
-                    {mod.enabled ? "Desabilitar" : "Habilitar"}
-                  </button>
-                  <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>Abrir pasta</button>
+                  {!mod.manifestOnly && (
+                    <button onClick={() => { onToggle(mod); onSetOpenMenuKey(null); }}>
+                      {mod.enabled ? "Desabilitar" : "Habilitar"}
+                    </button>
+                  )}
+                  {!mod.manifestOnly && (
+                    <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>Abrir pasta</button>
+                  )}
                   <button onClick={() => onRenameStart(mod)}>Renomear</button>
                   <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>Reinstalar</button>
                   <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>Remover</button>

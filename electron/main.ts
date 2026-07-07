@@ -12,7 +12,9 @@ import {
   setModAlias,
   resolveModPath,
   exportModListData,
-  compareModList
+  compareModList,
+  detectConflicts,
+  detectSptVersion
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
@@ -84,6 +86,18 @@ ipcMain.handle("scan-mods", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return [];
   return scanMods(sptPath);
+});
+
+ipcMain.handle("get-spt-version", () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return undefined;
+  return detectSptVersion(sptPath);
+});
+
+ipcMain.handle("detect-conflicts", () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { clientFileConflicts: [], duplicateServerNames: [] };
+  return detectConflicts(sptPath);
 });
 
 ipcMain.handle("install-mod", async () => {

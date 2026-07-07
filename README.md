@@ -1,12 +1,10 @@
 # SPT Mod Manager
 
-🇧🇷 Leia em português: [README.pt-BR.md](README.pt-BR.md)
-
 A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
 
 A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
 
-> ⚠️ Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners. ⚠️
+> Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners.
 
 ---
 
@@ -24,6 +22,11 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 - Rename a mod's display name (alias) without touching any real file or folder
 - Detects manually installed mods (outside the app) and distinguishes them from "installed by the Manager"
 - Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra — it doesn't reinstall anything automatically, since the app doesn't keep the original archives)
+- "Hybrid" mods installed via merge that leave loose files with no folder of their own still show up as an "Orphan" row, tracked through a manifest — removable cleanly even without a named folder
+
+**Reliability**
+- Conflict detection: duplicate DLL names across different client mods, and server mods declaring the same `name` in different folders
+- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary
 
 **Finding what you need**
 - Real-time search by name
@@ -33,8 +36,8 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 
 **Interface**
 - Cards showing type, status, origin, and — when available — mod version and author
-- Per-mod action menu: enable/disable, open folder, rename, reinstall, remove
-- Instance summary in the header (total mods, breakdown by type, enabled/disabled)
+- Per-mod action menu: enable/disable, open folder, rename, reinstall, remove (orphan entries only show rename/remove, since they don't have a folder of their own to enable or open)
+- Instance summary in the header (total mods, breakdown by type, enabled/disabled, detected SPT version)
 - Temporary success/error notifications
 
 ---
@@ -116,15 +119,15 @@ SPT loads server mods in alphabetical order. The app controls this by prefixing 
 - `.spt-mod-manager-aliases.json` — custom display names (renaming doesn't touch any real file)
 
 ### "Smart" installation
-When installing a `.zip`/`.7z`, the app searches recursively (not just at the archive's root) for a folder containing `user/` and/or `BepInEx/` — this covers both "ready to copy" mods and mods wrapped in an extra folder. If that structure isn't found, it tries to identify whether it's a server mod (via `package.json`) or a client mod (via `.dll`) and installs it in the right place.
+When installing a `.zip`/`.7z`/`.rar`, the app searches recursively (not just at the archive's root) for a folder containing `user/` and/or `BepInEx/` — this covers both "ready to copy" mods and mods wrapped in an extra folder. If that structure isn't found, it tries to identify whether it's a server mod (via `package.json`) or a client mod (via `.dll`) and installs it in the right place.
 
 ---
 
 ## Known limitations
 
-- **"Hybrid" mods installed via merge** (a single archive bringing `user/` and `BepInEx/` together, without named subfolders inside) don't get their own row to enable/disable as a unit — their files blend into existing folders. Handling this properly would require an install manifest tracking file-by-file ownership.
+- **"Hybrid" mods installed via merge** show up as an "Orphan" row tracked through a manifest, but only support rename/remove — no enable/disable as a unit, since there's no folder of their own to move.
 - **"Reinstall"** in the action menu opens the generic file picker (it doesn't keep the original `.zip`/`.7z`/`.rar`) — works well for updating a mod to a new version, but isn't a true one-click "reinstall this exact thing."
-- **No conflict detection** between mods (two mods overwriting the same file).
+- **Conflict detection is file-level**, not semantic — it flags duplicate DLLs and duplicate server mod names, but has no idea whether two mods actually touch the same thing in-game.
 - **No integrated search/download** from [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — intentionally, to avoid depending on an external API that can change without notice (the app just opens the link in your browser).
 - Only tested on Windows.
 
@@ -132,9 +135,15 @@ When installing a `.zip`/`.7z`, the app searches recursively (not just at the ar
 
 ## Roadmap
 
-- [ ] Conflict detection between mods
-- [ ] Automatic SPT version detection in the header summary
-- [ ] Install manifest for hybrid mods (manage them as a unit)
+Done (moved up into Features ⬆️):
+- [x] Conflict detection between mods (file-level)
+- [x] Automatic SPT version detection in the header summary
+- [x] Install manifest for hybrid mods (they show up in the list and can be removed cleanly)
+
+Still open:
+- [ ] A real one-click "reinstall", remembering the original `.zip`/`.7z`/`.rar` instead of reopening the generic file picker
+- [ ] Deeper conflict detection (e.g. two mods editing the same loot table), not just duplicate file names
+- [ ] Linux/macOS support
 
 ---
 

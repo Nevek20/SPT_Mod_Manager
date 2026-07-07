@@ -7,6 +7,23 @@ import { createExtractorFromFile } from "node-unrar-js";
 import { ModInfo, ModType, RegistryEntry, ModListComparison } from "./types";
 
 /**
+ * Lê a versão do SPT a partir de SPT_Data/Server/configs/core.json — é o mesmo arquivo
+ * que o pipeline oficial do SPT usa pra validar compatibilidade, então é uma fonte confiável.
+ * Best-effort: se o arquivo não existir ou o formato mudar numa versão futura, retorna undefined
+ * em vez de quebrar o resto do app.
+ */
+export function detectSptVersion(sptPath: string): string | undefined {
+  try {
+    const corePath = path.join(sptPath, "SPT_Data", "Server", "configs", "core.json");
+    if (!fs.existsSync(corePath)) return undefined;
+    const core = JSON.parse(fs.readFileSync(corePath, "utf-8"));
+    return typeof core.sptVersion === "string" ? core.sptVersion : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Extrai .zip, .7z ou .rar pra uma pasta de destino.
  * .zip usa adm-zip (puro JS, sem binário externo).
  * .7z usa o binário 7za empacotado via 7zip-bin, através do node-7z.
@@ -201,6 +218,55 @@ export function setModAlias(sptPath: string, modId: string, alias: string): { su
   return { success: true, message: "Nome atualizado." };
 }
 
+// --- Manifesto de arquivos "órfãos" (mods hybrid instalados via merge sem pasta nomeada) ---
+// Quando um zip/7z/rar traz user/ e/ou BepInEx/ mas os arquivos não caem em nenhuma pasta
+// reconhecível (user/mods/<nome> ou BepInEx/plugins/<nome>), a gente rastreia individualmente
+// cada arquivo que entrou, pra esse "mod" pelo menos aparecer como uma linha removível na lista
+// em vez de virar um registro fantasma que ninguém consegue gerenciar.
+function getManifestPath(sptPath: string): string {
+  return path.join(sptPath, ".spt-mod-manager-manifest.json");
+}
+
+function loadManifest(sptPath: string): Record<string, string[]> {
+  const manifestPath = getManifestPath(sptPath);
+  if (!fs.existsSync(manifestPath)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveManifest(sptPath: string, manifest: Record<string, string[]>) {
+  fs.writeFileSync(getManifestPath(sptPath), JSON.stringify(manifest, null, 2), "utf-8");
+}
+
+function addManifestEntry(sptPath: string, id: string, relativeFiles: string[]) {
+  const manifest = loadManifest(sptPath);
+  manifest[id] = relativeFiles;
+  saveManifest(sptPath, manifest);
+}
+
+function removeManifestEntry(sptPath: string, id: string) {
+  const manifest = loadManifest(sptPath);
+  delete manifest[id];
+  saveManifest(sptPath, manifest);
+}
+
+/** Lista todo arquivo (recursivo) dentro de baseDir, com caminho relativo usando "/" sempre. */
+function listFilesRelative(baseDir: string, currentDir: string = baseDir): string[] {
+  let results: string[] = [];
+  for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+    const full = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      results = results.concat(listFilesRelative(baseDir, full));
+    } else {
+      results.push(path.relative(baseDir, full).split(path.sep).join("/"));
+    }
+  }
+  return results;
+}
+
 // --- Load order (server mods carregam em ordem alfabética; prefixamos com número) ---
 function stripLoadOrderPrefix(name: string): { order: number; cleanName: string } {
   const match = name.match(/^(\d{2})_(.+)$/);
@@ -243,6 +309,74 @@ export function compareModList(sptPath: string, importedNames: string[]): ModLis
     missing: importedNames.filter((n) => !currentSet.has(n)),
     extra: currentNames.filter((n) => !importedSet.has(n))
   };
+}
+
+export interface ConflictReport {
+  clientFileConflicts: { fileName: string; mods: string[] }[];
+  duplicateServerNames: { declaredName: string; mods: string[] }[];
+}
+
+/**
+ * Checagem de conflitos best-effort, no nível de arquivo — não é (e não tenta ser) uma análise
+ * semântica de "esses dois mods mexem no mesmo item do jogo". O que dá pra detectar com segurança
+ * a partir do sistema de arquivos:
+ *
+ * 1) DLLs com o mesmo nome vindas de mods client DIFERENTES — o BepInEx carrega toda DLL que
+ *    achar recursivamente em BepInEx/plugins/, então duas cópias de uma mesma dependência (ou
+ *    duas dlls homônimas de mods diferentes) podem colidir em tempo de execução.
+ * 2) Mods server com o mesmo "name" declarado no package.json, mas em pastas diferentes — sinal
+ *    clássico de "instalei o mesmo mod duas vezes sem perceber" (ex: atualizaram e a pasta antiga
+ *    não foi removida).
+ */
+export function detectConflicts(sptPath: string): ConflictReport {
+  const clientFileConflicts: { fileName: string; mods: string[] }[] = [];
+  const dllOwners = new Map<string, Set<string>>();
+
+  const clientDir = p(sptPath, CLIENT_PLUGINS_DIR);
+  if (fs.existsSync(clientDir)) {
+    for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const dlls = findFilesRecursive(path.join(clientDir, entry.name), ".dll");
+        for (const dllPath of dlls) {
+          const base = path.basename(dllPath);
+          if (!dllOwners.has(base)) dllOwners.set(base, new Set());
+          dllOwners.get(base)!.add(entry.name);
+        }
+      } else if (entry.name.toLowerCase().endsWith(".dll")) {
+        if (!dllOwners.has(entry.name)) dllOwners.set(entry.name, new Set());
+        dllOwners.get(entry.name)!.add("(solto em BepInEx/plugins)");
+      }
+    }
+  }
+  for (const [fileName, owners] of dllOwners) {
+    if (owners.size > 1) clientFileConflicts.push({ fileName, mods: [...owners] });
+  }
+
+  const duplicateServerNames: { declaredName: string; mods: string[] }[] = [];
+  const nameOwners = new Map<string, Set<string>>();
+  const serverDir = p(sptPath, SERVER_MODS_DIR);
+  if (fs.existsSync(serverDir)) {
+    for (const entry of fs.readdirSync(serverDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      try {
+        const pkgPath = path.join(serverDir, entry.name, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+          if (typeof pkg.name === "string") {
+            if (!nameOwners.has(pkg.name)) nameOwners.set(pkg.name, new Set());
+            nameOwners.get(pkg.name)!.add(entry.name);
+          }
+        }
+      } catch {
+        // package.json malformado — ignora silenciosamente, não é fatal pra detecção de conflito
+      }
+    }
+  }
+  for (const [declaredName, owners] of nameOwners) {
+    if (owners.size > 1) duplicateServerNames.push({ declaredName, mods: [...owners] });
+  }
+
+  return { clientFileConflicts, duplicateServerNames };
 }
 
 export function scanMods(sptPath: string): ModInfo[] {
@@ -308,6 +442,26 @@ export function scanMods(sptPath: string): ModInfo[] {
     }
   }
 
+  // Mods "órfãos" rastreados por manifesto (arquivos sem pasta nomeada própria) — não suportam
+  // habilitar/desabilitar, mas aparecem na lista e podem ser removidos de forma limpa.
+  const manifest = loadManifest(sptPath);
+  for (const [manifestId, files] of Object.entries(manifest)) {
+    const stillExists = files.some((relPath) => fs.existsSync(path.join(sptPath, relPath)));
+    if (!stillExists) continue; // arquivos já não existem mais (removidos por fora) — não mostra fantasma
+    const registryEntry = registry.find((r) => r.id === manifestId);
+    mods.push({
+      id: manifestId,
+      name: aliases[manifestId] ?? registryEntry?.displayName ?? manifestId,
+      originalName: registryEntry?.displayName ?? manifestId,
+      type: registryEntry?.type ?? "hybrid",
+      enabled: true,
+      installedManually: false,
+      loadOrder: 99,
+      installedAt: registryEntry?.installedAt,
+      manifestOnly: true
+    });
+  }
+
   return mods.sort((a, b) => a.loadOrder - b.loadOrder || a.name.localeCompare(b.name));
 }
 
@@ -347,6 +501,19 @@ export async function installModFromArchive(sptPath: string, archivePath: string
         }
       }
 
+      // Qualquer arquivo que não caia dentro de uma dessas pastas nomeadas é "órfão" —
+      // ex: algo solto direto em user/ ou BepInEx/ fora de mods/plugins. Rastreamos esses
+      // caminhos num manifesto antes de apagar a pasta temporária, pra não perder o rastro.
+      const allCopiedFiles = listFilesRelative(mergeRoot);
+      const attributedPrefixes = [
+        ...serverModNames.map((name) => `user/mods/${name}/`),
+        ...clientModNames.map((name) => `BepInEx/plugins/${name}/`)
+      ];
+      const attributedExactFiles = new Set(clientModNames.map((name) => `BepInEx/plugins/${name}`));
+      const orphanFiles = allCopiedFiles.filter(
+        (f) => !attributedExactFiles.has(f) && !attributedPrefixes.some((prefix) => f.startsWith(prefix))
+      );
+
       copyRecursive(mergeRoot, sptPath);
       const verification = verifyCopyRecursive(mergeRoot, sptPath);
       if (!verification.ok) {
@@ -362,11 +529,13 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       for (const name of clientModNames) {
         addToRegistry(sptPath, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
       }
-      if (serverModNames.length === 0 && clientModNames.length === 0) {
-        // Fallback: não achou subpastas nomeadas (ex: arquivos soltos direto em user/ ou BepInEx/) —
-        // registra uma entrada genérica só pra não perder o rastro completamente.
+      if (orphanFiles.length > 0) {
+        // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
+        // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
+        const orphanId = "hybrid-manifest-" + Date.now();
+        addManifestEntry(sptPath, orphanId, orphanFiles);
         addToRegistry(sptPath, {
-          id: "estrutura-mesclada-" + Date.now(),
+          id: orphanId,
           displayName: path.parse(archivePath).name,
           type: mergedType,
           installedAt: new Date().toISOString(),
@@ -469,6 +638,32 @@ export function toggleMod(sptPath: string, mod: ModInfo): { success: boolean; me
 
 // --- Desinstalar ---
 export function uninstallMod(sptPath: string, mod: ModInfo): { success: boolean; message: string } {
+  // Mods "órfãos" (manifestOnly) não têm uma pasta própria com o nome do mod —
+  // são arquivos soltos rastreados individualmente no manifesto. Precisa apagar
+  // cada arquivo listado, em vez de tentar achar uma pasta chamada `mod.id`.
+  if (mod.manifestOnly) {
+    const manifest = loadManifest(sptPath);
+    const files = manifest[mod.id];
+    if (!files || files.length === 0) {
+      // Registro já estava vazio/inconsistente — ainda assim limpa a entrada
+      // da lista pra não deixar um fantasma que ninguém consegue remover.
+      removeManifestEntry(sptPath, mod.id);
+      removeFromRegistry(sptPath, mod.id);
+      return { success: true, message: "Entrada removida da lista (nenhum arquivo rastreado)." };
+    }
+    let removedCount = 0;
+    for (const relPath of files) {
+      const target = path.join(sptPath, relPath);
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { force: true });
+        removedCount++;
+      }
+    }
+    removeManifestEntry(sptPath, mod.id);
+    removeFromRegistry(sptPath, mod.id);
+    return { success: true, message: `${removedCount} arquivo(s) órfão(s) removido(s).` };
+  }
+
   const isServer = mod.type === "server";
   const dir = p(sptPath, mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
   const target = path.join(dir, mod.id);

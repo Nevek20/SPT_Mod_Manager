@@ -13,7 +13,7 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 ## Funcionalidades
 
 **Instalação**
-- Instalar mods a partir de `.zip` ou `.7z`, via seletor de arquivo **ou arrastando e soltando** direto na janela
+- Instalar mods a partir de `.zip`, `.7z` ou `.rar`, via seletor de arquivo **ou arrastando e soltando** direto na janela
 - Detecção automática de estrutura — funciona mesmo quando o mod vem "embrulhado" em pastas extras (ex: `SPT/user/mods/NomeDoMod/...`)
 - Detecção de tipo: **Server**, **Client** ou **Hybrid** (quando o mod tem as duas partes)
 - Verificação pós-instalação: confere arquivo por arquivo que tudo foi copiado corretamente antes de reportar sucesso
@@ -23,17 +23,23 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 - Reordenar load order de server mods (setas ▲▼, com prefixo numérico nas pastas — é assim que o SPT respeita ordem de carregamento)
 - Renomear a exibição de um mod (alias) sem tocar em nenhum arquivo ou pasta real
 - Detecta mods instalados manualmente (fora do app) e diferencia de "instalado pelo Manager"
+- Mods "hybrid" instalados via merge que deixam arquivos soltos (sem pasta própria) ainda aparecem na lista como um item "Órfão", rastreado por manifesto — dá pra remover de forma limpa mesmo sem uma pasta nomeada
 
 **Encontrar o que você precisa**
 - Busca em tempo real por nome
 - Filtros por tipo, status (ativo/desativado) e origem (manual/Manager)
 - Ordenação por nome, tipo, status, origem ou data de instalação
-- Seleção múltipla com ações em lote (habilitar/desabilitar/remover vários de uma vez)
+- Seleção múltipla — clique em cada checkbox ou Shift+Clique pra selecionar um intervalo — com ações em lote (habilitar/desabilitar/remover vários de uma vez)
+
+**Confiabilidade**
+- Export/import de lista de mods (JSON) pra comparar duas instâncias ou guardar um backup de "quais mods eu tinha instalado"
+- Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
+- Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo
 
 **Interface**
 - Cards com tipo, status, origem e — quando disponível — versão e autor do mod
-- Menu de ações por mod (`⋮`): habilitar/desabilitar, abrir pasta, renomear, reinstalar, remover
-- Resumo da instância no cabeçalho (total de mods, quebra por tipo, ativos/desativados)
+- Menu de ações por mod (`⋮`): habilitar/desabilitar, abrir pasta, renomear, reinstalar, remover (itens "Órfão" mostram só renomear/remover, já que não têm uma pasta própria pra habilitar ou abrir)
+- Resumo da instância no cabeçalho (total de mods, quebra por tipo, ativos/desativados, versão do SPT)
 - Notificações temporárias de sucesso/erro
 
 ---
@@ -116,16 +122,15 @@ SPT carrega server mods em ordem alfabética. O app controla isso prefixando a p
 - `.spt-mod-manager-aliases.json` — nomes de exibição customizados (renomear não mexe em arquivo real)
 
 ### Instalação "inteligente"
-Ao instalar um `.zip`/`.7z`, o app procura recursivamente (não só na raiz do arquivo) por uma pasta que contenha `user/` e/ou `BepInEx/` — isso cobre tanto mods "prontos pra copiar" quanto mods embrulhados numa pasta extra. Se não achar essa estrutura, tenta identificar se é um server mod (por `package.json`) ou client mod (por `.dll`) e instala na pasta certa.
+Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na raiz do arquivo) por uma pasta que contenha `user/` e/ou `BepInEx/` — isso cobre tanto mods "prontos pra copiar" quanto mods embrulhados numa pasta extra. Se não achar essa estrutura, tenta identificar se é um server mod (por `package.json`) ou client mod (por `.dll`) e instala na pasta certa.
 
 ---
 
 ## 🐛 Limitações conhecidas
 
-- **Sem suporte a `.rar`** — o 7-Zip lê `.rar`, mas isso exige um codec extra que não vem incluso por licenciamento. Se isso for um problema real no seu uso, dá pra integrar `node-unrar-js` depois.
-- **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) não geram uma linha própria pra habilitar/desabilitar como unidade — os arquivos se misturam nas pastas existentes. Resolver isso direito exigiria um manifesto de instalação rastreando arquivo por arquivo.
-- **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
-- **Sem detecção de conflitos** entre mods (dois mods sobrescrevendo o mesmo arquivo).
+- **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) aparecem como um item "Órfão" rastreado por manifesto, mas só suportam renomear/remover — não dá pra habilitar/desabilitar como unidade, já que não existe uma pasta própria pra mover.
+- **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z`/`.rar` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
+- **Detecção de conflitos é no nível de arquivo**, não semântica — sinaliza DLLs duplicadas e nomes de server mod duplicados, mas não sabe se dois mods realmente mexem na mesma coisa dentro do jogo.
 - **Sem busca/download integrado** do [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — de propósito, pra não depender de uma API externa que pode mudar sem aviso (o app só abre o link no navegador).
 - Testado só no Windows.
 
@@ -133,12 +138,18 @@ Ao instalar um `.zip`/`.7z`, o app procura recursivamente (não só na raiz do a
 
 ## Roadmap
 
-- [ ] Suporte a `.rar`
-- [ ] Export/import de lista de mods (JSON com nomes + fontes)
-- [ ] Detecção de conflitos entre mods
-- [ ] Ctrl+Clique / Shift+Clique pra seleção em range
-- [ ] Versão do SPT detectada automaticamente no resumo do cabeçalho
-- [ ] Manifesto de instalação pra mods hybrid (permitir gerenciar como unidade)
+Já feito (virou funcionalidade lá em cima ⬆️):
+- [x] Suporte a `.rar`
+- [x] Export/import de lista de mods (JSON com nomes + fontes)
+- [x] Detecção de conflitos entre mods (nível de arquivo)
+- [x] Shift+Clique pra seleção em range
+- [x] Versão do SPT detectada automaticamente no resumo do cabeçalho
+- [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover)
+
+Ainda na fila:
+- [ ] "Reinstalar" de verdade guardando o `.zip`/`.7z`/`.rar` original, em vez de reabrir o seletor de arquivo genérico
+- [ ] Detecção de conflitos mais profunda (ex: dois mods editando a mesma tabela de loot), não só nome de arquivo duplicado
+- [ ] Suporte a Linux/macOS
 
 ---
 

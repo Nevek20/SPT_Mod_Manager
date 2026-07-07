@@ -11,11 +11,17 @@ export interface ModInfo {
   version?: string;
   author?: string;
   installedAt?: string;
+  manifestOnly?: boolean;
 }
 
 export interface ModListComparison {
   missing: string[];
   extra: string[];
+}
+
+export interface ConflictReport {
+  clientFileConflicts: { fileName: string; mods: string[] }[];
+  duplicateServerNames: { declaredName: string; mods: string[] }[];
 }
 
 export interface ModManagerAPI {
@@ -32,6 +38,8 @@ export interface ModManagerAPI {
   openModFolder: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   exportModList: () => Promise<{ success: boolean; message: string }>;
   importModList: () => Promise<{ success: boolean; message: string; comparison?: ModListComparison }>;
+  getSptVersion: () => Promise<string | undefined>;
+  detectConflicts: () => Promise<ConflictReport>;
 }
 
 declare global {
