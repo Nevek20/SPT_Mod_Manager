@@ -47,8 +47,8 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 ## Screenshots
 
 ![main screen](docs/screenshot.png)`)
-![main screen 2](docs/screenshot2.png)`)
 
+![main screen 2](docs/screenshot2.png)`)
 ---
 
 ## Getting Started
