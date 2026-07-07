@@ -1,5 +1,7 @@
 # SPT Mod Manager
 
+🇧🇷 **Português:** [Leia o README em Português](README-pt_BR.md)
+
 A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
 
 A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
@@ -44,7 +46,7 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 
 ## Screenshots
 
-*(add a screenshot of the main screen here — I'd suggest putting it at `docs/screenshot.png` and referencing it with `![main screen](docs/screenshot.png)`)*
+![main screen](docs/screenshot.png)`)
 
 ---
 
