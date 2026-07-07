@@ -1,6 +1,6 @@
 # SPT Mod Manager
 
-🇧🇷 **Português:** [Leia o README em Português](README-pt_BR.md)
+🇧🇷 **Português:** [Leia o README em Português](README.pt-BR.md)
 
 A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
 
