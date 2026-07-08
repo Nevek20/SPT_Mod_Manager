@@ -1,12 +1,10 @@
 # SPT Mod Manager
 
-🇧🇷 **Português:** [Leia o README em Português](README.pt-BR.md)
-
 A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
 
 A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
 
-> ⚠️ Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners. ⚠️
+> Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners.
 
 ---
 
@@ -28,7 +26,7 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 
 **Reliability**
 - Conflict detection: duplicate DLL names across different client mods, and server mods declaring the same `name` in different folders
-- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary
+- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary — on SPT 4.0+ installs, `core.json` no longer stores the SPT version itself, so it falls back to showing the compatible Tarkov version instead
 
 **Finding what you need**
 - Real-time search by name
@@ -46,9 +44,7 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 
 ## Screenshots
 
-![Main screen](docs/screenshot.png)
-
-![Main screen 2](docs/screenshot2.png)
+*(add a screenshot of the main screen here — I'd suggest putting it at `docs/screenshot.png` and referencing it with `![main screen](docs/screenshot.png)`)*
 
 ---
 

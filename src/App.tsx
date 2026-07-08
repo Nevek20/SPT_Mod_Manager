@@ -431,8 +431,11 @@ export default function App() {
             <span className="summary-item summary-active">Ativos: <strong>{summary.active}</strong></span>
             <span className="summary-item summary-disabled">Desativados: <strong>{summary.disabled}</strong></span>
             {sptVersion && (
-              <span className="summary-item" title="Versão lida de SPT_Data/Server/configs/core.json">
-                SPT <strong>{sptVersion}</strong>
+              <span
+                className="summary-item"
+                title="Lido de SPT_Data/Server/configs/core.json — a partir do SPT 4.0 esse arquivo só guarda a versão do Tarkov compatível, não a versão do SPT em si"
+              >
+                {sptVersion}
               </span>
             )}
             <span className="summary-item summary-valid" title="A pasta selecionada passou na validação de instância SPT">✔ Instância válida</span>

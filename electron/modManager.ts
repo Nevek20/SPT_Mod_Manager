@@ -13,14 +13,58 @@ import { ModInfo, ModType, RegistryEntry, ModListComparison } from "./types";
  * em vez de quebrar o resto do app.
  */
 export function detectSptVersion(sptPath: string): string | undefined {
-  try {
-    const corePath = path.join(sptPath, "SPT_Data", "Server", "configs", "core.json");
-    if (!fs.existsSync(corePath)) return undefined;
-    const core = JSON.parse(fs.readFileSync(corePath, "utf-8"));
-    return typeof core.sptVersion === "string" ? core.sptVersion : undefined;
-  } catch {
+  // A estrutura de pastas do SPT varia entre versões e formas de instalar —
+  // às vezes tem uma pasta "Server" no meio do caminho, às vezes não; às vezes
+  // tem uma pasta extra com o mesmo nome do SPT (dependendo de como o release
+  // foi extraído). Em vez de chutar um caminho fixo (e continuar errando pra
+  // instalações diferentes da nossa), procura o core.json de verdade dentro da
+  // instância — pulando pastas pesadas (user/mods, BepInEx, database) que não
+  // têm esse arquivo e só deixariam a busca lenta à toa. A pasta "database"
+  // também é onde mora um OUTRO core.json (de bots), que não é o que queremos.
+  const IGNORED_DIRS = new Set(["user", "bepinex", "database", "node_modules", ".git"]);
+  const MAX_DEPTH = 5;
+
+  function tryReadCore(corePath: string): string | undefined {
+    try {
+      const core = JSON.parse(fs.readFileSync(corePath, "utf-8"));
+      if (typeof core.sptVersion === "string") return `SPT ${core.sptVersion}`;
+      if (typeof core.akiVersion === "string") return `SPT ${core.akiVersion}`;
+      // A partir do SPT 4.0, o core.json não guarda mais a versão do SPT em si —
+      // só a versão do Tarkov com que ele é compatível. Não é a mesma informação,
+      // mas é a melhor pista disponível nesse arquivo, então mostra com o rótulo
+      // certo em vez de apresentar como se fosse a versão do SPT.
+      if (typeof core.compatibleTarkovVersion === "string") return `Tarkov ${core.compatibleTarkovVersion}`;
+    } catch {
+      // não parseou, ou não tinha nenhum dos campos esperados — não é o core.json certo
+    }
     return undefined;
   }
+
+  function search(dir: string, depth: number): string | undefined {
+    if (depth > MAX_DEPTH) return undefined;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.toLowerCase() === "core.json") {
+        const result = tryReadCore(path.join(dir, entry.name));
+        if (result) return result;
+      }
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !IGNORED_DIRS.has(entry.name.toLowerCase())) {
+        const result = search(path.join(dir, entry.name), depth + 1);
+        if (result) return result;
+      }
+    }
+    return undefined;
+  }
+
+  return search(sptPath, 0);
 }
 
 /**

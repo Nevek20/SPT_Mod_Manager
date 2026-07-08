@@ -23,23 +23,23 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 - Reordenar load order de server mods (setas ▲▼, com prefixo numérico nas pastas — é assim que o SPT respeita ordem de carregamento)
 - Renomear a exibição de um mod (alias) sem tocar em nenhum arquivo ou pasta real
 - Detecta mods instalados manualmente (fora do app) e diferencia de "instalado pelo Manager"
-- Exporta a lista de mods atual pra um arquivo JSON, e importa uma exportação anterior pra comparar com o que está instalado agora (mostra o que falta / o que sobra — não reinstala nada automaticamente, já que o app não guarda os arquivos originais)
 - Mods "hybrid" instalados via merge que deixam arquivos soltos (sem pasta própria) ainda aparecem na lista como um item "Órfão", rastreado por manifesto — dá pra remover de forma limpa mesmo sem uma pasta nomeada
-
-**Confiabilidade**
-- Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
-- Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo
 
 **Encontrar o que você precisa**
 - Busca em tempo real por nome
 - Filtros por tipo, status (ativo/desativado) e origem (manual/Manager)
 - Ordenação por nome, tipo, status, origem ou data de instalação
-- Seleção múltipla com ações em lote (habilitar/desabilitar/remover vários de uma vez), incluindo Shift+Clique pra seleção de intervalo
+- Seleção múltipla — clique em cada checkbox ou Shift+Clique pra selecionar um intervalo — com ações em lote (habilitar/desabilitar/remover vários de uma vez)
+
+**Confiabilidade**
+- Export/import de lista de mods (JSON) pra comparar duas instâncias ou guardar um backup de "quais mods eu tinha instalado"
+- Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
+- Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão do Tarkov compatível como alternativa
 
 **Interface**
 - Cards com tipo, status, origem e — quando disponível — versão e autor do mod
-- Menu de ações por mod: habilitar/desabilitar, abrir pasta, renomear, reinstalar, remover (itens "Órfão" mostram só renomear/remover, já que não têm uma pasta própria pra habilitar ou abrir)
-- Resumo da instância no cabeçalho (total de mods, quebra por tipo, ativos/desativados, versão do SPT detectada)
+- Menu de ações por mod (`⋮`): habilitar/desabilitar, abrir pasta, renomear, reinstalar, remover (itens "Órfão" mostram só renomear/remover, já que não têm uma pasta própria pra habilitar ou abrir)
+- Resumo da instância no cabeçalho (total de mods, quebra por tipo, ativos/desativados, versão do SPT)
 - Notificações temporárias de sucesso/erro
 
 ---
@@ -51,7 +51,7 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 
 ---
 
-## Como rodar
+##  Como rodar
 
 ### Pré-requisitos
 - [Node.js](https://nodejs.org/) 18 ou superior
@@ -61,8 +61,8 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 ### Desenvolvimento
 
 ```bash
-git clone https://github.com/Nevek20/SPT_Mod_Manager.git
-cd SPT_Mod_Manager
+git clone https://github.com/SEU_USUARIO/spt-mod-manager.git
+cd spt-mod-manager
 npm install
 npm run electron:dev
 ```
@@ -128,7 +128,7 @@ Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na ra
 
 ## 🐛 Limitações conhecidas
 
-- **Mods "hybrid" instalados via merge** aparecem como um item "Órfão" rastreado por manifesto, mas só suportam renomear/remover — não dá pra habilitar/desabilitar como unidade, já que não existe uma pasta própria pra mover.
+- **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) aparecem como um item "Órfão" rastreado por manifesto, mas só suportam renomear/remover — não dá pra habilitar/desabilitar como unidade, já que não existe uma pasta própria pra mover.
 - **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z`/`.rar` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
 - **Detecção de conflitos é no nível de arquivo**, não semântica — sinaliza DLLs duplicadas e nomes de server mod duplicados, mas não sabe se dois mods realmente mexem na mesma coisa dentro do jogo.
 - **Sem busca/download integrado** do [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — de propósito, pra não depender de uma API externa que pode mudar sem aviso (o app só abre o link no navegador).
@@ -139,9 +139,12 @@ Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na ra
 ## Roadmap
 
 Já feito (virou funcionalidade lá em cima ⬆️):
+- [x] Suporte a `.rar`
+- [x] Export/import de lista de mods (JSON com nomes + fontes)
 - [x] Detecção de conflitos entre mods (nível de arquivo)
-- [x] Detecção automática da versão do SPT no resumo do cabeçalho
-- [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover de forma limpa)
+- [x] Shift+Clique pra seleção em range
+- [x] Versão do SPT detectada automaticamente no resumo do cabeçalho
+- [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover)
 
 Ainda na fila:
 - [ ] "Reinstalar" de verdade guardando o `.zip`/`.7z`/`.rar` original, em vez de reabrir o seletor de arquivo genérico
