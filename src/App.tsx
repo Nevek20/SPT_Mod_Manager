@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ModInfo, ModType, ConflictReport } from "./types";
+import { ModInfo, ModType, ConflictReport, ForgeUpdateCheckResult } from "./types";
 
 interface Toast {
   id: number;
@@ -55,6 +55,13 @@ export default function App() {
   const [sptVersion, setSptVersion] = useState<string | undefined>(undefined);
   const [conflictReport, setConflictReport] = useState<ConflictReport | null>(null);
   const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const [sptVersionInput, setSptVersionInput] = useState("");
+  const [forgeResult, setForgeResult] = useState<ForgeUpdateCheckResult | null>(null);
+  const [checkingForgeUpdates, setCheckingForgeUpdates] = useState(false);
+  const [forgeError, setForgeError] = useState<string | null>(null);
+  const [forgeStatusByName, setForgeStatusByName] = useState<
+    Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>
+  >(new Map());
 
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
@@ -67,6 +74,7 @@ export default function App() {
   const refreshMods = useCallback(async () => {
     const list = await window.modManagerAPI.scanMods();
     setMods(list);
+    return list;
   }, []);
 
   // Fecha o menu de ações aberto ao clicar fora dele.
@@ -140,6 +148,15 @@ export default function App() {
       if (path) {
         refreshMods();
         setSptVersion(await window.modManagerAPI.getSptVersion());
+        const semver = await window.modManagerAPI.getSptSemver();
+        console.log("[App] carga inicial - semver auto-detectado:", semver);
+        if (semver) {
+          setSptVersionInput(semver);
+        } else {
+          const override = await window.modManagerAPI.getSptVersionOverride();
+          console.log("[App] carga inicial - override lido:", override);
+          if (override) setSptVersionInput(override);
+        }
       }
     })();
   }, [refreshMods]);
@@ -151,6 +168,13 @@ export default function App() {
       pushToast(result.message ?? "Instância configurada.", true);
       refreshMods();
       setSptVersion(await window.modManagerAPI.getSptVersion());
+      const semver = await window.modManagerAPI.getSptSemver();
+      if (semver) {
+        setSptVersionInput(semver);
+      } else {
+        const override = await window.modManagerAPI.getSptVersionOverride();
+        setSptVersionInput(override || "");
+      }
     } else {
       pushToast(result.message ?? "Não foi possível selecionar a pasta.", false);
     }
@@ -162,10 +186,14 @@ export default function App() {
 
   async function handleInstall() {
     setLoading(true);
+    const previousKeys = new Set(mods.map(selectionKey));
     const result = await window.modManagerAPI.installMod();
     pushToast(result.message, result.success);
     setLoading(false);
-    if (result.success) refreshMods();
+    if (result.success) {
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+    }
   }
 
   function handleDragEnter(e: DragEvent) {
@@ -203,6 +231,7 @@ export default function App() {
     }
 
     setLoading(true);
+    const previousKeys = new Set(mods.map(selectionKey));
     let successCount = 0;
     for (const file of archives) {
       // @ts-expect-error o Electron injeta `.path` no objeto File nativo, fora da tipagem padrão do DOM
@@ -213,7 +242,10 @@ export default function App() {
       pushToast(result.message, result.success);
     }
     setLoading(false);
-    if (successCount > 0) refreshMods();
+    if (successCount > 0) {
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+    }
   }
 
   async function handleToggle(mod: ModInfo) {
@@ -275,6 +307,71 @@ export default function App() {
     setCheckingConflicts(false);
     const total = report.clientFileConflicts.length + report.duplicateServerNames.length;
     pushToast(total === 0 ? "Nenhum conflito óbvio encontrado." : `${total} possível(is) conflito(s) encontrado(s).`, total === 0);
+  }
+
+  async function handleCheckForgeUpdates() {
+    if (!sptVersionInput.trim()) {
+      pushToast("Informe a versão do SPT antes de verificar.", false);
+      return;
+    }
+    setCheckingForgeUpdates(true);
+    setForgeError(null);
+    const payload = mods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version }));
+    const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
+    setCheckingForgeUpdates(false);
+    if (!response.success || !response.result) {
+      setForgeError(response.message || "Falha ao verificar atualizações.");
+      pushToast(response.message || "Falha ao verificar atualizações.", false);
+      return;
+    }
+    setForgeResult(response.result);
+
+    const statusMap = new Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>();
+    for (const u of response.result.updates) {
+      statusMap.set(u.name, { status: "update", version: u.recommendedVersion });
+    }
+    for (const b of response.result.blocked) {
+      if (!statusMap.has(b.name)) statusMap.set(b.name, { status: "blocked", version: b.recommendedVersion });
+    }
+    for (const i of response.result.incompatible) {
+      if (!statusMap.has(i.name)) statusMap.set(i.name, { status: "incompatible" });
+    }
+    for (const info of response.result.infoOnly) {
+      if (!statusMap.has(info.name)) statusMap.set(info.name, { status: "info", version: info.recommendedVersion });
+    }
+    setForgeStatusByName(statusMap);
+
+    const total = response.result.updates.length;
+    pushToast(total === 0 ? "Tudo atualizado (ou não encontrado no Forge)." : `${total} atualização(ões) disponível(is).`, true);
+  }
+
+  // Roda a checagem da Forge só pros mods que acabaram de entrar (comparando
+  // a lista antes/depois da instalação), sem re-consultar os outros já
+  // verificados. Silenciosamente não faz nada se não tiver uma versão do SPT
+  // informada ainda (não dá pra checar sem isso).
+  async function checkForgeForNewMods(previousKeys: Set<string>, updatedMods: ModInfo[]) {
+    if (!sptVersionInput.trim()) return;
+    const newMods = updatedMods.filter((m) => !previousKeys.has(selectionKey(m)));
+    if (newMods.length === 0) return;
+
+    const payload = newMods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version }));
+    const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
+    if (!response.success || !response.result) return;
+
+    setForgeStatusByName((prev) => {
+      const next = new Map(prev);
+      for (const u of response.result!.updates) next.set(u.name, { status: "update", version: u.recommendedVersion });
+      for (const b of response.result!.blocked) {
+        if (!next.has(b.name)) next.set(b.name, { status: "blocked", version: b.recommendedVersion });
+      }
+      for (const i of response.result!.incompatible) {
+        if (!next.has(i.name)) next.set(i.name, { status: "incompatible" });
+      }
+      for (const info of response.result!.infoOnly) {
+        if (!next.has(info.name)) next.set(info.name, { status: "info", version: info.recommendedVersion });
+      }
+      return next;
+    });
   }
 
   async function handleMove(mod: ModInfo, direction: -1 | 1) {
@@ -381,7 +478,8 @@ export default function App() {
     onRangeSelect: selectRange,
     openMenuKey,
     onSetOpenMenuKey: setOpenMenuKey,
-    disabled: mutating
+    disabled: mutating,
+    forgeStatusByName
   };
 
   return (
@@ -493,6 +591,25 @@ export default function App() {
             <button onClick={handleDetectConflicts} disabled={checkingConflicts} title="Procura DLLs duplicadas entre client mods e nomes duplicados entre server mods">
               {checkingConflicts ? "Verificando..." : "Verificar conflitos"}
             </button>
+            <span className="filter-separator"></span>
+            <input
+              className="version-input"
+              type="text"
+              placeholder="versão SPT (ex: 3.11.5)"
+              value={sptVersionInput}
+              onChange={(e) => {
+                setSptVersionInput(e.target.value);
+                window.modManagerAPI.setSptVersionOverride(e.target.value);
+              }}
+              title="Versão do SPT usada na checagem de atualizações da Forge — detectamos automaticamente quando possível, mas em instalações SPT 4.0+ pode ser preciso digitar"
+            />
+            <button
+              onClick={handleCheckForgeUpdates}
+              disabled={checkingForgeUpdates}
+              title="Consulta a API pública da Forge (forge.sp-tarkov.com) por atualizações dos mods instalados"
+            >
+              {checkingForgeUpdates ? "Consultando Forge..." : "Verificar atualizações (Forge)"}
+            </button>
           </div>
 
           {sortField !== "name" && (
@@ -554,6 +671,82 @@ export default function App() {
               )}
               <p className="compare-note">
                 Checagem no nível de arquivo — sinaliza sobreposição, não garante incompatibilidade de verdade.
+              </p>
+            </div>
+          )}
+
+          {forgeError && (
+            <div className="compare-panel">
+              <div className="compare-header">
+                <strong>Verificação de atualizações (Forge)</strong>
+                <button onClick={() => setForgeError(null)}>Fechar</button>
+              </div>
+              <p>{forgeError}</p>
+            </div>
+          )}
+
+          {forgeResult && (
+            <div className="compare-panel">
+              <div className="compare-header">
+                <strong>Verificação de atualizações (Forge) — SPT {forgeResult.sptVersionUsed}</strong>
+                <button onClick={() => setForgeResult(null)}>Fechar</button>
+              </div>
+              {forgeResult.updates.length > 0 && (
+                <>
+                  <p><strong>Atualizações disponíveis:</strong></p>
+                  {forgeResult.updates.map((u) => (
+                    <p key={`update-${u.name}`}>
+                      {u.name}: {u.currentVersion} → <strong>{u.recommendedVersion}</strong>
+                      {u.downloadLink && (
+                        <>
+                          {" "}
+                          (<a href={u.downloadLink} target="_blank" rel="noreferrer">link</a>)
+                        </>
+                      )}
+                    </p>
+                  ))}
+                </>
+              )}
+              {forgeResult.blocked.length > 0 && (
+                <>
+                  <p><strong>Atualizações bloqueadas (quebrariam dependência):</strong></p>
+                  {forgeResult.blocked.map((b) => (
+                    <p key={`blocked-${b.name}`}>
+                      {b.name}: {b.currentVersion} — {b.reason}
+                    </p>
+                  ))}
+                </>
+              )}
+              {forgeResult.incompatible.length > 0 && (
+                <>
+                  <p><strong>Incompatíveis com essa versão do SPT:</strong></p>
+                  {forgeResult.incompatible.map((i) => (
+                    <p key={`incompatible-${i.name}`}>{i.name} ({i.currentVersion})</p>
+                  ))}
+                </>
+              )}
+              {forgeResult.infoOnly.length > 0 && (
+                <>
+                  <p><strong>Sem versão local pra comparar (mostrando o que a Forge tem):</strong></p>
+                  {forgeResult.infoOnly.map((info) => (
+                    <p key={`info-${info.name}`}>{info.name}: Forge tem v{info.recommendedVersion}</p>
+                  ))}
+                </>
+              )}
+              {forgeResult.updates.length === 0 &&
+                forgeResult.blocked.length === 0 &&
+                forgeResult.incompatible.length === 0 &&
+                forgeResult.infoOnly.length === 0 && (
+                <p>Todos os mods identificados no Forge estão atualizados.</p>
+              )}
+              {forgeResult.unmatched.length > 0 && (
+                <p className="compare-note">
+                  Não encontrados no Forge (busca por nome): {forgeResult.unmatched.join(", ")}
+                </p>
+              )}
+              <p className="compare-note">
+                Casamento com o catálogo da Forge é por nome — pode não achar mods com nome muito genérico ou que
+                não estão listados lá.
               </p>
             </div>
           )}
@@ -620,7 +813,8 @@ function ModList({
   onRangeSelect,
   openMenuKey,
   onSetOpenMenuKey,
-  disabled = false
+  disabled = false,
+  forgeStatusByName
 }: {
   mods: ModInfo[];
   onToggle: (mod: ModInfo) => void;
@@ -641,6 +835,7 @@ function ModList({
   openMenuKey: string | null;
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
+  forgeStatusByName?: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
 
@@ -664,6 +859,7 @@ function ModList({
         const key = selectionKey(mod);
         const isEditing = editingKey === key;
         const isMenuOpen = openMenuKey === key;
+        const forgeStatus = forgeStatusByName?.get(mod.name);
         return (
           <li key={key} className={`mod-item ${mod.enabled ? "" : "disabled"}`}>
             <input
@@ -708,6 +904,26 @@ function ModList({
                 <span className="origin-chip">{mod.installedManually ? "Manual" : "Manager"}</span>
                 {mod.version && <span className="meta-chip">v{mod.version}</span>}
                 {mod.author && <span className="meta-chip">por {mod.author}</span>}
+                {forgeStatus?.status === "update" && (
+                  <span className="meta-chip forge-chip-update" title="Nova versão disponível na Forge">
+                    Forge: v{forgeStatus.version} disponível
+                  </span>
+                )}
+                {forgeStatus?.status === "blocked" && (
+                  <span className="meta-chip forge-chip-blocked" title="Tem atualização na Forge, mas instalar quebraria a dependência de outro mod">
+                    Forge: atualização bloqueada
+                  </span>
+                )}
+                {forgeStatus?.status === "incompatible" && (
+                  <span className="meta-chip forge-chip-incompatible" title="A versão instalada não é compatível com a versão do SPT informada na última checagem">
+                    Forge: incompatível
+                  </span>
+                )}
+                {forgeStatus?.status === "info" && (
+                  <span className="meta-chip forge-chip-info" title="Sem versão local legível pra comparar (mod sem package.json, ex: mods .dll) — essa é a versão mais recente conhecida na Forge">
+                    Forge: v{forgeStatus.version}
+                  </span>
+                )}
                 {mod.manifestOnly && (
                   <span className="meta-chip" title="Arquivos soltos rastreados por manifesto (sem pasta própria) — só dá pra remover">
                     Órfão

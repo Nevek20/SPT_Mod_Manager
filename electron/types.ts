@@ -16,6 +16,7 @@ export interface ModInfo {
 
 export interface InstanceConfig {
   sptPath: string | null;
+  sptVersionOverride: string | null;
 }
 
 export interface RegistryEntry {

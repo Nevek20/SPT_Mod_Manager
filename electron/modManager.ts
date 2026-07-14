@@ -12,35 +12,27 @@ import { ModInfo, ModType, RegistryEntry, ModListComparison } from "./types";
  * Best-effort: se o arquivo não existir ou o formato mudar numa versão futura, retorna undefined
  * em vez de quebrar o resto do app.
  */
-export function detectSptVersion(sptPath: string): string | undefined {
-  // A estrutura de pastas do SPT varia entre versões e formas de instalar —
-  // às vezes tem uma pasta "Server" no meio do caminho, às vezes não; às vezes
-  // tem uma pasta extra com o mesmo nome do SPT (dependendo de como o release
-  // foi extraído). Em vez de chutar um caminho fixo (e continuar errando pra
-  // instalações diferentes da nossa), procura o core.json de verdade dentro da
-  // instância — pulando pastas pesadas (user/mods, BepInEx, database) que não
-  // têm esse arquivo e só deixariam a busca lenta à toa. A pasta "database"
-  // também é onde mora um OUTRO core.json (de bots), que não é o que queremos.
+// A estrutura de pastas do SPT varia entre versões e formas de instalar —
+// às vezes tem uma pasta "Server" no meio do caminho, às vezes não; às vezes
+// tem uma pasta extra com o mesmo nome do SPT (dependendo de como o release
+// foi extraído). Em vez de chutar um caminho fixo (e continuar errando pra
+// instalações diferentes da nossa), procura o core.json de verdade dentro da
+// instância — pulando pastas pesadas (user/mods, BepInEx, database) que não
+// têm esse arquivo e só deixariam a busca lenta à toa. A pasta "database"
+// também é onde mora um OUTRO core.json (de bots), que não é o que queremos.
+function findCoreJson(sptPath: string): any | undefined {
   const IGNORED_DIRS = new Set(["user", "bepinex", "database", "node_modules", ".git"]);
   const MAX_DEPTH = 5;
 
-  function tryReadCore(corePath: string): string | undefined {
+  function tryReadCore(corePath: string): any | undefined {
     try {
-      const core = JSON.parse(fs.readFileSync(corePath, "utf-8"));
-      if (typeof core.sptVersion === "string") return `SPT ${core.sptVersion}`;
-      if (typeof core.akiVersion === "string") return `SPT ${core.akiVersion}`;
-      // A partir do SPT 4.0, o core.json não guarda mais a versão do SPT em si —
-      // só a versão do Tarkov com que ele é compatível. Não é a mesma informação,
-      // mas é a melhor pista disponível nesse arquivo, então mostra com o rótulo
-      // certo em vez de apresentar como se fosse a versão do SPT.
-      if (typeof core.compatibleTarkovVersion === "string") return `Tarkov ${core.compatibleTarkovVersion}`;
+      return JSON.parse(fs.readFileSync(corePath, "utf-8"));
     } catch {
-      // não parseou, ou não tinha nenhum dos campos esperados — não é o core.json certo
+      return undefined;
     }
-    return undefined;
   }
 
-  function search(dir: string, depth: number): string | undefined {
+  function search(dir: string, depth: number): any | undefined {
     if (depth > MAX_DEPTH) return undefined;
     let entries: fs.Dirent[];
     try {
@@ -65,6 +57,32 @@ export function detectSptVersion(sptPath: string): string | undefined {
   }
 
   return search(sptPath, 0);
+}
+
+export function detectSptVersion(sptPath: string): string | undefined {
+  const core = findCoreJson(sptPath);
+  if (!core) return undefined;
+  if (typeof core.sptVersion === "string") return `SPT ${core.sptVersion}`;
+  if (typeof core.akiVersion === "string") return `SPT ${core.akiVersion}`;
+  // A partir do SPT 4.0, o core.json não guarda mais a versão do SPT em si —
+  // só a versão do Tarkov com que ele é compatível. Não é a mesma informação,
+  // mas é a melhor pista disponível nesse arquivo, então mostra com o rótulo
+  // certo em vez de apresentar como se fosse a versão do SPT.
+  if (typeof core.compatibleTarkovVersion === "string") return `Tarkov ${core.compatibleTarkovVersion}`;
+  return undefined;
+}
+
+// Versão "crua" (sem rótulo, sem fallback pra versão do Tarkov) — pra uso
+// funcional, tipo mandar pra API do Forge, que espera um semver de verdade
+// (ex: "3.11.5") e não entenderia "Tarkov 0.16.9.40087". Em instalações
+// SPT 4.0+ que não expõem mais esse campo, retorna undefined de propósito —
+// melhor pedir pro usuário informar do que mandar algo errado pro Forge.
+export function detectSptSemver(sptPath: string): string | undefined {
+  const core = findCoreJson(sptPath);
+  if (!core) return undefined;
+  if (typeof core.sptVersion === "string") return core.sptVersion;
+  if (typeof core.akiVersion === "string") return core.akiVersion;
+  return undefined;
 }
 
 /**
@@ -813,4 +831,153 @@ function verifyCopyRecursive(src: string, dest: string): { ok: boolean; missing?
     }
   }
   return { ok: true };
+}
+
+/* ==========================================================================
+ * Integração com a API da Forge (forge.sp-tarkov.com) — plataforma oficial
+ * de mods do SPT. API pública, só leitura, sem chave necessária. Limite de
+ * uso: 40 requisições/10s em rajada, 200/60s sustentado — por isso as
+ * buscas de nome abaixo são feitas uma de cada vez com um intervalo entre
+ * elas, em vez de disparar tudo de uma vez.
+ * ========================================================================== */
+
+const FORGE_API_BASE = "https://forge.sp-tarkov.com/api/v0";
+
+export interface ForgeUpdateItem {
+  name: string;
+  currentVersion?: string;
+  recommendedVersion?: string;
+  downloadLink?: string;
+  reason?: string;
+}
+
+export interface ForgeUpdateCheckResult {
+  sptVersionUsed: string;
+  updates: ForgeUpdateItem[];
+  blocked: ForgeUpdateItem[];
+  upToDate: ForgeUpdateItem[];
+  incompatible: ForgeUpdateItem[];
+  infoOnly: ForgeUpdateItem[];
+  unmatched: string[];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A gente só guarda o NOME do mod localmente, não um ID/GUID da Forge — então
+// achar o mod certo lá é por busca de nome (heurística). Funciona bem pra
+// nomes específicos, pode errar em casos raros de nome genérico/duplicado.
+// Já traz a versão mais recente conhecida junto (via include=versions), numa
+// chamada só — útil pra mods sem versão local legível (ex: mods puramente
+// .dll sem package.json, tipo o SVM), onde não dá pra comparar mas ainda dá
+// pra mostrar "essa é a versão mais recente que a Forge conhece".
+async function findForgeModInfo(name: string): Promise<{ identifier: string; latestVersion?: string } | null> {
+  try {
+    const url = `${FORGE_API_BASE}/mods?filter[name]=${encodeURIComponent(name)}&per_page=1&include=versions&fields=id,guid,name`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    const match = json?.data?.[0];
+    if (!match) return null;
+    const identifier = typeof match.guid === "string" ? match.guid : String(match.id);
+    const latestVersion = Array.isArray(match.versions) && match.versions.length > 0 ? match.versions[0]?.version : undefined;
+    return { identifier, latestVersion };
+  } catch {
+    return null;
+  }
+}
+
+export async function checkForgeUpdates(
+  mods: { name: string; originalName: string; version?: string }[],
+  sptVersion: string
+): Promise<ForgeUpdateCheckResult> {
+  const trimmedVersion = sptVersion.trim();
+  if (!trimmedVersion) {
+    throw new Error("Informe a versão do SPT antes de verificar atualizações.");
+  }
+
+  const pairs: string[] = [];
+  const nameByIdentifier = new Map<string, string>();
+  const unmatched: string[] = [];
+  const infoOnly: ForgeUpdateItem[] = [];
+
+  for (const mod of mods) {
+    // Busca pelo nome ORIGINAL (da pasta), não pelo apelido que o usuário deu —
+    // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
+    const info = await findForgeModInfo(mod.originalName);
+    if (!info) {
+      unmatched.push(mod.name);
+      await delay(200);
+      continue;
+    }
+    if (mod.version) {
+      // Tem versão local — entra na comparação de verdade contra o Forge.
+      pairs.push(`${info.identifier}:${mod.version}`);
+      nameByIdentifier.set(info.identifier, mod.name);
+    } else if (info.latestVersion) {
+      // Sem versão local pra comparar (ex: mod só de .dll, sem package.json) —
+      // mostra a versão mais recente conhecida como informação, sem alegar
+      // que é "atualização disponível" já que não sabemos a versão instalada.
+      infoOnly.push({ name: mod.name, recommendedVersion: info.latestVersion, reason: "no_local_version" });
+    } else {
+      unmatched.push(mod.name);
+    }
+    await delay(200);
+  }
+
+  const empty: ForgeUpdateCheckResult = {
+    sptVersionUsed: trimmedVersion,
+    updates: [],
+    blocked: [],
+    upToDate: [],
+    incompatible: [],
+    infoOnly,
+    unmatched
+  };
+  if (pairs.length === 0) return empty;
+
+  const url = `${FORGE_API_BASE}/mods/updates?mods=${encodeURIComponent(pairs.join(","))}&spt_version=${encodeURIComponent(trimmedVersion)}`;
+  let json: any;
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    json = await res.json();
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || `Forge respondeu ${res.status}`);
+    }
+  } catch (err: any) {
+    throw new Error(`Não foi possível consultar o Forge: ${err.message || err}`);
+  }
+
+  const data = json.data || {};
+  const nameFor = (guid: string, fallback?: string) => nameByIdentifier.get(guid) || fallback || guid;
+
+  return {
+    sptVersionUsed: data.spt_version || trimmedVersion,
+    updates: (data.updates || []).map((u: any) => ({
+      name: nameFor(u.current_version?.guid, u.current_version?.name),
+      currentVersion: u.current_version?.version,
+      recommendedVersion: u.recommended_version?.version,
+      downloadLink: u.recommended_version?.link,
+      reason: u.update_reason
+    })),
+    blocked: (data.blocked_updates || []).map((b: any) => ({
+      name: nameFor(b.current_version?.guid, b.current_version?.name),
+      currentVersion: b.current_version?.version,
+      recommendedVersion: b.latest_version?.version,
+      reason: b.block_reason
+    })),
+    upToDate: (data.up_to_date || []).map((u: any) => ({
+      name: nameFor(u.guid, u.name),
+      currentVersion: u.version,
+      reason: "up_to_date"
+    })),
+    incompatible: (data.incompatible_with_spt || []).map((i: any) => ({
+      name: nameFor(i.guid, i.name),
+      currentVersion: i.version,
+      reason: i.reason
+    })),
+    infoOnly,
+    unmatched
+  };
 }

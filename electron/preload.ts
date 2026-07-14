@@ -16,5 +16,10 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   exportModList: () => ipcRenderer.invoke("export-mod-list"),
   importModList: () => ipcRenderer.invoke("import-mod-list"),
   getSptVersion: () => ipcRenderer.invoke("get-spt-version"),
-  detectConflicts: () => ipcRenderer.invoke("detect-conflicts")
+  detectConflicts: () => ipcRenderer.invoke("detect-conflicts"),
+  getSptSemver: () => ipcRenderer.invoke("get-spt-semver"),
+  getSptVersionOverride: () => ipcRenderer.invoke("get-spt-version-override"),
+  setSptVersionOverride: (value: string) => ipcRenderer.invoke("set-spt-version-override", value),
+  checkForgeUpdates: (mods: { name: string; originalName: string; version?: string }[], sptVersion: string) =>
+    ipcRenderer.invoke("check-forge-updates", mods, sptVersion)
 });

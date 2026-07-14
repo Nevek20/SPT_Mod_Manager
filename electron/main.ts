@@ -14,13 +14,15 @@ import {
   exportModListData,
   compareModList,
   detectConflicts,
-  detectSptVersion
+  detectSptVersion,
+  detectSptSemver,
+  checkForgeUpdates
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
 const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
 
-const store = new Store<InstanceConfig>({ defaults: { sptPath: null } });
+const store = new Store<InstanceConfig>({ defaults: { sptPath: null, sptVersionOverride: null } });
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -40,6 +42,9 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+
+  // TEMPORÁRIO de novo — só pra essa depuração específica.
+  mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {
@@ -98,6 +103,33 @@ ipcMain.handle("detect-conflicts", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { clientFileConflicts: [], duplicateServerNames: [] };
   return detectConflicts(sptPath);
+});
+
+ipcMain.handle("get-spt-semver", () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return undefined;
+  return detectSptSemver(sptPath);
+});
+
+ipcMain.handle("get-spt-version-override", () => {
+  const value = store.get("sptVersionOverride");
+  console.log("[get-spt-version-override] lido do disco:", value);
+  return value;
+});
+
+ipcMain.handle("set-spt-version-override", (_event, value: string) => {
+  console.log("[set-spt-version-override] salvando:", value);
+  store.set("sptVersionOverride", value || null);
+  console.log("[set-spt-version-override] confirmando o que ficou salvo:", store.get("sptVersionOverride"));
+});
+
+ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string }[], sptVersion: string) => {
+  try {
+    const result = await checkForgeUpdates(mods, sptVersion);
+    return { success: true, result };
+  } catch (err: any) {
+    return { success: false, message: err?.message || "Falha ao verificar atualizações." };
+  }
 });
 
 ipcMain.handle("install-mod", async () => {

@@ -18,7 +18,7 @@
 :root {
   color-scheme: dark;
 
-  /* Base — cinza-azulado (taaao bonito) */
+  /* Base — cinza-azulado, como no original */
   --bg: #12151b;
   --bg-panel: #1b1f26;
   --bg-panel-raised: #232830;
@@ -30,7 +30,7 @@
   --text-dim: #9aa2b0;
   --text-faint: #6b7280;
 
-  /* Assinatura — âmbar de sinalização (fita de risco), não laranja genérico de padaria */
+  /* Assinatura — âmbar de sinalização (fita de risco), não laranja genérico */
   --accent: #c8752e;
   --accent-strong: #e08d3f;
   --accent-wash: rgba(200, 117, 46, 0.14);
@@ -251,6 +251,27 @@ header h1 {
   border-color: var(--accent);
 }
 
+.version-input {
+  width: 130px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.version-input::placeholder {
+  color: var(--text-faint);
+  font-family: var(--font-body);
+}
+
+.version-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .mod-number {
   color: var(--text-faint);
   font-family: var(--font-mono);
@@ -394,6 +415,26 @@ header h1 {
 .status-chip-off {
   border-color: var(--danger);
   color: var(--danger-strong);
+}
+
+.forge-chip-update {
+  border-color: var(--ok);
+  color: var(--ok-strong);
+}
+
+.forge-chip-blocked {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.forge-chip-incompatible {
+  border-color: var(--danger);
+  color: var(--danger-strong);
+}
+
+.forge-chip-info {
+  border-color: var(--border);
+  color: var(--text-dim);
 }
 
 .filter-separator {

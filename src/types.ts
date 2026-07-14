@@ -24,6 +24,24 @@ export interface ConflictReport {
   duplicateServerNames: { declaredName: string; mods: string[] }[];
 }
 
+export interface ForgeUpdateItem {
+  name: string;
+  currentVersion?: string;
+  recommendedVersion?: string;
+  downloadLink?: string;
+  reason?: string;
+}
+
+export interface ForgeUpdateCheckResult {
+  sptVersionUsed: string;
+  updates: ForgeUpdateItem[];
+  blocked: ForgeUpdateItem[];
+  upToDate: ForgeUpdateItem[];
+  incompatible: ForgeUpdateItem[];
+  infoOnly: ForgeUpdateItem[];
+  unmatched: string[];
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<string | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
@@ -40,6 +58,13 @@ export interface ModManagerAPI {
   importModList: () => Promise<{ success: boolean; message: string; comparison?: ModListComparison }>;
   getSptVersion: () => Promise<string | undefined>;
   detectConflicts: () => Promise<ConflictReport>;
+  getSptSemver: () => Promise<string | undefined>;
+  getSptVersionOverride: () => Promise<string | null>;
+  setSptVersionOverride: (value: string) => Promise<void>;
+  checkForgeUpdates: (
+    mods: { name: string; originalName: string; version?: string }[],
+    sptVersion: string
+  ) => Promise<{ success: boolean; result?: ForgeUpdateCheckResult; message?: string }>;
 }
 
 declare global {
