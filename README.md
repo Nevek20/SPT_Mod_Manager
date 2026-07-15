@@ -4,7 +4,7 @@ A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Singl
 
 A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
 
-> Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners.
+> ⚠️ Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners. ⚠️
 
 ---
 
@@ -44,7 +44,9 @@ A desktop app (Electron + React + TypeScript) that handles installing, organizin
 
 ## Screenshots
 
-*(add a screenshot of the main screen here — I'd suggest putting it at `docs/screenshot.png` and referencing it with `![main screen](docs/screenshot.png)`)*
+![main 1](docs/screenshot.png)
+![main 2](docs/screenshot2.png)
+
 
 ---
 
