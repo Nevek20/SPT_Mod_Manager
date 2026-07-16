@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   getSptSemver: () => ipcRenderer.invoke("get-spt-semver"),
   getSptVersionOverride: () => ipcRenderer.invoke("get-spt-version-override"),
   setSptVersionOverride: (value: string) => ipcRenderer.invoke("set-spt-version-override", value),
+  getForgeSptVersions: () => ipcRenderer.invoke("get-forge-spt-versions"),
+  getForgeCache: () => ipcRenderer.invoke("get-forge-cache"),
+  setForgeCache: (statusCache: { name: string; status: string; version?: string }[]) =>
+    ipcRenderer.invoke("set-forge-cache", statusCache),
   checkForgeUpdates: (mods: { name: string; originalName: string; version?: string }[], sptVersion: string) =>
     ipcRenderer.invoke("check-forge-updates", mods, sptVersion)
 });

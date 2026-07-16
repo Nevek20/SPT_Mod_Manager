@@ -17,6 +17,8 @@ export interface ModInfo {
 export interface InstanceConfig {
   sptPath: string | null;
   sptVersionOverride: string | null;
+  forgeStatusCache: { name: string; status: "update" | "blocked" | "incompatible" | "info"; version?: string }[] | null;
+  forgeCheckedAt: string | null;
 }
 
 export interface RegistryEntry {

@@ -16,13 +16,16 @@ import {
   detectConflicts,
   detectSptVersion,
   detectSptSemver,
-  checkForgeUpdates
+  checkForgeUpdates,
+  getForgeSptVersions
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
 const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
 
-const store = new Store<InstanceConfig>({ defaults: { sptPath: null, sptVersionOverride: null } });
+const store = new Store<InstanceConfig>({
+  defaults: { sptPath: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null }
+});
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -42,9 +45,6 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
-
-  // TEMPORÁRIO de novo — só pra essa depuração específica.
-  mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {
@@ -111,17 +111,26 @@ ipcMain.handle("get-spt-semver", () => {
   return detectSptSemver(sptPath);
 });
 
-ipcMain.handle("get-spt-version-override", () => {
-  const value = store.get("sptVersionOverride");
-  console.log("[get-spt-version-override] lido do disco:", value);
-  return value;
-});
+ipcMain.handle("get-spt-version-override", () => store.get("sptVersionOverride"));
 
 ipcMain.handle("set-spt-version-override", (_event, value: string) => {
-  console.log("[set-spt-version-override] salvando:", value);
   store.set("sptVersionOverride", value || null);
-  console.log("[set-spt-version-override] confirmando o que ficou salvo:", store.get("sptVersionOverride"));
 });
+
+ipcMain.handle("get-forge-spt-versions", () => getForgeSptVersions());
+
+ipcMain.handle("get-forge-cache", () => ({
+  statusCache: store.get("forgeStatusCache"),
+  checkedAt: store.get("forgeCheckedAt")
+}));
+
+ipcMain.handle(
+  "set-forge-cache",
+  (_event, statusCache: { name: string; status: string; version?: string }[]) => {
+    store.set("forgeStatusCache", statusCache as any);
+    store.set("forgeCheckedAt", new Date().toISOString());
+  }
+);
 
 ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string }[], sptVersion: string) => {
   try {

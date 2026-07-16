@@ -861,6 +861,38 @@ export interface ForgeUpdateCheckResult {
   unmatched: string[];
 }
 
+export interface ForgeSptVersion {
+  version: string;
+  modCount: number;
+}
+
+// Lista de versões do SPT que a própria Forge conhece — usada pra montar um
+// seletor em vez de depender de digitação livre (evita erro de digitação e
+// versão inválida).
+export async function getForgeSptVersions(): Promise<ForgeSptVersion[]> {
+  // A API não aceita version_major/minor/patch como parâmetro de ORDENAÇÃO
+  // (só como campo de dado) — pediria "3.9.0" depois de "3.10.0" se a gente
+  // ordenasse pela string "version" (comparação alfabética, não numérica).
+  // Pede os números separados e ordena certinho aqui mesmo.
+  const url = `${FORGE_API_BASE}/spt/versions?per_page=50&fields=version,mod_count,version_major,version_minor,version_patch`;
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) return [];
+    const json: any = await res.json();
+    const list = (json?.data || []).map((v: any) => ({
+      version: v.version as string,
+      modCount: v.mod_count as number,
+      major: v.version_major ?? 0,
+      minor: v.version_minor ?? 0,
+      patch: v.version_patch ?? 0
+    }));
+    list.sort((a: any, b: any) => b.major - a.major || b.minor - a.minor || b.patch - a.patch);
+    return list.map(({ version, modCount }: any) => ({ version, modCount }));
+  } catch {
+    return [];
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

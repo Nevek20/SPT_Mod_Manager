@@ -42,6 +42,17 @@ export interface ForgeUpdateCheckResult {
   unmatched: string[];
 }
 
+export interface ForgeSptVersion {
+  version: string;
+  modCount: number;
+}
+
+export interface ForgeStatusCacheEntry {
+  name: string;
+  status: "update" | "blocked" | "incompatible" | "info";
+  version?: string;
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<string | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
@@ -61,6 +72,9 @@ export interface ModManagerAPI {
   getSptSemver: () => Promise<string | undefined>;
   getSptVersionOverride: () => Promise<string | null>;
   setSptVersionOverride: (value: string) => Promise<void>;
+  getForgeSptVersions: () => Promise<ForgeSptVersion[]>;
+  getForgeCache: () => Promise<{ statusCache: ForgeStatusCacheEntry[] | null; checkedAt: string | null }>;
+  setForgeCache: (statusCache: ForgeStatusCacheEntry[]) => Promise<void>;
   checkForgeUpdates: (
     mods: { name: string; originalName: string; version?: string }[],
     sptVersion: string

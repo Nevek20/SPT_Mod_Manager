@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ModInfo, ModType, ConflictReport, ForgeUpdateCheckResult } from "./types";
+import { ModInfo, ModType, ConflictReport, ForgeUpdateCheckResult, ForgeSptVersion, ForgeStatusCacheEntry } from "./types";
 
 interface Toast {
   id: number;
@@ -62,6 +62,8 @@ export default function App() {
   const [forgeStatusByName, setForgeStatusByName] = useState<
     Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>
   >(new Map());
+  const [forgeSptVersions, setForgeSptVersions] = useState<ForgeSptVersion[]>([]);
+  const [forgeCheckedAt, setForgeCheckedAt] = useState<string | null>(null);
 
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
@@ -149,14 +151,21 @@ export default function App() {
         refreshMods();
         setSptVersion(await window.modManagerAPI.getSptVersion());
         const semver = await window.modManagerAPI.getSptSemver();
-        console.log("[App] carga inicial - semver auto-detectado:", semver);
         if (semver) {
           setSptVersionInput(semver);
         } else {
           const override = await window.modManagerAPI.getSptVersionOverride();
-          console.log("[App] carga inicial - override lido:", override);
           if (override) setSptVersionInput(override);
         }
+
+        window.modManagerAPI.getForgeSptVersions().then(setForgeSptVersions);
+
+        const cache = await window.modManagerAPI.getForgeCache();
+        if (cache.statusCache) {
+          const restored = new Map(cache.statusCache.map((entry) => [entry.name, { status: entry.status, version: entry.version }]));
+          setForgeStatusByName(restored);
+        }
+        setForgeCheckedAt(cache.checkedAt);
       }
     })();
   }, [refreshMods]);
@@ -309,6 +318,12 @@ export default function App() {
     pushToast(total === 0 ? "Nenhum conflito óbvio encontrado." : `${total} possível(is) conflito(s) encontrado(s).`, total === 0);
   }
 
+  function persistForgeStatus(map: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>) {
+    const asArray: ForgeStatusCacheEntry[] = Array.from(map.entries()).map(([name, v]) => ({ name, ...v }));
+    window.modManagerAPI.setForgeCache(asArray);
+    setForgeCheckedAt(new Date().toISOString());
+  }
+
   async function handleCheckForgeUpdates() {
     if (!sptVersionInput.trim()) {
       pushToast("Informe a versão do SPT antes de verificar.", false);
@@ -340,6 +355,7 @@ export default function App() {
       if (!statusMap.has(info.name)) statusMap.set(info.name, { status: "info", version: info.recommendedVersion });
     }
     setForgeStatusByName(statusMap);
+    persistForgeStatus(statusMap);
 
     const total = response.result.updates.length;
     pushToast(total === 0 ? "Tudo atualizado (ou não encontrado no Forge)." : `${total} atualização(ões) disponível(is).`, true);
@@ -358,20 +374,19 @@ export default function App() {
     const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
     if (!response.success || !response.result) return;
 
-    setForgeStatusByName((prev) => {
-      const next = new Map(prev);
-      for (const u of response.result!.updates) next.set(u.name, { status: "update", version: u.recommendedVersion });
-      for (const b of response.result!.blocked) {
-        if (!next.has(b.name)) next.set(b.name, { status: "blocked", version: b.recommendedVersion });
-      }
-      for (const i of response.result!.incompatible) {
-        if (!next.has(i.name)) next.set(i.name, { status: "incompatible" });
-      }
-      for (const info of response.result!.infoOnly) {
-        if (!next.has(info.name)) next.set(info.name, { status: "info", version: info.recommendedVersion });
-      }
-      return next;
-    });
+    const next = new Map(forgeStatusByName);
+    for (const u of response.result.updates) next.set(u.name, { status: "update", version: u.recommendedVersion });
+    for (const b of response.result.blocked) {
+      if (!next.has(b.name)) next.set(b.name, { status: "blocked", version: b.recommendedVersion });
+    }
+    for (const i of response.result.incompatible) {
+      if (!next.has(i.name)) next.set(i.name, { status: "incompatible" });
+    }
+    for (const info of response.result.infoOnly) {
+      if (!next.has(info.name)) next.set(info.name, { status: "info", version: info.recommendedVersion });
+    }
+    setForgeStatusByName(next);
+    persistForgeStatus(next);
   }
 
   async function handleMove(mod: ModInfo, direction: -1 | 1) {
@@ -592,17 +607,25 @@ export default function App() {
               {checkingConflicts ? "Verificando..." : "Verificar conflitos"}
             </button>
             <span className="filter-separator"></span>
-            <input
+            <select
               className="version-input"
-              type="text"
-              placeholder="versão SPT (ex: 3.11.5)"
               value={sptVersionInput}
               onChange={(e) => {
                 setSptVersionInput(e.target.value);
                 window.modManagerAPI.setSptVersionOverride(e.target.value);
               }}
-              title="Versão do SPT usada na checagem de atualizações da Forge — detectamos automaticamente quando possível, mas em instalações SPT 4.0+ pode ser preciso digitar"
-            />
+              title="Versão do SPT usada na checagem de atualizações da Forge — a lista vem direto da Forge"
+            >
+              <option value="">selecione a versão do SPT...</option>
+              {forgeSptVersions.map((v) => (
+                <option key={v.version} value={v.version}>
+                  {v.version} ({v.modCount} mods)
+                </option>
+              ))}
+              {sptVersionInput && !forgeSptVersions.some((v) => v.version === sptVersionInput) && (
+                <option value={sptVersionInput}>{sptVersionInput} (não listada na Forge)</option>
+              )}
+            </select>
             <button
               onClick={handleCheckForgeUpdates}
               disabled={checkingForgeUpdates}
@@ -611,6 +634,12 @@ export default function App() {
               {checkingForgeUpdates ? "Consultando Forge..." : "Verificar atualizações (Forge)"}
             </button>
           </div>
+
+          {forgeCheckedAt && (
+            <p className="sort-hint">
+              Última verificação da Forge: {new Date(forgeCheckedAt).toLocaleString("pt-BR")}
+            </p>
+          )}
 
           {sortField !== "name" && (
             <p className="sort-hint">
