@@ -6,6 +6,8 @@ Um gerenciador de mods estilo **Vortex / Mod Organizer 2**, feito especificament
 
 Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, habilitar/desabilitar e remover mods sem precisar mexer manualmente em pastas — mantendo compatibilidade com mods que você já instalou na mão.
 
+Com identidade visual própria, tipo "manifesto de equipamento tático" — títulos condensados, dado técnico em monoespaçada, um acento quente — em vez do típico dark mode genérico.
+
 > ⚠️ Projeto pessoal, não afiliado à equipe do SPT nem à Battlestate Games. Tarkov e Escape from Tarkov são marcas de seus respectivos donos. ⚠️
 
 ---
@@ -35,6 +37,10 @@ Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, ha
 - Export/import de lista de mods (JSON) pra comparar duas instâncias ou guardar um backup de "quais mods eu tinha instalado"
 - Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
 - Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão do Tarkov compatível como alternativa
+- Verifica os mods instalados contra a API pública da [Forge](https://forge.sp-tarkov.com) por atualizações, com um chip de status por mod: atualização disponível, atualização bloqueada por conflito de dependência, incompatível com a tua versão do SPT, ou — pra mods sem versão legível localmente (ex: mods só de `.dll`, sem `package.json`) — a versão mais recente que a Forge conhece
+- Seletor de versão do SPT vindo direto da lista oficial da Forge (com contagem de mods por versão), em vez de digitação livre
+- Um mod recém-instalado já é checado na Forge na hora, sem precisar re-consultar todo o resto que já tinha sido checado antes
+- Resultado da checagem e o horário da "última verificação" sobrevivem a fechar e abrir o app de novo
 
 **Interface**
 - Cards com tipo, status, origem e — quando disponível — versão e autor do mod
@@ -124,6 +130,13 @@ SPT carrega server mods em ordem alfabética. O app controla isso prefixando a p
 ### Instalação "inteligente"
 Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na raiz do arquivo) por uma pasta que contenha `user/` e/ou `BepInEx/` — isso cobre tanto mods "prontos pra copiar" quanto mods embrulhados numa pasta extra. Se não achar essa estrutura, tenta identificar se é um server mod (por `package.json`) ou client mod (por `.dll`) e instala na pasta certa.
 
+### Integração com a Forge
+O app conversa com a API pública da [Forge](https://forge.sp-tarkov.com) (`forge.sp-tarkov.com/api/v0`) — a plataforma oficial de mods do próprio time do SPT. É só leitura, não precisa de chave de API, e tem limite de uso generoso (40 requisições/10s em rajada, 200/60s sustentado); o app respeita isso com um pequeno intervalo entre requisições quando checa vários mods de uma vez.
+
+Como o app só rastreia o *nome* do mod localmente (não um ID da Forge), o casamento com o catálogo é feito por nome — usando o nome verdadeiro derivado da pasta, não um apelido de exibição, então renomear um mod pra sua própria organização nunca quebra a busca. É uma heurística, e pode ocasionalmente não achar um mod com nome muito genérico ou que não está listado na Forge.
+
+Vale saber: a partir do SPT 4.0, mods server pararam de declarar a versão no `package.json` (essa convenção migrou pra uma classe de metadados dentro do próprio código do mod) — então boa parte dos mods instalados simplesmente não tem versão legível localmente pra comparar. Pra esses, o app ainda busca na Forge e mostra a versão mais recente conhecida como informação, sem alegar que uma atualização está "disponível" (já que não tem nada local pra comparar).
+
 ---
 
 ## 🐛 Limitações conhecidas
@@ -131,7 +144,8 @@ Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na ra
 - **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) aparecem como um item "Órfão" rastreado por manifesto, mas só suportam renomear/remover — não dá pra habilitar/desabilitar como unidade, já que não existe uma pasta própria pra mover.
 - **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z`/`.rar` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
 - **Detecção de conflitos é no nível de arquivo**, não semântica — sinaliza DLLs duplicadas e nomes de server mod duplicados, mas não sabe se dois mods realmente mexem na mesma coisa dentro do jogo.
-- **Sem busca/download integrado** do [hub.sp-tarkov.com](https://hub.sp-tarkov.com/) — de propósito, pra não depender de uma API externa que pode mudar sem aviso (o app só abre o link no navegador).
+- **Sem busca/navegação/instalação com 1 clique** direto da Forge — o app verifica *atualizações* pros mods que você já tem instalados, mas não deixa descobrir e instalar mods novos de dentro do app. O botão "Baixar mods" só abre a Forge no navegador pra isso.
+- **Casamento com a Forge é por nome**, não por um ID estável — mod com nome muito genérico, ou que não está listado na Forge, não é encontrado.
 - Testado só no Windows.
 
 ---
@@ -145,10 +159,13 @@ Já feito (virou funcionalidade lá em cima ⬆️):
 - [x] Shift+Clique pra seleção em range
 - [x] Versão do SPT detectada automaticamente no resumo do cabeçalho
 - [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover)
+- [x] Verificação de atualizações contra a Forge, com status por mod e seletor de versão vindo da própria Forge
 
 Ainda na fila:
+- [ ] Busca/navegação/instalação com 1 clique direto da Forge (hoje é só verificação de atualização)
 - [ ] "Reinstalar" de verdade guardando o `.zip`/`.7z`/`.rar` original, em vez de reabrir o seletor de arquivo genérico
 - [ ] Detecção de conflitos mais profunda (ex: dois mods editando a mesma tabela de loot), não só nome de arquivo duplicado
+- [ ] Proteção contra zip slip na extração de arquivo (defesa extra, já que o arquivo do mod vem de terceiros)
 - [ ] Suporte a Linux/macOS
 
 ---
