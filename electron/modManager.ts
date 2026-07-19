@@ -1013,3 +1013,168 @@ export async function checkForgeUpdates(
     unmatched
   };
 }
+
+/* ==========================================================================
+ * Busca/navegação de mods no catálogo da Forge + instalação em um clique.
+ * Diferente do checkForgeUpdates acima (que compara mods JÁ instalados),
+ * essa parte deixa o usuário descobrir mods novos direto no app, sem abrir
+ * o navegador.
+ * ========================================================================== */
+
+export interface ForgeCatalogVersion {
+  id: number;
+  version: string;
+  sptConstraint?: string;
+  link: string;
+  downloads: number;
+  contentLength?: number;
+}
+
+export interface ForgeCatalogMod {
+  id: number;
+  guid: string;
+  name: string;
+  slug: string;
+  teaser?: string;
+  thumbnail?: string;
+  downloads: number;
+  author?: string;
+  category?: string;
+  fikaCompatible?: boolean;
+  detailUrl?: string;
+  versions: ForgeCatalogVersion[];
+}
+
+export interface ForgeSearchResult {
+  mods: ForgeCatalogMod[];
+  page: number;
+  lastPage: number;
+  total: number;
+}
+
+export interface ForgeCategory {
+  id: number;
+  title: string;
+  slug: string;
+}
+
+function mapCatalogMod(m: any): ForgeCatalogMod {
+  return {
+    id: m.id,
+    guid: m.guid,
+    name: m.name,
+    slug: m.slug,
+    teaser: m.teaser || undefined,
+    thumbnail: m.thumbnail || undefined,
+    downloads: m.downloads ?? 0,
+    author: m.owner?.name,
+    category: m.category?.name,
+    fikaCompatible: typeof m.fika_compatibility === "boolean" ? m.fika_compatibility : undefined,
+    detailUrl: m.detail_url,
+    versions: Array.isArray(m.versions)
+      ? m.versions.map((v: any) => ({
+          id: v.id,
+          version: v.version,
+          sptConstraint: v.spt_version_constraint || undefined,
+          link: v.link,
+          downloads: v.downloads ?? 0,
+          contentLength: v.content_length ?? undefined
+        }))
+      : []
+  };
+}
+
+// Busca paginada no catálogo da Forge. `query` usa a busca full-text deles
+// (Meilisearch, nome/slug/descrição); `sptVersionConstraint` é opcional e
+// filtra por compatibilidade (a própria Forge avisa que isso filtra o MOD,
+// não necessariamente cada versão individual — por isso ainda mostramos a
+// lista de versões recentes de cada mod pro usuário escolher).
+export async function searchForgeMods(params: {
+  query?: string;
+  categorySlug?: string;
+  sptVersionConstraint?: string;
+  sort?: string;
+  page?: number;
+  perPage?: number;
+}): Promise<ForgeSearchResult> {
+  const url = new URL(`${FORGE_API_BASE}/mods`);
+  url.searchParams.set("include", "category,versions");
+  url.searchParams.set("sort", params.sort || "-downloads");
+  url.searchParams.set("page", String(params.page || 1));
+  url.searchParams.set("per_page", String(params.perPage || 24));
+  if (params.query) url.searchParams.set("query", params.query);
+  if (params.categorySlug) url.searchParams.set("filter[category_slug]", params.categorySlug);
+  if (params.sptVersionConstraint) url.searchParams.set("filter[spt_version]", params.sptVersionConstraint);
+
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  const json: any = await res.json();
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || `Forge respondeu ${res.status}`);
+  }
+
+  return {
+    mods: (json.data || []).map(mapCatalogMod),
+    page: json.meta?.current_page ?? 1,
+    lastPage: json.meta?.last_page ?? 1,
+    total: json.meta?.total ?? (json.data || []).length
+  };
+}
+
+export async function getForgeCategories(): Promise<ForgeCategory[]> {
+  const url = `${FORGE_API_BASE}/mod-categories?per_page=100&fields=id,title,slug`;
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) return [];
+    const json: any = await res.json();
+    return (json?.data || []).map((c: any) => ({ id: c.id, title: c.title, slug: c.slug }));
+  } catch {
+    return [];
+  }
+}
+
+// Baixa o arquivo de uma versão de mod da Forge pra uma pasta temporária e
+// reaproveita installModFromArchive (mesmo caminho de instalação usado pra
+// arquivos escolhidos manualmente). O nome/extensão do arquivo é resolvido
+// pelo Content-Disposition quando presente; senão, pela URL; senão, assume
+// .zip (formato mais comum na Forge).
+export async function installForgeModVersion(
+  sptPath: string,
+  downloadLink: string,
+  suggestedName: string
+): Promise<{ success: boolean; message: string }> {
+  let tmpFilePath: string | undefined;
+  try {
+    const res = await fetch(downloadLink);
+    if (!res.ok) {
+      return { success: false, message: `Não foi possível baixar o mod da Forge (HTTP ${res.status}).` };
+    }
+
+    let ext = ".zip";
+    const disposition = res.headers.get("content-disposition");
+    const dispositionMatch = disposition && /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const dispositionName = dispositionMatch ? decodeURIComponent(dispositionMatch[1]) : undefined;
+    const nameToInspect = dispositionName || new URL(downloadLink).pathname;
+    const inferredExt = path.extname(nameToInspect).toLowerCase();
+    if (inferredExt === ".zip" || inferredExt === ".7z" || inferredExt === ".rar") {
+      ext = inferredExt;
+    }
+
+    const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "forge-mod";
+    tmpFilePath = path.join(sptPath, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
+
+    const arrayBuffer = await res.arrayBuffer();
+    fs.writeFileSync(tmpFilePath, Buffer.from(arrayBuffer));
+
+    return await installModFromArchive(sptPath, tmpFilePath);
+  } catch (err: any) {
+    return { success: false, message: `Falha ao baixar/instalar da Forge: ${err.message || err}` };
+  } finally {
+    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
+      try {
+        fs.unlinkSync(tmpFilePath);
+      } catch {
+        // best-effort — não trava a instalação por causa da limpeza do tmp
+      }
+    }
+  }
+}

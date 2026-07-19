@@ -1,5 +1,14 @@
 import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ModInfo, ModType, ConflictReport, ForgeUpdateCheckResult, ForgeSptVersion, ForgeStatusCacheEntry } from "./types";
+import {
+  ModInfo,
+  ModType,
+  ConflictReport,
+  ForgeUpdateCheckResult,
+  ForgeSptVersion,
+  ForgeStatusCacheEntry,
+  ForgeCatalogMod,
+  ForgeCategory
+} from "./types";
 
 interface Toast {
   id: number;
@@ -64,6 +73,19 @@ export default function App() {
   >(new Map());
   const [forgeSptVersions, setForgeSptVersions] = useState<ForgeSptVersion[]>([]);
   const [forgeCheckedAt, setForgeCheckedAt] = useState<string | null>(null);
+
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browseQuery, setBrowseQuery] = useState("");
+  const [browseCategory, setBrowseCategory] = useState("");
+  const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
+  const [browseOnlyCompatible, setBrowseOnlyCompatible] = useState(false);
+  const [browseResults, setBrowseResults] = useState<ForgeCatalogMod[]>([]);
+  const [browsePage, setBrowsePage] = useState(1);
+  const [browseLastPage, setBrowseLastPage] = useState(1);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [selectedVersionByModId, setSelectedVersionByModId] = useState<Map<number, number>>(new Map());
+  const [installingModId, setInstallingModId] = useState<number | null>(null);
 
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
@@ -389,6 +411,55 @@ export default function App() {
     persistForgeStatus(next);
   }
 
+  async function runForgeSearch(page: number) {
+    setBrowseLoading(true);
+    setBrowseError(null);
+    const response = await window.modManagerAPI.searchForgeMods({
+      query: browseQuery.trim() || undefined,
+      categorySlug: browseCategory || undefined,
+      sptVersionConstraint: browseOnlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
+      page
+    });
+    setBrowseLoading(false);
+    if (!response.success || !response.result) {
+      setBrowseError(response.message || "Falha ao buscar mods na Forge.");
+      return;
+    }
+    setBrowseResults(response.result.mods);
+    setBrowsePage(response.result.page);
+    setBrowseLastPage(response.result.lastPage);
+  }
+
+  async function handleOpenBrowse() {
+    setBrowseOpen(true);
+    if (browseCategories.length === 0) {
+      window.modManagerAPI.getForgeCategories().then(setBrowseCategories);
+    }
+    runForgeSearch(1);
+  }
+
+  function handleSelectVersion(modId: number, versionId: number) {
+    setSelectedVersionByModId((prev) => new Map(prev).set(modId, versionId));
+  }
+
+  async function handleInstallFromForge(mod: ForgeCatalogMod) {
+    const versionId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
+    const version = mod.versions.find((v) => v.id === versionId) ?? mod.versions[0];
+    if (!version) {
+      pushToast(`"${mod.name}" não tem nenhuma versão publicada pra instalar.`, false);
+      return;
+    }
+    setInstallingModId(mod.id);
+    const previousKeys = new Set(mods.map(selectionKey));
+    const result = await window.modManagerAPI.installForgeMod(version.link, mod.name);
+    setInstallingModId(null);
+    pushToast(result.message, result.success);
+    if (result.success) {
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+    }
+  }
+
   async function handleMove(mod: ModInfo, direction: -1 | 1) {
     const serverMods = mods.filter((m) => m.type === "server" && m.enabled).sort((a, b) => a.loadOrder - b.loadOrder);
     const index = serverMods.findIndex((m) => m.id === mod.id);
@@ -527,6 +598,9 @@ export default function App() {
               <span className="instance-path" title={sptPath}>{sptPath}</span>
             </div>
             <div className="header-actions">
+              <button onClick={handleOpenBrowse} className="primary" title="Buscar e instalar mods direto do catálogo da Forge">
+                Buscar mods (Forge)
+              </button>
               <button onClick={handleOpenModHub} title="Abrir hub.sp-tarkov.com no navegador">Baixar mods</button>
               <button onClick={handleSelectFolder} title="Selecionar outra instância SPT">Trocar instância</button>
               <button onClick={handleInstall} disabled={loading} className="primary" title="Escolher um .zip, .7z ou .rar pra instalar">
@@ -804,6 +878,123 @@ export default function App() {
           {mods.some((m) => m.type === "hybrid" || m.type === "unknown") && (
             <Section title="Hybrid / Unknown" mods={filteredMods.filter((m) => m.type === "hybrid" || m.type === "unknown")} {...listProps} />
           )}
+        </div>
+      )}
+
+      {browseOpen && (
+        <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setBrowseOpen(false); }}>
+          <div className="modal-box forge-browse-modal">
+            <div className="modal-header">
+              <strong>Buscar mods no Forge</strong>
+              <button onClick={() => setBrowseOpen(false)} title="Fechar">✕</button>
+            </div>
+
+            <div className="forge-browse-controls">
+              <input
+                type="text"
+                placeholder="Pesquisar por nome, slug ou descrição..."
+                value={browseQuery}
+                onChange={(e) => setBrowseQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") runForgeSearch(1); }}
+              />
+              <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title="Filtrar por categoria">
+                <option value="">Todas as categorias</option>
+                {browseCategories.map((c) => (
+                  <option key={c.slug} value={c.slug}>{c.title}</option>
+                ))}
+              </select>
+              <label className="forge-browse-checkbox" title="Usa a versão do SPT selecionada nos filtros principais">
+                <input
+                  type="checkbox"
+                  checked={browseOnlyCompatible}
+                  onChange={(e) => setBrowseOnlyCompatible(e.target.checked)}
+                  disabled={!sptVersionInput.trim()}
+                />
+                Só compatíveis com {sptVersionInput.trim() || "(selecione a versão do SPT)"}
+              </label>
+              <button onClick={() => runForgeSearch(1)} disabled={browseLoading} className="primary">
+                {browseLoading ? "Buscando..." : "Buscar"}
+              </button>
+            </div>
+
+            {browseError && <p className="compare-note">{browseError}</p>}
+
+            <div className="forge-browse-results">
+              {!browseLoading && browseResults.length === 0 && !browseError && (
+                <p className="compare-note">Nenhum mod encontrado com esses filtros.</p>
+              )}
+              {browseResults.map((mod) => {
+                const selectedId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
+                return (
+                  <div key={mod.id} className="forge-mod-card">
+                    {mod.thumbnail ? (
+                      <img
+                        src={mod.thumbnail}
+                        alt=""
+                        className="forge-mod-thumb"
+                        loading="lazy"
+                        decoding="async"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                          e.currentTarget.nextElementSibling?.classList.remove("forge-mod-thumb-hidden");
+                        }}
+                      />
+                    ) : null}
+                    <div className={`forge-mod-thumb forge-mod-thumb-placeholder ${mod.thumbnail ? "forge-mod-thumb-hidden" : ""}`} />
+                    <div className="forge-mod-info">
+                      <div className="forge-mod-title-row">
+                        <a href={mod.detailUrl} onClick={(e) => { e.preventDefault(); window.modManagerAPI.openModHub(); }} title="Ver no Forge (abre no navegador)">
+                          {mod.name}
+                        </a>
+                        {mod.category && <span className="meta-chip">{mod.category}</span>}
+                        {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title="Tem versão compatível com Fika">Fika</span>}
+                      </div>
+                      {mod.teaser && <p className="forge-mod-teaser">{mod.teaser}</p>}
+                      <div className="forge-mod-meta">
+                        {mod.author && <span>por {mod.author}</span>}
+                        <span>{mod.downloads.toLocaleString("pt-BR")} downloads</span>
+                      </div>
+                    </div>
+                    <div className="forge-mod-install">
+                      {mod.versions.length > 0 ? (
+                        <>
+                          <select
+                            value={selectedId}
+                            onChange={(e) => handleSelectVersion(mod.id, Number(e.target.value))}
+                            title="Escolher a versão a instalar"
+                          >
+                            {mod.versions.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                v{v.version}{v.sptConstraint ? ` (SPT ${v.sptConstraint})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <button onClick={() => handleInstallFromForge(mod)} disabled={installingModId === mod.id} className="primary">
+                            {installingModId === mod.id ? "Instalando..." : "Instalar"}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="forge-mod-no-version">Sem versão publicada</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {browseLastPage > 1 && (
+              <div className="forge-browse-pagination">
+                <button onClick={() => runForgeSearch(browsePage - 1)} disabled={browsePage <= 1 || browseLoading}>← Anterior</button>
+                <span>Página {browsePage} de {browseLastPage}</span>
+                <button onClick={() => runForgeSearch(browsePage + 1)} disabled={browsePage >= browseLastPage || browseLoading}>Próxima →</button>
+              </div>
+            )}
+
+            <p className="compare-note">
+              A instalação baixa o arquivo direto da Forge e usa o mesmo instalador do botão "Instalar mod" — inclusive
+              a detecção de client/server mod e o registro no Manager.
+            </p>
+          </div>
         </div>
       )}
     </>

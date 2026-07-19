@@ -681,3 +681,169 @@ h2 {
   color: var(--text-faint);
   font-size: 13px;
 }
+/* ==========================================================================
+   Modal — Buscar mods no Forge
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 6, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 30px;
+}
+
+.modal-box {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.forge-browse-modal {
+  width: min(920px, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-strong);
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+}
+
+.modal-header button {
+  padding: 2px 9px;
+}
+
+.forge-browse-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.forge-browse-controls input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+}
+
+.forge-browse-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.forge-browse-results {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.forge-mod-card {
+  display: flex;
+  gap: 12px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  align-items: center;
+}
+
+.forge-mod-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.forge-mod-thumb-placeholder {
+  background: linear-gradient(135deg, var(--bg-panel), var(--border-soft));
+}
+
+.forge-mod-thumb-hidden {
+  display: none;
+}
+
+.forge-mod-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.forge-mod-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.forge-mod-title-row a {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.forge-mod-title-row a:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.forge-mod-teaser {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forge-mod-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+.forge-mod-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 190px;
+}
+
+.forge-mod-no-version {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.forge-browse-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

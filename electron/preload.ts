@@ -25,5 +25,10 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   setForgeCache: (statusCache: { name: string; status: string; version?: string }[]) =>
     ipcRenderer.invoke("set-forge-cache", statusCache),
   checkForgeUpdates: (mods: { name: string; originalName: string; version?: string }[], sptVersion: string) =>
-    ipcRenderer.invoke("check-forge-updates", mods, sptVersion)
+    ipcRenderer.invoke("check-forge-updates", mods, sptVersion),
+  searchForgeMods: (params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; sort?: string; page?: number }) =>
+    ipcRenderer.invoke("search-forge-mods", params),
+  getForgeCategories: () => ipcRenderer.invoke("get-forge-categories"),
+  installForgeMod: (downloadLink: string, suggestedName: string) =>
+    ipcRenderer.invoke("install-forge-mod", downloadLink, suggestedName)
 });

@@ -17,7 +17,10 @@ import {
   detectSptVersion,
   detectSptSemver,
   checkForgeUpdates,
-  getForgeSptVersions
+  getForgeSptVersions,
+  searchForgeMods,
+  getForgeCategories,
+  installForgeModVersion
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
@@ -140,6 +143,32 @@ ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; origi
     return { success: false, message: err?.message || "Falha ao verificar atualizações." };
   }
 });
+
+ipcMain.handle(
+  "search-forge-mods",
+  async (
+    _event,
+    params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; sort?: string; page?: number }
+  ) => {
+    try {
+      const result = await searchForgeMods(params);
+      return { success: true, result };
+    } catch (err: any) {
+      return { success: false, message: err?.message || "Falha ao buscar mods na Forge." };
+    }
+  }
+);
+
+ipcMain.handle("get-forge-categories", () => getForgeCategories());
+
+ipcMain.handle(
+  "install-forge-mod",
+  async (_event, downloadLink: string, suggestedName: string) => {
+    const sptPath = store.get("sptPath");
+    if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+    return installForgeModVersion(sptPath, downloadLink, suggestedName);
+  }
+);
 
 ipcMain.handle("install-mod", async () => {
   const sptPath = store.get("sptPath");

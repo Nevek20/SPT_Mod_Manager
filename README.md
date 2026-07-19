@@ -32,6 +32,7 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 - Conflict detection: duplicate DLL names across different client mods, and server mods declaring the same `name` in different folders
 - Automatic SPT version detection (read from the instance's `core.json`), shown in the summary — on SPT 4.0+ installs, `core.json` no longer stores the SPT version itself, so it falls back to showing the compatible Tarkov version instead
 - Checks your installed mods against [Forge](https://forge.sp-tarkov.com)'s public API for updates, with a per-mod inline status chip: update available, update blocked by a dependency conflict, incompatible with your SPT version, or — for mods with no locally-readable version (e.g. `.dll`-only mods with no `package.json`) — the latest version Forge knows about
+- Search/browse the Forge catalogue from inside the app (by name, category, and optionally filtered to your selected SPT version) and install a mod in one click — it downloads the chosen version and runs it through the same installer as a manually picked archive
 - SPT version picker pulled straight from Forge's own version list (with a mod count per version) instead of free text
 - A newly installed mod gets checked against Forge right away, without re-querying every other mod you'd already checked
 - Check results and the "last checked" timestamp persist across restarts
@@ -145,8 +146,8 @@ Worth knowing: starting with SPT 4.0, server mods no longer declare their versio
 - **"Hybrid" mods installed via merge** show up as an "Orphan" row tracked through a manifest, but only support rename/remove — no enable/disable as a unit, since there's no folder of their own to move.
 - **"Reinstall"** in the action menu opens the generic file picker (it doesn't keep the original `.zip`/`.7z`/`.rar`) — works well for updating a mod to a new version, but isn't a true one-click "reinstall this exact thing."
 - **Conflict detection is file-level**, not semantic — it flags duplicate DLLs and duplicate server mod names, but has no idea whether two mods actually touch the same thing in-game.
-- **No integrated search/browse/one-click install** from Forge — the app checks for *updates* to mods you already have installed, but doesn't let you discover and install new mods from inside the app. A button in the header just opens Forge in your browser for that instead.
-- **Forge matching is name-based**, not by a stable ID — a very generic mod name, or a mod not listed on Forge, won't be found.
+- **Forge matching for update-checking is name-based**, not by a stable ID — a very generic mod name, or a mod not listed on Forge, won't be found (the new search/browse tab doesn't have this problem, since it talks to Forge's catalogue directly by ID).
+- **Forge search filtering by SPT version filters the mod, not each version** — the API applies `filter[spt_version]` at the mod level, so the version dropdown for a matching mod can still include versions built for other SPT releases; check the SPT constraint shown next to each version before installing.
 - Only tested on Windows.
 
 ---
@@ -158,9 +159,9 @@ Done (moved up into Features ⬆️):
 - [x] Automatic SPT version detection in the header summary
 - [x] Install manifest for hybrid mods (they show up in the list and can be removed cleanly)
 - [x] Update checking against Forge, with per-mod inline status and a version picker sourced from Forge itself
+- [x] Full mod search/browse/one-click install from Forge
 
 Still open:
-- [ ] Full mod search/browse/one-click install from Forge (today it's update-checking only)
 - [ ] A real one-click "reinstall", remembering the original `.zip`/`.7z`/`.rar` instead of reopening the generic file picker
 - [ ] Deeper conflict detection (e.g. two mods editing the same loot table), not just duplicate file names
 - [ ] Zip-slip hardening on archive extraction (defense in depth, since mod files come from third parties)

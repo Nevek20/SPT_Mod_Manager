@@ -38,6 +38,7 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 - Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
 - Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão do Tarkov compatível como alternativa
 - Verifica os mods instalados contra a API pública da [Forge](https://forge.sp-tarkov.com) por atualizações, com um chip de status por mod: atualização disponível, atualização bloqueada por conflito de dependência, incompatível com a tua versão do SPT, ou — pra mods sem versão legível localmente (ex: mods só de `.dll`, sem `package.json`) — a versão mais recente que a Forge conhece
+- Busca/navegação pelo catálogo da Forge de dentro do app (por nome, categoria e, opcionalmente, filtrando pela versão do SPT selecionada) e instalação com 1 clique — baixa a versão escolhida e passa pelo mesmo instalador usado pra um arquivo escolhido manualmente
 - Seletor de versão do SPT vindo direto da lista oficial da Forge (com contagem de mods por versão), em vez de digitação livre
 - Um mod recém-instalado já é checado na Forge na hora, sem precisar re-consultar todo o resto que já tinha sido checado antes
 - Resultado da checagem e o horário da "última verificação" sobrevivem a fechar e abrir o app de novo
@@ -144,7 +145,7 @@ Vale saber: a partir do SPT 4.0, mods server pararam de declarar a versão no `p
 - **Mods "hybrid" instalados via merge** (arquivo único trazendo `user/` e `BepInEx/` juntos, sem pastas nomeadas dentro) aparecem como um item "Órfão" rastreado por manifesto, mas só suportam renomear/remover — não dá pra habilitar/desabilitar como unidade, já que não existe uma pasta própria pra mover.
 - **"Reinstalar"** no menu de ações abre o seletor de arquivo genérico (não guarda o `.zip`/`.7z`/`.rar` original) — funciona bem pra atualizar um mod pra uma versão nova, mas não é um "reinstalar com 1 clique" de verdade.
 - **Detecção de conflitos é no nível de arquivo**, não semântica — sinaliza DLLs duplicadas e nomes de server mod duplicados, mas não sabe se dois mods realmente mexem na mesma coisa dentro do jogo.
-- **Sem busca/navegação/instalação com 1 clique** direto da Forge — o app verifica *atualizações* pros mods que você já tem instalados, mas não deixa descobrir e instalar mods novos de dentro do app. O botão "Baixar mods" só abre a Forge no navegador pra isso.
+- **O filtro por versão do SPT na busca da Forge filtra o mod, não cada versão individual** — a API aplica `filter[spt_version]` no nível do mod, então o seletor de versão de um mod que bateu no filtro ainda pode listar versões feitas pra outras versões do SPT; confira a restrição de SPT mostrada ao lado de cada versão antes de instalar.
 - **Casamento com a Forge é por nome**, não por um ID estável — mod com nome muito genérico, ou que não está listado na Forge, não é encontrado.
 - Testado só no Windows.
 
@@ -160,9 +161,9 @@ Já feito (virou funcionalidade lá em cima ⬆️):
 - [x] Versão do SPT detectada automaticamente no resumo do cabeçalho
 - [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover)
 - [x] Verificação de atualizações contra a Forge, com status por mod e seletor de versão vindo da própria Forge
+- [x] Busca/navegação/instalação com 1 clique direto da Forge
 
 Ainda na fila:
-- [ ] Busca/navegação/instalação com 1 clique direto da Forge (hoje é só verificação de atualização)
 - [ ] "Reinstalar" de verdade guardando o `.zip`/`.7z`/`.rar` original, em vez de reabrir o seletor de arquivo genérico
 - [ ] Detecção de conflitos mais profunda (ex: dois mods editando a mesma tabela de loot), não só nome de arquivo duplicado
 - [ ] Proteção contra zip slip na extração de arquivo (defesa extra, já que o arquivo do mod vem de terceiros)

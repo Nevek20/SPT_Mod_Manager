@@ -53,6 +53,43 @@ export interface ForgeStatusCacheEntry {
   version?: string;
 }
 
+export interface ForgeCatalogVersion {
+  id: number;
+  version: string;
+  sptConstraint?: string;
+  link: string;
+  downloads: number;
+  contentLength?: number;
+}
+
+export interface ForgeCatalogMod {
+  id: number;
+  guid: string;
+  name: string;
+  slug: string;
+  teaser?: string;
+  thumbnail?: string;
+  downloads: number;
+  author?: string;
+  category?: string;
+  fikaCompatible?: boolean;
+  detailUrl?: string;
+  versions: ForgeCatalogVersion[];
+}
+
+export interface ForgeSearchResult {
+  mods: ForgeCatalogMod[];
+  page: number;
+  lastPage: number;
+  total: number;
+}
+
+export interface ForgeCategory {
+  id: number;
+  title: string;
+  slug: string;
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<string | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
@@ -79,6 +116,15 @@ export interface ModManagerAPI {
     mods: { name: string; originalName: string; version?: string }[],
     sptVersion: string
   ) => Promise<{ success: boolean; result?: ForgeUpdateCheckResult; message?: string }>;
+  searchForgeMods: (params: {
+    query?: string;
+    categorySlug?: string;
+    sptVersionConstraint?: string;
+    sort?: string;
+    page?: number;
+  }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
+  getForgeCategories: () => Promise<ForgeCategory[]>;
+  installForgeMod: (downloadLink: string, suggestedName: string) => Promise<{ success: boolean; message: string }>;
 }
 
 declare global {
