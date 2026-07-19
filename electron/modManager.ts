@@ -571,7 +571,7 @@ export interface InstallResult {
   archivePath?: string;
 }
 
-export async function installModFromArchive(sptPath: string, archivePath: string): Promise<InstallResult> {
+export async function installModFromArchive(sptPath: string, archivePath: string, preferredDisplayName?: string): Promise<InstallResult> {
   const tmpExtractDir = path.join(sptPath, ".tmp-mod-extract-" + Date.now());
   try {
     ensureDir(tmpExtractDir);
@@ -580,7 +580,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
     const mergeRoot = findMergeRoot(tmpExtractDir);
 
     if (mergeRoot) {
-      return performMerge(sptPath, mergeRoot, archivePath, tmpExtractDir);
+      return performMerge(sptPath, mergeRoot, archivePath, tmpExtractDir, preferredDisplayName);
     }
 
     // Caso 2: zip contém DLLs soltas ou uma única pasta -> tentar identificar client vs server
@@ -673,7 +673,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
  * rastreia qualquer arquivo "solto" por manifesto. Compartilhada entre o fluxo normal de
  * instalação e a confirmação manual de estrutura incomum.
  */
-function performMerge(sptPath: string, mergeRoot: string, archivePath: string, tmpExtractDir: string): InstallResult {
+function performMerge(sptPath: string, mergeRoot: string, archivePath: string, tmpExtractDir: string, preferredDisplayName?: string): InstallResult {
   const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
   const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
   const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
@@ -736,7 +736,7 @@ function performMerge(sptPath: string, mergeRoot: string, archivePath: string, t
     addManifestEntry(sptPath, orphanId, orphanFiles);
     addToRegistry(sptPath, {
       id: orphanId,
-      displayName: path.parse(archivePath).name,
+      displayName: preferredDisplayName ?? path.parse(archivePath).name,
       type: mergedType,
       installedAt: new Date().toISOString(),
       source: "archive-install"
@@ -759,14 +759,14 @@ function isOwnTempExtractDir(sptPath: string, tmpDir: string): boolean {
 // Usada quando o usuário revisa uma estrutura de arquivo incomum e escolhe "Continuar
 // mesmo assim" — reaproveita a extração já feita (sem baixar/extrair de novo) e força a
 // mesclagem direto na raiz da instância SPT.
-export function finalizeUnrecognizedInstall(sptPath: string, tmpDir: string, archivePath: string): InstallResult {
+export function finalizeUnrecognizedInstall(sptPath: string, tmpDir: string, archivePath: string, preferredDisplayName?: string): InstallResult {
   if (!isOwnTempExtractDir(sptPath, tmpDir)) {
     return { success: false, message: "Caminho temporário inválido." };
   }
   if (!fs.existsSync(tmpDir)) {
     return { success: false, message: "A extração temporária não existe mais — tente instalar o arquivo de novo." };
   }
-  return performMerge(sptPath, tmpDir, archivePath, tmpDir);
+  return performMerge(sptPath, tmpDir, archivePath, tmpDir, preferredDisplayName);
 }
 
 // Usada quando o usuário aborta depois de revisar uma estrutura de arquivo incomum.
@@ -1271,7 +1271,7 @@ export async function installForgeModVersion(
     const arrayBuffer = await res.arrayBuffer();
     fs.writeFileSync(tmpFilePath, Buffer.from(arrayBuffer));
 
-    return await installModFromArchive(sptPath, tmpFilePath);
+    return await installModFromArchive(sptPath, tmpFilePath, suggestedName);
   } catch (err: any) {
     return { success: false, message: `Falha ao baixar/instalar da Forge: ${err.message || err}` };
   } finally {
