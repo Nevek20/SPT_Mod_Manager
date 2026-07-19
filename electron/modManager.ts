@@ -102,7 +102,7 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
 
   if (ext === ".7z") {
     return new Promise((resolve, reject) => {
-      const stream = Seven.extractFull(archivePath, destDir, { $bin: path7za });
+      const stream = Seven.extractFull(archivePath, destDir, { $bin: resolveUnpackedBinaryPath(path7za) });
       stream.on("end", () => resolve());
       stream.on("error", (err: Error) => reject(err));
     });
@@ -122,11 +122,43 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
   throw new Error(`Formato de arquivo não suportado: ${ext}. Use .zip, .7z ou .rar.`);
 }
 
+/**
+ * Quando empacotado, o app roda de dentro de um arquivo .asar — mas um binário (.exe)
+ * não pode ser executado de dentro do asar, porque ele não existe ali como um arquivo
+ * de verdade em disco (é só uma entrada virtual dentro do arquivo empacotado). O
+ * electron-builder foi configurado (via "asarUnpack" no package.json) pra copiar o
+ * 7za.exe pra fora do asar, numa pasta irmã "app.asar.unpacked" — só que o pacote
+ * 7zip-bin calcula o caminho do binário relativo ao seu próprio __dirname, que continua
+ * apontando pra dentro do .asar. Essa função corrige isso na hora de spawnar. Em modo
+ * dev (sem asar) o caminho não contém ".asar" e a função não faz nada.
+ */
+function resolveUnpackedBinaryPath(binPath: string): string {
+  const asarSegment = `.asar${path.sep}`;
+  if (binPath.includes(asarSegment)) {
+    return binPath.replace(asarSegment, `.asar.unpacked${path.sep}`);
+  }
+  return binPath;
+}
+
 // --- Pastas relevantes dentro de uma instância SPT ---
 const SERVER_MODS_DIR = ["user", "mods"];
 const SERVER_MODS_DISABLED_DIR = ["user", "mods.disabled"];
 const CLIENT_PLUGINS_DIR = ["BepInEx", "plugins"];
 const CLIENT_PLUGINS_DISABLED_DIR = ["BepInEx", "plugins.disabled"];
+
+/**
+ * Arquivos/pastas que pertencem ao próprio SPT (não são mods) mas moram dentro de
+ * BepInEx/plugins — o mesmo diretório onde os client mods ficam. O scanner do Manager
+ * NUNCA pode listar, alternar ou remover essas entradas, nem que o usuário selecione
+ * "tudo" e mande remover: fazer isso quebra a instalação inteira da SPT (foi exatamente
+ * o que aconteceu removendo "spt/spt-core.dll"). Se a SPT algum dia renomear esses
+ * arquivos, o certo é ampliar esta lista — errar pro lado de "não mexer".
+ */
+const PROTECTED_CLIENT_PLUGIN_NAMES = new Set(["spt", "spt-core.dll"]);
+
+function isProtectedClientEntry(name: string): boolean {
+  return PROTECTED_CLIENT_PLUGIN_NAMES.has(name.toLowerCase());
+}
 
 function p(sptPath: string, parts: string[]): string {
   return path.join(sptPath, ...parts);
@@ -488,6 +520,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   const clientDir = p(sptPath, CLIENT_PLUGINS_DIR);
   if (fs.existsSync(clientDir)) {
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
+      if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
         pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", true, 0, path.join(clientDir, entry.name));
       }
@@ -498,6 +531,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   const clientDisabledDir = p(sptPath, CLIENT_PLUGINS_DISABLED_DIR);
   if (fs.existsSync(clientDisabledDir)) {
     for (const entry of fs.readdirSync(clientDisabledDir, { withFileTypes: true })) {
+      if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
         pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", false, 0, path.join(clientDisabledDir, entry.name));
       }
@@ -528,7 +562,16 @@ export function scanMods(sptPath: string): ModInfo[] {
 }
 
 // --- Instalar mod a partir de um .zip ou .7z ---
-export async function installModFromArchive(sptPath: string, archivePath: string): Promise<{ success: boolean; message: string }> {
+export interface InstallResult {
+  success: boolean;
+  message: string;
+  needsConfirmation?: boolean;
+  tmpDir?: string;
+  rootEntries?: string[];
+  archivePath?: string;
+}
+
+export async function installModFromArchive(sptPath: string, archivePath: string): Promise<InstallResult> {
   const tmpExtractDir = path.join(sptPath, ".tmp-mod-extract-" + Date.now());
   try {
     ensureDir(tmpExtractDir);
@@ -537,74 +580,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
     const mergeRoot = findMergeRoot(tmpExtractDir);
 
     if (mergeRoot) {
-      const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
-      const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
-      const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
-
-      // Antes de copiar/limpar, anota os nomes das pastas de mod reais que estão vindo
-      // (ex: "EpicsAIO" dentro de "user/mods/"), pra registrar cada uma individualmente
-      // depois — em vez de perder essa informação assim que a pasta temporária for apagada.
-      const serverModNames: string[] = [];
-      const clientModNames: string[] = [];
-      if (hasUserFolder) {
-        const srcModsDir = path.join(mergeRoot, "user", "mods");
-        if (fs.existsSync(srcModsDir)) {
-          for (const entry of fs.readdirSync(srcModsDir, { withFileTypes: true })) {
-            if (entry.isDirectory()) serverModNames.push(entry.name);
-          }
-        }
-      }
-      if (hasBepInExFolder) {
-        const srcPluginsDir = path.join(mergeRoot, "BepInEx", "plugins");
-        if (fs.existsSync(srcPluginsDir)) {
-          for (const entry of fs.readdirSync(srcPluginsDir, { withFileTypes: true })) {
-            if (entry.isDirectory() || entry.name.endsWith(".dll")) clientModNames.push(entry.name);
-          }
-        }
-      }
-
-      // Qualquer arquivo que não caia dentro de uma dessas pastas nomeadas é "órfão" —
-      // ex: algo solto direto em user/ ou BepInEx/ fora de mods/plugins. Rastreamos esses
-      // caminhos num manifesto antes de apagar a pasta temporária, pra não perder o rastro.
-      const allCopiedFiles = listFilesRelative(mergeRoot);
-      const attributedPrefixes = [
-        ...serverModNames.map((name) => `user/mods/${name}/`),
-        ...clientModNames.map((name) => `BepInEx/plugins/${name}/`)
-      ];
-      const attributedExactFiles = new Set(clientModNames.map((name) => `BepInEx/plugins/${name}`));
-      const orphanFiles = allCopiedFiles.filter(
-        (f) => !attributedExactFiles.has(f) && !attributedPrefixes.some((prefix) => f.startsWith(prefix))
-      );
-
-      copyRecursive(mergeRoot, sptPath);
-      const verification = verifyCopyRecursive(mergeRoot, sptPath);
-      if (!verification.ok) {
-        cleanup(tmpExtractDir);
-        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
-      }
-      cleanup(tmpExtractDir);
-      const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : "client";
-
-      for (const name of serverModNames) {
-        addToRegistry(sptPath, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
-      }
-      for (const name of clientModNames) {
-        addToRegistry(sptPath, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
-      }
-      if (orphanFiles.length > 0) {
-        // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
-        // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
-        const orphanId = "hybrid-manifest-" + Date.now();
-        addManifestEntry(sptPath, orphanId, orphanFiles);
-        addToRegistry(sptPath, {
-          id: orphanId,
-          displayName: path.parse(archivePath).name,
-          type: mergedType,
-          installedAt: new Date().toISOString(),
-          source: "archive-install"
-        });
-      }
-      return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
+      return performMerge(sptPath, mergeRoot, archivePath, tmpExtractDir);
     }
 
     // Caso 2: zip contém DLLs soltas ou uma única pasta -> tentar identificar client vs server
@@ -658,10 +634,20 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       }
       type = "client";
     } else {
-      cleanup(tmpExtractDir);
+      // Estrutura não reconhecida (sem DLL, sem package.json, sem pasta user/BepInEx em
+      // nenhum nível). Em vez de rejeitar de cara, devolve o conteúdo da raiz pro usuário
+      // decidir — NÃO limpa a pasta temporária aqui, pra reaproveitar a mesma extração se
+      // ele escolher continuar, em vez de precisar selecionar o arquivo de novo.
+      const rootEntries = fs
+        .readdirSync(tmpExtractDir, { withFileTypes: true })
+        .map((e) => e.name + (e.isDirectory() ? "/" : ""));
       return {
         success: false,
-        message: "Não consegui identificar o tipo do mod (sem DLL, sem package.json, sem pasta user/BepInEx). Instale manualmente e o app vai detectar."
+        needsConfirmation: true,
+        tmpDir: tmpExtractDir,
+        rootEntries,
+        archivePath,
+        message: "Estrutura de arquivo incomum: não encontrei DLL, package.json nem pasta user/BepInEx."
       };
     }
 
@@ -680,8 +666,124 @@ export async function installModFromArchive(sptPath: string, archivePath: string
   }
 }
 
+/**
+ * Copia o conteúdo de `mergeRoot` (uma pasta que já tem "user/" e/ou "BepInEx/" dentro,
+ * seja porque foi auto-detectada, seja porque o usuário confirmou uma estrutura incomum)
+ * direto pra raiz da instância SPT, registra cada mod encontrado individualmente, e
+ * rastreia qualquer arquivo "solto" por manifesto. Compartilhada entre o fluxo normal de
+ * instalação e a confirmação manual de estrutura incomum.
+ */
+function performMerge(sptPath: string, mergeRoot: string, archivePath: string, tmpExtractDir: string): InstallResult {
+  const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
+  const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
+  const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
+
+  // Antes de copiar/limpar, anota os nomes das pastas de mod reais que estão vindo
+  // (ex: "EpicsAIO" dentro de "user/mods/"), pra registrar cada uma individualmente
+  // depois — em vez de perder essa informação assim que a pasta temporária for apagada.
+  const serverModNames: string[] = [];
+  const clientModNames: string[] = [];
+  if (hasUserFolder) {
+    const srcModsDir = path.join(mergeRoot, "user", "mods");
+    if (fs.existsSync(srcModsDir)) {
+      for (const entry of fs.readdirSync(srcModsDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) serverModNames.push(entry.name);
+      }
+    }
+  }
+  if (hasBepInExFolder) {
+    const srcPluginsDir = path.join(mergeRoot, "BepInEx", "plugins");
+    if (fs.existsSync(srcPluginsDir)) {
+      for (const entry of fs.readdirSync(srcPluginsDir, { withFileTypes: true })) {
+        if (isProtectedClientEntry(entry.name)) continue; // nunca registra o core da própria SPT como mod
+        if (entry.isDirectory() || entry.name.endsWith(".dll")) clientModNames.push(entry.name);
+      }
+    }
+  }
+
+  // Qualquer arquivo que não caia dentro de uma dessas pastas nomeadas é "órfão" —
+  // ex: algo solto direto em user/ ou BepInEx/ fora de mods/plugins. Rastreamos esses
+  // caminhos num manifesto antes de apagar a pasta temporária, pra não perder o rastro.
+  const allCopiedFiles = listFilesRelative(mergeRoot);
+  const attributedPrefixes = [
+    ...serverModNames.map((name) => `user/mods/${name}/`),
+    ...clientModNames.map((name) => `BepInEx/plugins/${name}/`)
+  ];
+  const attributedExactFiles = new Set(clientModNames.map((name) => `BepInEx/plugins/${name}`));
+  const orphanFiles = allCopiedFiles.filter(
+    (f) => !attributedExactFiles.has(f) && !attributedPrefixes.some((prefix) => f.startsWith(prefix))
+  );
+
+  copyRecursive(mergeRoot, sptPath);
+  const verification = verifyCopyRecursive(mergeRoot, sptPath);
+  if (!verification.ok) {
+    cleanup(tmpExtractDir);
+    return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+  }
+  cleanup(tmpExtractDir);
+  const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : hasBepInExFolder ? "client" : "unknown";
+
+  for (const name of serverModNames) {
+    addToRegistry(sptPath, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
+  }
+  for (const name of clientModNames) {
+    addToRegistry(sptPath, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
+  }
+  if (orphanFiles.length > 0) {
+    // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
+    // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
+    const orphanId = "hybrid-manifest-" + Date.now();
+    addManifestEntry(sptPath, orphanId, orphanFiles);
+    addToRegistry(sptPath, {
+      id: orphanId,
+      displayName: path.parse(archivePath).name,
+      type: mergedType,
+      installedAt: new Date().toISOString(),
+      source: "archive-install"
+    });
+  }
+  return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
+}
+
+/**
+ * Só aceita operar em pastas que o próprio Manager criou pra extração temporária desta
+ * instância — nunca um caminho arbitrário vindo do processo renderer, que não é
+ * totalmente confiável pra apagar ou mesclar coisas direto na instância SPT.
+ */
+function isOwnTempExtractDir(sptPath: string, tmpDir: string): boolean {
+  const resolved = path.resolve(tmpDir);
+  const expectedParent = path.resolve(sptPath);
+  return path.dirname(resolved) === expectedParent && path.basename(resolved).startsWith(".tmp-mod-extract-");
+}
+
+// Usada quando o usuário revisa uma estrutura de arquivo incomum e escolhe "Continuar
+// mesmo assim" — reaproveita a extração já feita (sem baixar/extrair de novo) e força a
+// mesclagem direto na raiz da instância SPT.
+export function finalizeUnrecognizedInstall(sptPath: string, tmpDir: string, archivePath: string): InstallResult {
+  if (!isOwnTempExtractDir(sptPath, tmpDir)) {
+    return { success: false, message: "Caminho temporário inválido." };
+  }
+  if (!fs.existsSync(tmpDir)) {
+    return { success: false, message: "A extração temporária não existe mais — tente instalar o arquivo de novo." };
+  }
+  return performMerge(sptPath, tmpDir, archivePath, tmpDir);
+}
+
+// Usada quando o usuário aborta depois de revisar uma estrutura de arquivo incomum.
+export function discardPendingInstall(sptPath: string, tmpDir: string): { success: boolean; message: string } {
+  if (!isOwnTempExtractDir(sptPath, tmpDir)) {
+    return { success: false, message: "Caminho temporário inválido." };
+  }
+  cleanup(tmpDir);
+  return { success: true, message: "Instalação cancelada." };
+}
+
 // --- Habilitar/desabilitar (move entre pasta ativa e .disabled) ---
 export function toggleMod(sptPath: string, mod: ModInfo): { success: boolean; message: string } {
+  if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
+    return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser alternado." };
+  }
+
   const isServer = mod.type === "server";
   const activeDir = p(sptPath, isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR);
   const disabledDir = p(sptPath, isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
@@ -700,6 +802,10 @@ export function toggleMod(sptPath: string, mod: ModInfo): { success: boolean; me
 
 // --- Desinstalar ---
 export function uninstallMod(sptPath: string, mod: ModInfo): { success: boolean; message: string } {
+  if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
+    return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser removido pelo Manager." };
+  }
+
   // Mods "órfãos" (manifestOnly) não têm uma pasta própria com o nome do mod —
   // são arquivos soltos rastreados individualmente no manifesto. Precisa apagar
   // cada arquivo listado, em vez de tentar achar uma pasta chamada `mod.id`.
@@ -1141,7 +1247,7 @@ export async function installForgeModVersion(
   sptPath: string,
   downloadLink: string,
   suggestedName: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<InstallResult> {
   let tmpFilePath: string | undefined;
   try {
     const res = await fetch(downloadLink);

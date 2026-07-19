@@ -50,6 +50,9 @@
     ],
     "win": {
       "target": "nsis"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/7zip-bin/**/*"
+    ]
   }
 }

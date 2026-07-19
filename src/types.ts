@@ -90,13 +90,22 @@ export interface ForgeCategory {
   slug: string;
 }
 
+export interface InstallResult {
+  success: boolean;
+  message: string;
+  needsConfirmation?: boolean;
+  tmpDir?: string;
+  rootEntries?: string[];
+  archivePath?: string;
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<string | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
   openModHub: () => Promise<void>;
   scanMods: () => Promise<ModInfo[]>;
-  installMod: () => Promise<{ success: boolean; message: string }>;
-  installModFromPath: (filePath: string) => Promise<{ success: boolean; message: string }>;
+  installMod: () => Promise<InstallResult>;
+  installModFromPath: (filePath: string) => Promise<InstallResult>;
   toggleMod: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   uninstallMod: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   reorderMods: (orderedIds: string[]) => Promise<{ success: boolean; message: string }>;
@@ -124,7 +133,9 @@ export interface ModManagerAPI {
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
-  installForgeMod: (downloadLink: string, suggestedName: string) => Promise<{ success: boolean; message: string }>;
+  installForgeMod: (downloadLink: string, suggestedName: string) => Promise<InstallResult>;
+  confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) => Promise<InstallResult>;
+  abortUnrecognizedInstall: (tmpDir: string) => Promise<{ success: boolean; message: string }>;
 }
 
 declare global {

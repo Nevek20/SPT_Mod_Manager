@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ModInfo,
   ModType,
@@ -7,8 +7,12 @@ import {
   ForgeSptVersion,
   ForgeStatusCacheEntry,
   ForgeCatalogMod,
-  ForgeCategory
+  ForgeCategory,
+  InstallResult
 } from "./types";
+import { Lang, translate, translateBackendMessage } from "./i18n";
+
+const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 
 interface Toast {
   id: number;
@@ -41,6 +45,18 @@ function ToastStack({ toasts }: { toasts: Toast[] }) {
 }
 
 export default function App() {
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem(LANG_STORAGE_KEY) as Lang) || "pt-BR");
+  function changeLang(next: Lang) {
+    setLang(next);
+    localStorage.setItem(LANG_STORAGE_KEY, next);
+  }
+  function t(key: string, vars?: Record<string, string | number>): string {
+    return translate(lang, key, vars);
+  }
+  function tMsg(msg: string | undefined | null): string {
+    return translateBackendMessage(msg, lang);
+  }
+
   const [sptPath, setSptPath] = useState<string | null>(null);
   const [mods, setMods] = useState<ModInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -196,7 +212,7 @@ export default function App() {
     const result = await window.modManagerAPI.selectSptFolder();
     if (result.success && result.path) {
       setSptPath(result.path);
-      pushToast(result.message ?? "Instância configurada.", true);
+      pushToast(tMsg(result.message) || t("toast.instanceConfigured"), true);
       refreshMods();
       setSptVersion(await window.modManagerAPI.getSptVersion());
       const semver = await window.modManagerAPI.getSptSemver();
@@ -207,7 +223,7 @@ export default function App() {
         setSptVersionInput(override || "");
       }
     } else {
-      pushToast(result.message ?? "Não foi possível selecionar a pasta.", false);
+      pushToast(tMsg(result.message) || t("toast.folderSelectFailed"), false);
     }
   }
 
@@ -215,11 +231,44 @@ export default function App() {
     window.modManagerAPI.openModHub();
   }
 
+  const confirmResolverRef = useRef<((result: InstallResult) => void) | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{ tmpDir: string; archivePath: string; rootEntries: string[] } | null>(null);
+
+  // Ponto único por onde toda instalação passa. Se o backend responder pedindo
+  // confirmação (estrutura de arquivo incomum), abre o modal e "pausa" aqui até o
+  // usuário decidir — quem chamou só recebe o resultado final (instalado ou cancelado).
+  async function installArchiveWithConfirmFlow(installCall: Promise<InstallResult>): Promise<InstallResult> {
+    const result = await installCall;
+    if (!result.needsConfirmation || !result.tmpDir) return result;
+    return new Promise<InstallResult>((resolve) => {
+      confirmResolverRef.current = resolve;
+      setPendingConfirm({ tmpDir: result.tmpDir!, archivePath: result.archivePath ?? "", rootEntries: result.rootEntries ?? [] });
+    });
+  }
+
+  async function handleConfirmProceed() {
+    if (!pendingConfirm) return;
+    const { tmpDir, archivePath } = pendingConfirm;
+    setPendingConfirm(null);
+    const result = await window.modManagerAPI.confirmUnrecognizedInstall(tmpDir, archivePath);
+    confirmResolverRef.current?.(result);
+    confirmResolverRef.current = null;
+  }
+
+  async function handleConfirmAbort() {
+    if (!pendingConfirm) return;
+    const { tmpDir } = pendingConfirm;
+    setPendingConfirm(null);
+    const result = await window.modManagerAPI.abortUnrecognizedInstall(tmpDir);
+    confirmResolverRef.current?.({ success: false, message: result.message });
+    confirmResolverRef.current = null;
+  }
+
   async function handleInstall() {
     setLoading(true);
     const previousKeys = new Set(mods.map(selectionKey));
-    const result = await window.modManagerAPI.installMod();
-    pushToast(result.message, result.success);
+    const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installMod());
+    pushToast(tMsg(result.message), result.success);
     setLoading(false);
     if (result.success) {
       const updated = await refreshMods();
@@ -257,7 +306,7 @@ export default function App() {
     const archives = files.filter((f) => /\.(zip|7z|rar)$/i.test(f.name));
 
     if (archives.length === 0) {
-      pushToast("Solte um arquivo .zip, .7z ou .rar pra instalar.", false);
+      pushToast(t("toast.dropInvalidFile"), false);
       return;
     }
 
@@ -268,9 +317,9 @@ export default function App() {
       // @ts-expect-error o Electron injeta `.path` no objeto File nativo, fora da tipagem padrão do DOM
       const filePath: string | undefined = file.path;
       if (!filePath) continue;
-      const result = await window.modManagerAPI.installModFromPath(filePath);
+      const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installModFromPath(filePath));
       if (result.success) successCount++;
-      pushToast(result.message, result.success);
+      pushToast(tMsg(result.message), result.success);
     }
     setLoading(false);
     if (successCount > 0) {
@@ -282,7 +331,7 @@ export default function App() {
   async function handleToggle(mod: ModInfo) {
     setMutating(true);
     const result = await window.modManagerAPI.toggleMod(mod);
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     if (result.success) {
       // Atualização local (sem re-escanear o disco inteiro) — bem mais rápido com muitos mods.
       setMods((prev) => prev.map((m) => (m.id === mod.id && m.type === mod.type ? { ...m, enabled: !m.enabled } : m)));
@@ -291,11 +340,11 @@ export default function App() {
   }
 
   async function handleUninstall(mod: ModInfo) {
-    const confirmed = window.confirm(`Remover "${mod.name}" permanentemente?`);
+    const confirmed = window.confirm(t("toast.confirmRemove", { name: mod.name }));
     if (!confirmed) return;
     setMutating(true);
     const result = await window.modManagerAPI.uninstallMod(mod);
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     if (result.success) {
       const key = selectionKey(mod);
       setMods((prev) => prev.filter((m) => selectionKey(m) !== key));
@@ -310,22 +359,22 @@ export default function App() {
 
   async function handleOpenFolder(mod: ModInfo) {
     const result = await window.modManagerAPI.openModFolder(mod);
-    if (!result.success) pushToast(result.message, false);
+    if (!result.success) pushToast(tMsg(result.message), false);
   }
 
   async function handleReinstall() {
-    pushToast("Selecione o arquivo atualizado do mod (.zip / .7z / .rar)...", true);
+    pushToast(t("toast.selectUpdatedFile"), true);
     await handleInstall();
   }
 
   async function handleExportList() {
     const result = await window.modManagerAPI.exportModList();
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
   }
 
   async function handleImportList() {
     const result = await window.modManagerAPI.importModList();
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     if (result.success && result.comparison) {
       setCompareResult(result.comparison);
     }
@@ -337,7 +386,7 @@ export default function App() {
     setConflictReport(report);
     setCheckingConflicts(false);
     const total = report.clientFileConflicts.length + report.duplicateServerNames.length;
-    pushToast(total === 0 ? "Nenhum conflito óbvio encontrado." : `${total} possível(is) conflito(s) encontrado(s).`, total === 0);
+    pushToast(total === 0 ? t("toast.noConflictsFound") : t("toast.conflictsFound", { count: total }), total === 0);
   }
 
   function persistForgeStatus(map: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>) {
@@ -348,7 +397,7 @@ export default function App() {
 
   async function handleCheckForgeUpdates() {
     if (!sptVersionInput.trim()) {
-      pushToast("Informe a versão do SPT antes de verificar.", false);
+      pushToast(t("toast.enterSptVersion"), false);
       return;
     }
     setCheckingForgeUpdates(true);
@@ -357,8 +406,9 @@ export default function App() {
     const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
     setCheckingForgeUpdates(false);
     if (!response.success || !response.result) {
-      setForgeError(response.message || "Falha ao verificar atualizações.");
-      pushToast(response.message || "Falha ao verificar atualizações.", false);
+      const message = tMsg(response.message) || t("toast.forgeUpdateCheckFailed");
+      setForgeError(message);
+      pushToast(message, false);
       return;
     }
     setForgeResult(response.result);
@@ -380,7 +430,7 @@ export default function App() {
     persistForgeStatus(statusMap);
 
     const total = response.result.updates.length;
-    pushToast(total === 0 ? "Tudo atualizado (ou não encontrado no Forge)." : `${total} atualização(ões) disponível(is).`, true);
+    pushToast(total === 0 ? t("toast.forgeAllUpToDate") : t("toast.forgeUpdatesAvailable", { count: total }), true);
   }
 
   // Roda a checagem da Forge só pros mods que acabaram de entrar (comparando
@@ -422,7 +472,7 @@ export default function App() {
     });
     setBrowseLoading(false);
     if (!response.success || !response.result) {
-      setBrowseError(response.message || "Falha ao buscar mods na Forge.");
+      setBrowseError(tMsg(response.message) || t("toast.forgeSearchFailed"));
       return;
     }
     setBrowseResults(response.result.mods);
@@ -446,14 +496,14 @@ export default function App() {
     const versionId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
     const version = mod.versions.find((v) => v.id === versionId) ?? mod.versions[0];
     if (!version) {
-      pushToast(`"${mod.name}" não tem nenhuma versão publicada pra instalar.`, false);
+      pushToast(t("browse.noVersionPublished", { name: mod.name }), false);
       return;
     }
     setInstallingModId(mod.id);
     const previousKeys = new Set(mods.map(selectionKey));
-    const result = await window.modManagerAPI.installForgeMod(version.link, mod.name);
+    const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installForgeMod(version.link, mod.name));
     setInstallingModId(null);
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     if (result.success) {
       const updated = await refreshMods();
       checkForgeForNewMods(previousKeys, updated);
@@ -470,7 +520,7 @@ export default function App() {
     [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
 
     const result = await window.modManagerAPI.reorderMods(reordered.map((m) => m.id));
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     // Renumerar mexe nos nomes das pastas de vários mods de uma vez, então aqui vale a pena re-escanear.
     if (result.success) refreshMods();
   }
@@ -490,7 +540,7 @@ export default function App() {
     const trimmed = editingValue.trim();
     const newAlias = trimmed === mod.originalName ? "" : trimmed;
     const result = await window.modManagerAPI.renameMod(mod.id, newAlias);
-    pushToast(result.message, result.success);
+    pushToast(tMsg(result.message), result.success);
     setEditingKey(null);
     if (result.success) {
       const displayName = newAlias || mod.originalName;
@@ -521,7 +571,7 @@ export default function App() {
   async function runBulk(action: "enable" | "disable" | "remove") {
     if (selectedMods.length === 0) return;
     if (action === "remove") {
-      const confirmed = window.confirm(`Remover ${selectedMods.length} mod(s) permanentemente?`);
+      const confirmed = window.confirm(t("toast.confirmRemoveBulk", { count: selectedMods.length }));
       if (!confirmed) return;
     }
     setMutating(true);
@@ -539,7 +589,7 @@ export default function App() {
       setMods((prev) => prev.map((m) => (succeededKeys.has(selectionKey(m)) ? { ...m, enabled: action === "enable" } : m)));
     }
 
-    pushToast(`${succeededKeys.size}/${selectedMods.length} mod(s) processado(s).`, true);
+    pushToast(t("toast.bulkProcessed", { done: succeededKeys.size, total: selectedMods.length }), true);
     clearSelection();
     setMutating(false);
   }
@@ -565,8 +615,16 @@ export default function App() {
     openMenuKey,
     onSetOpenMenuKey: setOpenMenuKey,
     disabled: mutating,
-    forgeStatusByName
+    forgeStatusByName,
+    t
   };
+
+  const langToggle = (
+    <div className="lang-toggle" role="group" aria-label="Language">
+      <button className={lang === "pt-BR" ? "lang-active" : ""} onClick={() => changeLang("pt-BR")}>PT</button>
+      <button className={lang === "en" ? "lang-active" : ""} onClick={() => changeLang("en")}>EN</button>
+    </div>
+  );
 
   return (
     <>
@@ -574,10 +632,11 @@ export default function App() {
 
       {!sptPath ? (
         <div className="empty-state">
+          {langToggle}
           <h1>SPT Mod Manager</h1>
-          <p>Selecione a pasta da sua instância SPT pra começar.</p>
-          <button onClick={handleSelectFolder}>Selecionar pasta da instância</button>
-          <button onClick={handleOpenModHub}>Baixar mods (hub.sp-tarkov.com)</button>
+          <p>{t("empty.selectFolder")}</p>
+          <button onClick={handleSelectFolder}>{t("empty.selectFolderButton")}</button>
+          <button onClick={handleOpenModHub}>{t("empty.downloadModsButton")}</button>
         </div>
       ) : (
         <div
@@ -589,7 +648,7 @@ export default function App() {
         >
           {isDraggingFile && (
             <div className="drop-overlay">
-              <div className="drop-overlay-box">Solte o(s) arquivo(s) .zip / .7z / .rar aqui pra instalar</div>
+              <div className="drop-overlay-box">{t("dropOverlay.text")}</div>
             </div>
           )}
           <header>
@@ -598,87 +657,85 @@ export default function App() {
               <span className="instance-path" title={sptPath}>{sptPath}</span>
             </div>
             <div className="header-actions">
-              <button onClick={handleOpenBrowse} className="primary" title="Buscar e instalar mods direto do catálogo da Forge">
-                Buscar mods (Forge)
+              {langToggle}
+              <button onClick={handleOpenBrowse} className="primary" title={t("header.browseForgeTitle")}>
+                {t("header.browseForge")}
               </button>
-              <button onClick={handleOpenModHub} title="Abrir hub.sp-tarkov.com no navegador">Baixar mods</button>
-              <button onClick={handleSelectFolder} title="Selecionar outra instância SPT">Trocar instância</button>
-              <button onClick={handleInstall} disabled={loading} className="primary" title="Escolher um .zip, .7z ou .rar pra instalar">
-                {loading ? "Instalando..." : "Instalar mod (.zip / .7z / .rar)"}
+              <button onClick={handleOpenModHub} title={t("header.openHubTitle")}>{t("header.openHub")}</button>
+              <button onClick={handleSelectFolder} title={t("header.changeInstanceTitle")}>{t("header.changeInstance")}</button>
+              <button onClick={handleInstall} disabled={loading} className="primary" title={t("header.installButtonTitle")}>
+                {loading ? t("header.installing") : t("header.installButton")}
               </button>
             </div>
           </header>
 
           <div className="summary-bar">
             <span className="summary-item">
-              <strong>{summary.total}</strong> mod(s) instalado(s)
+              <strong>{summary.total}</strong> {t("summary.total")}
             </span>
             <span className="summary-item">Server: <strong>{summary.server}</strong></span>
             <span className="summary-item">Client: <strong>{summary.client}</strong></span>
-            <span className="summary-item summary-active">Ativos: <strong>{summary.active}</strong></span>
-            <span className="summary-item summary-disabled">Desativados: <strong>{summary.disabled}</strong></span>
+            <span className="summary-item summary-active">{t("summary.active")} <strong>{summary.active}</strong></span>
+            <span className="summary-item summary-disabled">{t("summary.disabled")} <strong>{summary.disabled}</strong></span>
             {sptVersion && (
-              <span
-                className="summary-item"
-                title="Lido de SPT_Data/Server/configs/core.json — a partir do SPT 4.0 esse arquivo só guarda a versão do Tarkov compatível, não a versão do SPT em si"
-              >
+              <span className="summary-item" title={t("summary.versionTooltip")}>
                 {sptVersion}
               </span>
             )}
-            <span className="summary-item summary-valid" title="A pasta selecionada passou na validação de instância SPT">✔ Instância válida</span>
+            <span className="summary-item summary-valid" title={t("summary.validInstanceTitle")}>✔ {t("summary.validInstance")}</span>
           </div>
 
           <input
             className="search-bar"
             type="text"
-            placeholder="Pesquisar mod pelo nome..."
+            placeholder={t("filters.searchPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
 
           <div className="filter-bar">
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TypeFilter)} title="Filtrar por tipo">
-              <option value="all">Todos os tipos</option>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TypeFilter)} title={t("filters.typeFilterTitle")}>
+              <option value="all">{t("filters.typeAll")}</option>
               <option value="server">Server</option>
               <option value="client">Client</option>
               <option value="hybrid">Hybrid</option>
               <option value="unknown">Unknown</option>
             </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} title="Filtrar por status">
-              <option value="all">Ativos e desativados</option>
-              <option value="enabled">Só ativos</option>
-              <option value="disabled">Só desativados</option>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} title={t("filters.statusFilterTitle")}>
+              <option value="all">{t("filters.statusAll")}</option>
+              <option value="enabled">{t("filters.statusEnabled")}</option>
+              <option value="disabled">{t("filters.statusDisabled")}</option>
             </select>
-            <select value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)} title="Filtrar por origem">
-              <option value="all">Qualquer origem</option>
-              <option value="manual">Instalados manualmente</option>
-              <option value="manager">Instalados pelo Manager</option>
+            <select value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)} title={t("filters.originFilterTitle")}>
+              <option value="all">{t("filters.originAll")}</option>
+              <option value="manual">{t("filters.originManual")}</option>
+              <option value="manager">{t("filters.originManager")}</option>
             </select>
 
             <span className="filter-separator" />
 
-            <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)} title="Ordenar por">
-              <option value="name">Ordenar por Nome</option>
-              <option value="type">Ordenar por Tipo</option>
-              <option value="status">Ordenar por Status</option>
-              <option value="origin">Ordenar por Origem</option>
-              <option value="installedAt">Ordenar por Data de instalação</option>
+            <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)} title={t("filters.sortFieldTitle")}>
+              <option value="name">{t("filters.sortByName")}</option>
+              <option value="type">{t("filters.sortByType")}</option>
+              <option value="status">{t("filters.sortByStatus")}</option>
+              <option value="origin">{t("filters.sortByOrigin")}</option>
+              <option value="installedAt">{t("filters.sortByInstalledAt")}</option>
             </select>
-            <button onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))} title="Inverter direção da ordenação">
-              {sortDirection === "asc" ? "↑ Crescente" : "↓ Decrescente"}
+            <button onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))} title={t("filters.sortDirectionTitle")}>
+              {sortDirection === "asc" ? t("filters.sortAsc") : t("filters.sortDesc")}
             </button>
 
             <span className="filter-separator" />
 
-            <button onClick={selectAllVisible} title="Selecionar todos os mods visíveis com os filtros atuais">Selecionar todos (visíveis)</button>
-            {selectedKeys.size > 0 && <button onClick={clearSelection}>Limpar seleção</button>}
+            <button onClick={selectAllVisible} title={t("filters.selectAllVisibleTitle")}>{t("filters.selectAllVisible")}</button>
+            {selectedKeys.size > 0 && <button onClick={clearSelection}>{t("filters.clearSelection")}</button>}
 
             <span className="filter-separator" />
 
-            <button onClick={handleExportList} title="Salvar a lista atual de mods num arquivo JSON">Exportar lista</button>
-            <button onClick={handleImportList} title="Comparar a instância atual com uma lista exportada antes">Importar / Comparar</button>
-            <button onClick={handleDetectConflicts} disabled={checkingConflicts} title="Procura DLLs duplicadas entre client mods e nomes duplicados entre server mods">
-              {checkingConflicts ? "Verificando..." : "Verificar conflitos"}
+            <button onClick={handleExportList} title={t("filters.exportListTitle")}>{t("filters.exportList")}</button>
+            <button onClick={handleImportList} title={t("filters.importCompareTitle")}>{t("filters.importCompare")}</button>
+            <button onClick={handleDetectConflicts} disabled={checkingConflicts} title={t("filters.checkConflictsTitle")}>
+              {checkingConflicts ? t("filters.checkingConflicts") : t("filters.checkConflicts")}
             </button>
             <span className="filter-separator"></span>
             <select
@@ -688,101 +745,94 @@ export default function App() {
                 setSptVersionInput(e.target.value);
                 window.modManagerAPI.setSptVersionOverride(e.target.value);
               }}
-              title="Versão do SPT usada na checagem de atualizações da Forge — a lista vem direto da Forge"
+              title={t("filters.sptVersionTitle")}
             >
-              <option value="">selecione a versão do SPT...</option>
+              <option value="">{t("filters.sptVersionPlaceholder")}</option>
               {forgeSptVersions.map((v) => (
                 <option key={v.version} value={v.version}>
                   {v.version} ({v.modCount} mods)
                 </option>
               ))}
               {sptVersionInput && !forgeSptVersions.some((v) => v.version === sptVersionInput) && (
-                <option value={sptVersionInput}>{sptVersionInput} (não listada na Forge)</option>
+                <option value={sptVersionInput}>{sptVersionInput} {t("filters.sptVersionNotListed")}</option>
               )}
             </select>
             <button
               onClick={handleCheckForgeUpdates}
               disabled={checkingForgeUpdates}
-              title="Consulta a API pública da Forge (forge.sp-tarkov.com) por atualizações dos mods instalados"
+              title={t("filters.forgeCheckTitle")}
             >
-              {checkingForgeUpdates ? "Consultando Forge..." : "Verificar atualizações (Forge)"}
+              {checkingForgeUpdates ? t("filters.forgeChecking") : t("filters.forgeCheckButton")}
             </button>
           </div>
 
           {forgeCheckedAt && (
             <p className="sort-hint">
-              Última verificação da Forge: {new Date(forgeCheckedAt).toLocaleString("pt-BR")}
+              {t("hint.forgeLastChecked", { date: new Date(forgeCheckedAt).toLocaleString(lang) })}
             </p>
           )}
 
           {sortField !== "name" && (
-            <p className="sort-hint">
-              A ordem de carregamento (▲▼) sempre segue o load order real — ordenar por outro campo só muda a exibição.
-            </p>
+            <p className="sort-hint">{t("hint.sortOrderNote")}</p>
           )}
 
           {compareResult && (
             <div className="compare-panel">
               <div className="compare-header">
-                <strong>Comparação com a lista importada</strong>
-                <button onClick={() => setCompareResult(null)}>Fechar</button>
+                <strong>{t("compare.title")}</strong>
+                <button onClick={() => setCompareResult(null)}>{t("common.close")}</button>
               </div>
               {compareResult.missing.length === 0 && compareResult.extra.length === 0 ? (
-                <p>As duas listas são idênticas.</p>
+                <p>{t("compare.identical")}</p>
               ) : (
                 <>
                   {compareResult.missing.length > 0 && (
                     <p>
-                      <strong>Faltando aqui ({compareResult.missing.length}):</strong> {compareResult.missing.join(", ")}
+                      <strong>{t("compare.missing", { count: compareResult.missing.length })}</strong> {compareResult.missing.join(", ")}
                     </p>
                   )}
                   {compareResult.extra.length > 0 && (
                     <p>
-                      <strong>A mais aqui, fora da lista importada ({compareResult.extra.length}):</strong> {compareResult.extra.join(", ")}
+                      <strong>{t("compare.extra", { count: compareResult.extra.length })}</strong> {compareResult.extra.join(", ")}
                     </p>
                   )}
                 </>
               )}
-              <p className="compare-note">
-                Isso é só uma comparação — o app não guarda os arquivos originais dos mods, então reinstalar os que
-                estão faltando precisa ser feito manualmente.
-              </p>
+              <p className="compare-note">{t("compare.note")}</p>
             </div>
           )}
 
           {conflictReport && (
             <div className="compare-panel">
               <div className="compare-header">
-                <strong>Verificação de conflitos</strong>
-                <button onClick={() => setConflictReport(null)}>Fechar</button>
+                <strong>{t("conflicts.title")}</strong>
+                <button onClick={() => setConflictReport(null)}>{t("common.close")}</button>
               </div>
               {conflictReport.clientFileConflicts.length === 0 && conflictReport.duplicateServerNames.length === 0 ? (
-                <p>Nenhum conflito óbvio encontrado.</p>
+                <p>{t("toast.noConflictsFound")}</p>
               ) : (
                 <>
                   {conflictReport.clientFileConflicts.map((c) => (
                     <p key={`dll-${c.fileName}`}>
-                      <strong>DLL "{c.fileName}"</strong> aparece em: {c.mods.join(", ")}
+                      <strong>DLL "{c.fileName}"</strong> {t("conflicts.appearsIn")} {c.mods.join(", ")}
                     </p>
                   ))}
                   {conflictReport.duplicateServerNames.map((d) => (
                     <p key={`name-${d.declaredName}`}>
-                      <strong>Nome "{d.declaredName}"</strong> declarado em mais de uma pasta: {d.mods.join(", ")}
+                      <strong>{t("conflicts.nameLabel")} "{d.declaredName}"</strong> {t("conflicts.declaredInMultiple")} {d.mods.join(", ")}
                     </p>
                   ))}
                 </>
               )}
-              <p className="compare-note">
-                Checagem no nível de arquivo — sinaliza sobreposição, não garante incompatibilidade de verdade.
-              </p>
+              <p className="compare-note">{t("conflicts.note")}</p>
             </div>
           )}
 
           {forgeError && (
             <div className="compare-panel">
               <div className="compare-header">
-                <strong>Verificação de atualizações (Forge)</strong>
-                <button onClick={() => setForgeError(null)}>Fechar</button>
+                <strong>{t("forge.checkTitle")}</strong>
+                <button onClick={() => setForgeError(null)}>{t("common.close")}</button>
               </div>
               <p>{forgeError}</p>
             </div>
@@ -791,19 +841,19 @@ export default function App() {
           {forgeResult && (
             <div className="compare-panel">
               <div className="compare-header">
-                <strong>Verificação de atualizações (Forge) — SPT {forgeResult.sptVersionUsed}</strong>
-                <button onClick={() => setForgeResult(null)}>Fechar</button>
+                <strong>{t("forge.checkTitle")} — SPT {forgeResult.sptVersionUsed}</strong>
+                <button onClick={() => setForgeResult(null)}>{t("common.close")}</button>
               </div>
               {forgeResult.updates.length > 0 && (
                 <>
-                  <p><strong>Atualizações disponíveis:</strong></p>
+                  <p><strong>{t("forge.updatesAvailable")}</strong></p>
                   {forgeResult.updates.map((u) => (
                     <p key={`update-${u.name}`}>
                       {u.name}: {u.currentVersion} → <strong>{u.recommendedVersion}</strong>
                       {u.downloadLink && (
                         <>
                           {" "}
-                          (<a href={u.downloadLink} target="_blank" rel="noreferrer">link</a>)
+                          (<a href={u.downloadLink} target="_blank" rel="noreferrer">{t("common.link")}</a>)
                         </>
                       )}
                     </p>
@@ -812,7 +862,7 @@ export default function App() {
               )}
               {forgeResult.blocked.length > 0 && (
                 <>
-                  <p><strong>Atualizações bloqueadas (quebrariam dependência):</strong></p>
+                  <p><strong>{t("forge.blockedTitle")}</strong></p>
                   {forgeResult.blocked.map((b) => (
                     <p key={`blocked-${b.name}`}>
                       {b.name}: {b.currentVersion} — {b.reason}
@@ -822,7 +872,7 @@ export default function App() {
               )}
               {forgeResult.incompatible.length > 0 && (
                 <>
-                  <p><strong>Incompatíveis com essa versão do SPT:</strong></p>
+                  <p><strong>{t("forge.incompatibleTitle")}</strong></p>
                   {forgeResult.incompatible.map((i) => (
                     <p key={`incompatible-${i.name}`}>{i.name} ({i.currentVersion})</p>
                   ))}
@@ -830,9 +880,9 @@ export default function App() {
               )}
               {forgeResult.infoOnly.length > 0 && (
                 <>
-                  <p><strong>Sem versão local pra comparar (mostrando o que a Forge tem):</strong></p>
+                  <p><strong>{t("forge.infoOnlyTitle")}</strong></p>
                   {forgeResult.infoOnly.map((info) => (
-                    <p key={`info-${info.name}`}>{info.name}: Forge tem v{info.recommendedVersion}</p>
+                    <p key={`info-${info.name}`}>{info.name}: {t("forge.infoHasVersion", { version: info.recommendedVersion ?? "" })}</p>
                   ))}
                 </>
               )}
@@ -840,36 +890,33 @@ export default function App() {
                 forgeResult.blocked.length === 0 &&
                 forgeResult.incompatible.length === 0 &&
                 forgeResult.infoOnly.length === 0 && (
-                <p>Todos os mods identificados no Forge estão atualizados.</p>
+                <p>{t("forge.allUpToDateDetailed")}</p>
               )}
               {forgeResult.unmatched.length > 0 && (
                 <p className="compare-note">
-                  Não encontrados no Forge (busca por nome): {forgeResult.unmatched.join(", ")}
+                  {t("forge.unmatchedPrefix")} {forgeResult.unmatched.join(", ")}
                 </p>
               )}
-              <p className="compare-note">
-                Casamento com o catálogo da Forge é por nome — pode não achar mods com nome muito genérico ou que
-                não estão listados lá.
-              </p>
+              <p className="compare-note">{t("forge.matchNote")}</p>
             </div>
           )}
 
           {selectedKeys.size > 0 && (
             <div className="bulk-bar">
-              <span>{selectedKeys.size} selecionado(s)</span>
+              <span>{t("bulk.selectedCount", { count: selectedKeys.size })}</span>
               <div className="bulk-actions">
-                <button onClick={() => runBulk("enable")} disabled={mutating}>Habilitar</button>
-                <button onClick={() => runBulk("disable")} disabled={mutating}>Desabilitar</button>
-                <button onClick={() => runBulk("remove")} className="danger" disabled={mutating}>Remover</button>
-                <button onClick={clearSelection}>Cancelar seleção</button>
+                <button onClick={() => runBulk("enable")} disabled={mutating}>{t("bulk.enable")}</button>
+                <button onClick={() => runBulk("disable")} disabled={mutating}>{t("bulk.disable")}</button>
+                <button onClick={() => runBulk("remove")} className="danger" disabled={mutating}>{t("bulk.remove")}</button>
+                <button onClick={clearSelection}>{t("bulk.cancelSelection")}</button>
               </div>
             </div>
           )}
 
           {filtersActive && filteredMods.length === 0 && mods.length > 0 && (
             <div className="no-results">
-              Nenhum mod bate com os filtros/busca atuais.
-              <button onClick={clearFilters}>Limpar filtros</button>
+              {t("noResults.text")}
+              <button onClick={clearFilters}>{t("noResults.clearFilters")}</button>
             </div>
           )}
 
@@ -885,35 +932,35 @@ export default function App() {
         <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setBrowseOpen(false); }}>
           <div className="modal-box forge-browse-modal">
             <div className="modal-header">
-              <strong>Buscar mods no Forge</strong>
-              <button onClick={() => setBrowseOpen(false)} title="Fechar">✕</button>
+              <strong>{t("browse.title")}</strong>
+              <button onClick={() => setBrowseOpen(false)} title={t("common.close")}>✕</button>
             </div>
 
             <div className="forge-browse-controls">
               <input
                 type="text"
-                placeholder="Pesquisar por nome, slug ou descrição..."
+                placeholder={t("browse.searchPlaceholder")}
                 value={browseQuery}
                 onChange={(e) => setBrowseQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") runForgeSearch(1); }}
               />
-              <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title="Filtrar por categoria">
-                <option value="">Todas as categorias</option>
+              <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title={t("browse.categoryFilterTitle")}>
+                <option value="">{t("browse.allCategories")}</option>
                 {browseCategories.map((c) => (
                   <option key={c.slug} value={c.slug}>{c.title}</option>
                 ))}
               </select>
-              <label className="forge-browse-checkbox" title="Usa a versão do SPT selecionada nos filtros principais">
+              <label className="forge-browse-checkbox" title={t("browse.compatibleOnlyTitle")}>
                 <input
                   type="checkbox"
                   checked={browseOnlyCompatible}
                   onChange={(e) => setBrowseOnlyCompatible(e.target.checked)}
                   disabled={!sptVersionInput.trim()}
                 />
-                Só compatíveis com {sptVersionInput.trim() || "(selecione a versão do SPT)"}
+                {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
               </label>
               <button onClick={() => runForgeSearch(1)} disabled={browseLoading} className="primary">
-                {browseLoading ? "Buscando..." : "Buscar"}
+                {browseLoading ? t("browse.searching") : t("browse.searchButton")}
               </button>
             </div>
 
@@ -921,7 +968,7 @@ export default function App() {
 
             <div className="forge-browse-results">
               {!browseLoading && browseResults.length === 0 && !browseError && (
-                <p className="compare-note">Nenhum mod encontrado com esses filtros.</p>
+                <p className="compare-note">{t("browse.noResults")}</p>
               )}
               {browseResults.map((mod) => {
                 const selectedId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
@@ -943,16 +990,16 @@ export default function App() {
                     <div className={`forge-mod-thumb forge-mod-thumb-placeholder ${mod.thumbnail ? "forge-mod-thumb-hidden" : ""}`} />
                     <div className="forge-mod-info">
                       <div className="forge-mod-title-row">
-                        <a href={mod.detailUrl} onClick={(e) => { e.preventDefault(); window.modManagerAPI.openModHub(); }} title="Ver no Forge (abre no navegador)">
+                        <a href={mod.detailUrl} onClick={(e) => { e.preventDefault(); window.modManagerAPI.openModHub(); }} title={t("browse.viewOnForgeTitle")}>
                           {mod.name}
                         </a>
                         {mod.category && <span className="meta-chip">{mod.category}</span>}
-                        {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title="Tem versão compatível com Fika">Fika</span>}
+                        {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title={t("browse.fikaCompatibleTitle")}>Fika</span>}
                       </div>
                       {mod.teaser && <p className="forge-mod-teaser">{mod.teaser}</p>}
                       <div className="forge-mod-meta">
-                        {mod.author && <span>por {mod.author}</span>}
-                        <span>{mod.downloads.toLocaleString("pt-BR")} downloads</span>
+                        {mod.author && <span>{t("browse.byAuthor", { author: mod.author })}</span>}
+                        <span>{mod.downloads.toLocaleString(lang)} {t("browse.downloadsLabel")}</span>
                       </div>
                     </div>
                     <div className="forge-mod-install">
@@ -961,7 +1008,7 @@ export default function App() {
                           <select
                             value={selectedId}
                             onChange={(e) => handleSelectVersion(mod.id, Number(e.target.value))}
-                            title="Escolher a versão a instalar"
+                            title={t("browse.chooseVersionTitle")}
                           >
                             {mod.versions.map((v) => (
                               <option key={v.id} value={v.id}>
@@ -970,11 +1017,11 @@ export default function App() {
                             ))}
                           </select>
                           <button onClick={() => handleInstallFromForge(mod)} disabled={installingModId === mod.id} className="primary">
-                            {installingModId === mod.id ? "Instalando..." : "Instalar"}
+                            {installingModId === mod.id ? t("browse.installing") : t("browse.installButton")}
                           </button>
                         </>
                       ) : (
-                        <span className="forge-mod-no-version">Sem versão publicada</span>
+                        <span className="forge-mod-no-version">{t("browse.noVersionPublishedShort")}</span>
                       )}
                     </div>
                   </div>
@@ -984,16 +1031,38 @@ export default function App() {
 
             {browseLastPage > 1 && (
               <div className="forge-browse-pagination">
-                <button onClick={() => runForgeSearch(browsePage - 1)} disabled={browsePage <= 1 || browseLoading}>← Anterior</button>
-                <span>Página {browsePage} de {browseLastPage}</span>
-                <button onClick={() => runForgeSearch(browsePage + 1)} disabled={browsePage >= browseLastPage || browseLoading}>Próxima →</button>
+                <button onClick={() => runForgeSearch(browsePage - 1)} disabled={browsePage <= 1 || browseLoading}>{t("browse.prevPage")}</button>
+                <span>{t("browse.pageOf", { page: browsePage, lastPage: browseLastPage })}</span>
+                <button onClick={() => runForgeSearch(browsePage + 1)} disabled={browsePage >= browseLastPage || browseLoading}>{t("browse.nextPage")}</button>
               </div>
             )}
 
+            <p className="compare-note">{t("browse.installNote")}</p>
+          </div>
+        </div>
+      )}
+
+      {pendingConfirm && (
+        <div className="modal-backdrop">
+          <div className="modal-box confirm-structure-modal">
+            <div className="modal-header">
+              <strong>{t("confirm.title")}</strong>
+            </div>
             <p className="compare-note">
-              A instalação baixa o arquivo direto da Forge e usa o mesmo instalador do botão "Instalar mod" — inclusive
-              a detecção de client/server mod e o registro no Manager.
+              {t("confirm.descriptionPrefix")} <code>package.json</code> {t("confirm.descriptionMid")} <code>user</code>/<code>BepInEx</code> {t("confirm.descriptionSuffix")}
             </p>
+            <ul className="confirm-structure-list">
+              {pendingConfirm.rootEntries.length > 0 ? (
+                pendingConfirm.rootEntries.map((entry) => <li key={entry}>{entry}</li>)
+              ) : (
+                <li className="empty-list">{t("confirm.emptyArchive")}</li>
+              )}
+            </ul>
+            <p className="compare-note">{t("confirm.explanation")}</p>
+            <div className="confirm-structure-actions">
+              <button onClick={handleConfirmAbort}>{t("confirm.abort")}</button>
+              <button onClick={handleConfirmProceed} className="primary">{t("confirm.proceed")}</button>
+            </div>
           </div>
         </div>
       )}
@@ -1034,7 +1103,8 @@ function ModList({
   openMenuKey,
   onSetOpenMenuKey,
   disabled = false,
-  forgeStatusByName
+  forgeStatusByName,
+  t
 }: {
   mods: ModInfo[];
   onToggle: (mod: ModInfo) => void;
@@ -1056,11 +1126,12 @@ function ModList({
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
   forgeStatusByName?: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>;
+  t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
 
   if (mods.length === 0) {
-    return <p className="empty-list">Nenhum mod nessa categoria.</p>;
+    return <p className="empty-list">{t("modlist.emptyCategory")}</p>;
   }
 
   function handleCheckboxClick(e: ReactMouseEvent<HTMLInputElement>, mod: ModInfo, index: number) {
@@ -1089,13 +1160,13 @@ function ModList({
               onChange={() => {}}
               className="mod-checkbox"
               disabled={disabled}
-              title="Clique para selecionar, Shift+Clique para selecionar um intervalo"
+              title={t("modlist.checkboxTitle")}
             />
             <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
             {reorderable && mod.enabled && (
               <div className="reorder-buttons">
-                <button onClick={() => onMove?.(mod, -1)} title="Mover pra cima" disabled={disabled}>▲</button>
-                <button onClick={() => onMove?.(mod, 1)} title="Mover pra baixo" disabled={disabled}>▼</button>
+                <button onClick={() => onMove?.(mod, -1)} title={t("modlist.moveUpTitle")} disabled={disabled}>▲</button>
+                <button onClick={() => onMove?.(mod, 1)} title={t("modlist.moveDownTitle")} disabled={disabled}>▼</button>
               </div>
             )}
             <div className="mod-info">
@@ -1112,62 +1183,62 @@ function ModList({
                   onBlur={() => onRenameConfirm(mod)}
                 />
               ) : (
-                <span className="mod-name" title={`${mod.originalName} (duplo-clique pra renomear)`} onDoubleClick={() => onRenameStart(mod)}>
+                <span className="mod-name" title={t("modlist.renameTitle", { name: mod.originalName })} onDoubleClick={() => onRenameStart(mod)}>
                   {mod.name}
                 </span>
               )}
               <div className="mod-meta">
                 <span className={`type-badge type-${mod.type}`}>{mod.type}</span>
                 <span className={`status-chip ${mod.enabled ? "status-chip-on" : "status-chip-off"}`}>
-                  {mod.enabled ? "Ativo" : "Desativado"}
+                  {mod.enabled ? t("modlist.statusActive") : t("modlist.statusDisabled")}
                 </span>
                 <span className="origin-chip">{mod.installedManually ? "Manual" : "Manager"}</span>
                 {mod.version && <span className="meta-chip">v{mod.version}</span>}
-                {mod.author && <span className="meta-chip">por {mod.author}</span>}
+                {mod.author && <span className="meta-chip">{t("browse.byAuthor", { author: mod.author })}</span>}
                 {forgeStatus?.status === "update" && (
-                  <span className="meta-chip forge-chip-update" title="Nova versão disponível na Forge">
-                    Forge: v{forgeStatus.version} disponível
+                  <span className="meta-chip forge-chip-update" title={t("modlist.forgeUpdateAvailableTitle")}>
+                    {t("modlist.forgeUpdateAvailable", { version: forgeStatus.version ?? "" })}
                   </span>
                 )}
                 {forgeStatus?.status === "blocked" && (
-                  <span className="meta-chip forge-chip-blocked" title="Tem atualização na Forge, mas instalar quebraria a dependência de outro mod">
-                    Forge: atualização bloqueada
+                  <span className="meta-chip forge-chip-blocked" title={t("modlist.forgeBlockedTitle")}>
+                    {t("modlist.forgeBlocked")}
                   </span>
                 )}
                 {forgeStatus?.status === "incompatible" && (
-                  <span className="meta-chip forge-chip-incompatible" title="A versão instalada não é compatível com a versão do SPT informada na última checagem">
-                    Forge: incompatível
+                  <span className="meta-chip forge-chip-incompatible" title={t("modlist.forgeIncompatibleTitle")}>
+                    {t("modlist.forgeIncompatible")}
                   </span>
                 )}
                 {forgeStatus?.status === "info" && (
-                  <span className="meta-chip forge-chip-info" title="Sem versão local legível pra comparar (mod sem package.json, ex: mods .dll) — essa é a versão mais recente conhecida na Forge">
-                    Forge: v{forgeStatus.version}
+                  <span className="meta-chip forge-chip-info" title={t("modlist.forgeInfoTitle")}>
+                    {t("modlist.forgeInfo", { version: forgeStatus.version ?? "" })}
                   </span>
                 )}
                 {mod.manifestOnly && (
-                  <span className="meta-chip" title="Arquivos soltos rastreados por manifesto (sem pasta própria) — só dá pra remover">
-                    Órfão
+                  <span className="meta-chip" title={t("modlist.orphanTitle")}>
+                    {t("modlist.orphan")}
                   </span>
                 )}
               </div>
             </div>
             <div className="action-menu-wrapper">
-              <button className="menu-trigger" onClick={() => onSetOpenMenuKey(isMenuOpen ? null : key)} title="Ações" disabled={disabled}>
+              <button className="menu-trigger" onClick={() => onSetOpenMenuKey(isMenuOpen ? null : key)} title={t("modlist.actionsTitle")} disabled={disabled}>
                 ⋮
               </button>
               {isMenuOpen && (
                 <div className="action-menu">
                   {!mod.manifestOnly && (
                     <button onClick={() => { onToggle(mod); onSetOpenMenuKey(null); }}>
-                      {mod.enabled ? "Desabilitar" : "Habilitar"}
+                      {mod.enabled ? t("bulk.disable") : t("bulk.enable")}
                     </button>
                   )}
                   {!mod.manifestOnly && (
-                    <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>Abrir pasta</button>
+                    <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>{t("modlist.openFolder")}</button>
                   )}
-                  <button onClick={() => onRenameStart(mod)}>Renomear</button>
-                  <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>Reinstalar</button>
-                  <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>Remover</button>
+                  <button onClick={() => onRenameStart(mod)}>{t("modlist.rename")}</button>
+                  <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>{t("modlist.reinstall")}</button>
+                  <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>{t("bulk.remove")}</button>
                 </div>
               )}
             </div>

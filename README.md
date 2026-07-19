@@ -34,6 +34,9 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 - Checks your installed mods against [Forge](https://forge.sp-tarkov.com)'s public API for updates, with a per-mod inline status chip: update available, update blocked by a dependency conflict, incompatible with your SPT version, or — for mods with no locally-readable version (e.g. `.dll`-only mods with no `package.json`) — the latest version Forge knows about
 - Search/browse the Forge catalogue from inside the app (by name, category, and optionally filtered to your selected SPT version) and install a mod in one click — it downloads the chosen version and runs it through the same installer as a manually picked archive
 - SPT version picker pulled straight from Forge's own version list (with a mod count per version) instead of free text
+- Bilingual UI (Portuguese/English), with a PT/EN toggle in the corner — including error/confirmation messages
+- Never lists or touches SPT's own core client files (e.g. `BepInEx/plugins/spt/spt-core.dll`) as if they were a mod, even under "select all + remove"
+- If an installed archive's structure isn't recognized (no DLL, no `package.json`, no `user`/`BepInEx` folder), shows a confirmation dialog with the archive's root contents instead of silently failing or guessing
 - A newly installed mod gets checked against Forge right away, without re-querying every other mod you'd already checked
 - Check results and the "last checked" timestamp persist across restarts
 

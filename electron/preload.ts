@@ -30,5 +30,8 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     ipcRenderer.invoke("search-forge-mods", params),
   getForgeCategories: () => ipcRenderer.invoke("get-forge-categories"),
   installForgeMod: (downloadLink: string, suggestedName: string) =>
-    ipcRenderer.invoke("install-forge-mod", downloadLink, suggestedName)
+    ipcRenderer.invoke("install-forge-mod", downloadLink, suggestedName),
+  confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) =>
+    ipcRenderer.invoke("install-mod-confirm", tmpDir, archivePath),
+  abortUnrecognizedInstall: (tmpDir: string) => ipcRenderer.invoke("install-mod-abort", tmpDir)
 });

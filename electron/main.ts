@@ -20,7 +20,9 @@ import {
   getForgeSptVersions,
   searchForgeMods,
   getForgeCategories,
-  installForgeModVersion
+  installForgeModVersion,
+  finalizeUnrecognizedInstall,
+  discardPendingInstall
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
@@ -193,6 +195,18 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
   }
 
   return installModFromArchive(sptPath, filePath);
+});
+
+ipcMain.handle("install-mod-confirm", (_event, tmpDir: string, archivePath: string) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  return finalizeUnrecognizedInstall(sptPath, tmpDir, archivePath);
+});
+
+ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  return discardPendingInstall(sptPath, tmpDir);
 });
 
 ipcMain.handle("toggle-mod", (_event, mod: ModInfo) => {

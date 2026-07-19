@@ -40,6 +40,9 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 - Verifica os mods instalados contra a API pública da [Forge](https://forge.sp-tarkov.com) por atualizações, com um chip de status por mod: atualização disponível, atualização bloqueada por conflito de dependência, incompatível com a tua versão do SPT, ou — pra mods sem versão legível localmente (ex: mods só de `.dll`, sem `package.json`) — a versão mais recente que a Forge conhece
 - Busca/navegação pelo catálogo da Forge de dentro do app (por nome, categoria e, opcionalmente, filtrando pela versão do SPT selecionada) e instalação com 1 clique — baixa a versão escolhida e passa pelo mesmo instalador usado pra um arquivo escolhido manualmente
 - Seletor de versão do SPT vindo direto da lista oficial da Forge (com contagem de mods por versão), em vez de digitação livre
+- Interface bilíngue (Português/Inglês), com um toggle PT/EN no canto do app — inclusive as mensagens de erro/confirmação
+- Nunca lista nem mexe nos arquivos do próprio core do client da SPT (ex: `BepInEx/plugins/spt/spt-core.dll`) como se fossem um mod, nem com "selecionar tudo + remover"
+- Se a estrutura de um arquivo instalado não é reconhecida (sem DLL, sem `package.json`, sem pasta `user`/`BepInEx`), mostra um diálogo de confirmação com o conteúdo da raiz do arquivo em vez de falhar silenciosamente ou chutar
 - Um mod recém-instalado já é checado na Forge na hora, sem precisar re-consultar todo o resto que já tinha sido checado antes
 - Resultado da checagem e o horário da "última verificação" sobrevivem a fechar e abrir o app de novo
 
