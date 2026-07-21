@@ -174,7 +174,7 @@ Still open:
 
 ## Contributing
 
-Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
+Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it!
 
 ## License
 
