@@ -56,8 +56,8 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 ## Screenshots
 
-![main 1](docs/screenshot.png)
-![main 2](docs/screenshot2.png)
+![main1](docs/screenshot.png)
+![main2](docs/screenshot2.png)
 
 
 ---
