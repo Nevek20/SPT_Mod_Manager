@@ -58,6 +58,8 @@ export default function App() {
   }
 
   const [sptPath, setSptPath] = useState<string | null>(null);
+  const [serverRoot, setServerRoot] = useState<string | null>(null);
+  const [isSplitInstance, setIsSplitInstance] = useState(false);
   const [mods, setMods] = useState<ModInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [loading, setLoading] = useState(false);
@@ -183,9 +185,11 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const path = await window.modManagerAPI.getSptPath();
-      setSptPath(path);
-      if (path) {
+      const instance = await window.modManagerAPI.getSptPath();
+      setSptPath(instance?.path ?? null);
+      setServerRoot(instance?.serverRoot ?? null);
+      setIsSplitInstance(instance?.split ?? false);
+      if (instance?.path) {
         refreshMods();
         setSptVersion(await window.modManagerAPI.getSptVersion());
         const semver = await window.modManagerAPI.getSptSemver();
@@ -212,6 +216,8 @@ export default function App() {
     const result = await window.modManagerAPI.selectSptFolder();
     if (result.success && result.path) {
       setSptPath(result.path);
+      setServerRoot(result.serverRoot ?? result.path);
+      setIsSplitInstance(result.split ?? false);
       pushToast(tMsg(result.message) || t("toast.instanceConfigured"), true);
       refreshMods();
       setSptVersion(await window.modManagerAPI.getSptVersion());
@@ -654,7 +660,13 @@ export default function App() {
           <header>
             <div>
               <h1>SPT Mod Manager</h1>
-              <span className="instance-path" title={sptPath}>{sptPath}</span>
+              {isSplitInstance ? (
+                <span className="instance-path" title={`Client: ${sptPath}\nServer: ${serverRoot}`}>
+                  {t("header.splitInstance", { client: sptPath ?? "", server: serverRoot ?? "" })}
+                </span>
+              ) : (
+                <span className="instance-path" title={sptPath ?? ""}>{sptPath}</span>
+              )}
             </div>
             <div className="header-actions">
               {langToggle}

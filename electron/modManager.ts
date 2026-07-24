@@ -191,16 +191,29 @@ function readModMetadata(modPath: string): { version?: string; author?: string }
  * Resolve o caminho absoluto (pasta ou arquivo) de um mod já escaneado, considerando
  * se está ativo ou desabilitado. Usado pra "Abrir pasta" e outras ações pontuais.
  */
-export function resolveModPath(sptPath: string, mod: Pick<ModInfo, "id" | "type" | "enabled">): string {
+export function resolveModPath(
+  clientRoot: string,
+  serverRoot: string,
+  mod: Pick<ModInfo, "id" | "type" | "enabled">
+): string {
   const isServer = mod.type === "server";
+  const base = isServer ? serverRoot : clientRoot;
   const dir = p(
-    sptPath,
+    base,
     mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR
   );
   return path.join(dir, mod.id);
 }
 const SERVER_EXE_CANDIDATES = ["SPT.Server.exe", "Aki.Server.exe"];
 const CLIENT_EXE_CANDIDATES = ["EscapeFromTarkov.exe"];
+
+function hasClientMarkers(dir: string): boolean {
+  return CLIENT_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe))) || fs.existsSync(path.join(dir, "BepInEx"));
+}
+
+function hasServerMarkers(dir: string): boolean {
+  return SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe))) || fs.existsSync(path.join(dir, "user"));
+}
 
 export function validateSptPath(sptPath: string): { valid: boolean; reason?: string } {
   if (!fs.existsSync(sptPath)) {
@@ -210,13 +223,7 @@ export function validateSptPath(sptPath: string): { valid: boolean; reason?: str
     return { valid: false, reason: "O caminho selecionado não é uma pasta." };
   }
 
-  const hasServerExe = SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(sptPath, exe)));
-  const hasClientExe = CLIENT_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(sptPath, exe)));
-  const hasUserFolder = fs.existsSync(path.join(sptPath, "user"));
-  const hasBepInEx = fs.existsSync(path.join(sptPath, "BepInEx"));
-
-  // Válida se achar qualquer marcador forte (exe conhecido) OU a combinação das duas pastas típicas.
-  const valid = hasServerExe || hasClientExe || (hasUserFolder && hasBepInEx);
+  const valid = hasClientMarkers(sptPath) || hasServerMarkers(sptPath);
 
   if (!valid) {
     return {
@@ -228,24 +235,55 @@ export function validateSptPath(sptPath: string): { valid: boolean; reason?: str
   return { valid: true };
 }
 
-/**
- * Se a pasta escolhida não for válida, tenta achar a instância automaticamente numa
- * subpasta direta (cobre o caso comum de selecionar a pasta pai, tipo "Desktop", em vez
- * de entrar e escolher a pasta "SPT" em si).
- */
-export function resolveSptPath(chosenPath: string): { path: string; autoDetected: boolean } | null {
-  const direct = validateSptPath(chosenPath);
-  if (direct.valid) return { path: chosenPath, autoDetected: false };
+export interface SptInstancePaths {
+  clientRoot: string; // onde fica BepInEx/ e o executável do jogo
+  serverRoot: string; // onde fica SPT.Server.exe e user/ — igual a clientRoot na grande maioria dos casos
+  split: boolean; // true quando client e server estão em pastas diferentes
+}
 
-  if (!fs.existsSync(chosenPath)) return null;
+/**
+ * Descobre onde ficam os arquivos de client (BepInEx/, exe do jogo) e de server
+ * (SPT.Server.exe, user/) a partir da pasta escolhida pelo usuário. Na maioria das
+ * instalações os dois estão juntos na mesma pasta. Mas o instalador oficial da SPT 4.x
+ * pode criar uma estrutura "dividida": o client fica na pasta escolhida, e o server fica
+ * numa subpasta (geralmente também chamada "SPT") um nível abaixo. Se isso não for
+ * tratado à parte, mods de servidor (user/mods/...) acabam instalados no lugar errado —
+ * o server real nem enxerga eles, porque roda de dentro da subpasta.
+ */
+export function resolveSptInstance(chosenPath: string): { instance: SptInstancePaths; autoDetected: boolean } | null {
+  if (!fs.existsSync(chosenPath) || !fs.statSync(chosenPath).isDirectory()) return null;
+
+  const chosenHasClient = hasClientMarkers(chosenPath);
+  const chosenHasServer = hasServerMarkers(chosenPath);
+
+  // Caso comum: tudo já está na pasta escolhida.
+  if (chosenHasClient && chosenHasServer) {
+    return { instance: { clientRoot: chosenPath, serverRoot: chosenPath, split: false }, autoDetected: false };
+  }
+
+  let clientRoot = chosenHasClient ? chosenPath : undefined;
+  let serverRoot = chosenHasServer ? chosenPath : undefined;
 
   const subEntries = fs.readdirSync(chosenPath, { withFileTypes: true }).filter((e) => e.isDirectory());
   for (const entry of subEntries) {
     const candidate = path.join(chosenPath, entry.name);
-    if (validateSptPath(candidate).valid) {
-      return { path: candidate, autoDetected: true };
-    }
+    if (!clientRoot && hasClientMarkers(candidate)) clientRoot = candidate;
+    if (!serverRoot && hasServerMarkers(candidate)) serverRoot = candidate;
   }
+
+  if (clientRoot && serverRoot) {
+    const split = clientRoot !== serverRoot;
+    const autoDetected = clientRoot !== chosenPath || serverRoot !== chosenPath;
+    return { instance: { clientRoot, serverRoot, split }, autoDetected };
+  }
+
+  // Achou só um dos dois (ex: só o client, se o server nunca rodou ainda) — usa o mesmo
+  // caminho pros dois, mantendo o comportamento de antes pra esse caso.
+  const single = clientRoot || serverRoot;
+  if (single) {
+    return { instance: { clientRoot: single, serverRoot: single, split: false }, autoDetected: single !== chosenPath };
+  }
+
   return null;
 }
 
@@ -375,8 +413,8 @@ function stripLoadOrderPrefix(name: string): { order: number; cleanName: string 
  * Monta os dados de export da lista de mods atual — reaproveita o scanMods, então
  * reflete exatamente o que a UI mostra (nome original, tipo, status, versão/autor quando há).
  */
-export function exportModListData(sptPath: string) {
-  const mods = scanMods(sptPath);
+export function exportModListData(clientRoot: string, serverRoot: string) {
+  const mods = scanMods(clientRoot, serverRoot);
   return {
     exportedAt: new Date().toISOString(),
     mods: mods.map((m) => ({
@@ -395,8 +433,8 @@ export function exportModListData(sptPath: string) {
  * não guarda os arquivos originais dos mods, então o mais honesto é mostrar a diferença
  * pra você decidir o que reinstalar manualmente.
  */
-export function compareModList(sptPath: string, importedNames: string[]): ModListComparison {
-  const currentNames = scanMods(sptPath).map((m) => m.originalName);
+export function compareModList(clientRoot: string, serverRoot: string, importedNames: string[]): ModListComparison {
+  const currentNames = scanMods(clientRoot, serverRoot).map((m) => m.originalName);
   const currentSet = new Set(currentNames);
   const importedSet = new Set(importedNames);
   return {
@@ -422,11 +460,11 @@ export interface ConflictReport {
  *    clássico de "instalei o mesmo mod duas vezes sem perceber" (ex: atualizaram e a pasta antiga
  *    não foi removida).
  */
-export function detectConflicts(sptPath: string): ConflictReport {
+export function detectConflicts(clientRoot: string, serverRoot: string): ConflictReport {
   const clientFileConflicts: { fileName: string; mods: string[] }[] = [];
   const dllOwners = new Map<string, Set<string>>();
 
-  const clientDir = p(sptPath, CLIENT_PLUGINS_DIR);
+  const clientDir = p(clientRoot, CLIENT_PLUGINS_DIR);
   if (fs.existsSync(clientDir)) {
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
@@ -448,7 +486,7 @@ export function detectConflicts(sptPath: string): ConflictReport {
 
   const duplicateServerNames: { declaredName: string; mods: string[] }[] = [];
   const nameOwners = new Map<string, Set<string>>();
-  const serverDir = p(sptPath, SERVER_MODS_DIR);
+  const serverDir = p(serverRoot, SERVER_MODS_DIR);
   if (fs.existsSync(serverDir)) {
     for (const entry of fs.readdirSync(serverDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -473,10 +511,20 @@ export function detectConflicts(sptPath: string): ConflictReport {
   return { clientFileConflicts, duplicateServerNames };
 }
 
-export function scanMods(sptPath: string): ModInfo[] {
-  const registry = loadRegistry(sptPath);
+// Resolve o caminho real de um arquivo rastreado por manifesto: tudo que começa com
+// "user/" pertence ao lado do servidor (serverRoot); o resto (BepInEx/, ou qualquer
+// arquivo solto que sobrou na raiz do mod) pertence ao lado do client (clientRoot).
+// Nas instalações não-divididas (o caso comum) clientRoot === serverRoot, então isso
+// não muda nada — só importa quando as duas pastas são diferentes de verdade.
+function resolveManifestFilePath(clientRoot: string, serverRoot: string, relPath: string): string {
+  const base = relPath.toLowerCase().startsWith("user/") ? serverRoot : clientRoot;
+  return path.join(base, relPath);
+}
+
+export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
+  const registry = loadRegistry(clientRoot);
   const registryIds = new Set(registry.map((r) => r.id));
-  const aliases = loadAliases(sptPath);
+  const aliases = loadAliases(clientRoot);
   const mods: ModInfo[] = [];
 
   function pushMod(id: string, cleanName: string, type: ModType, enabled: boolean, loadOrder: number, modPath?: string) {
@@ -497,7 +545,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   }
 
   // Server mods (ativos)
-  const serverDir = p(sptPath, SERVER_MODS_DIR);
+  const serverDir = p(serverRoot, SERVER_MODS_DIR);
   if (fs.existsSync(serverDir)) {
     for (const entry of fs.readdirSync(serverDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -507,7 +555,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   }
 
   // Server mods (desabilitados)
-  const serverDisabledDir = p(sptPath, SERVER_MODS_DISABLED_DIR);
+  const serverDisabledDir = p(serverRoot, SERVER_MODS_DISABLED_DIR);
   if (fs.existsSync(serverDisabledDir)) {
     for (const entry of fs.readdirSync(serverDisabledDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -517,7 +565,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   }
 
   // Client mods (ativos) — plugins soltos (.dll) ou em subpastas
-  const clientDir = p(sptPath, CLIENT_PLUGINS_DIR);
+  const clientDir = p(clientRoot, CLIENT_PLUGINS_DIR);
   if (fs.existsSync(clientDir)) {
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
       if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
@@ -528,7 +576,7 @@ export function scanMods(sptPath: string): ModInfo[] {
   }
 
   // Client mods (desabilitados)
-  const clientDisabledDir = p(sptPath, CLIENT_PLUGINS_DISABLED_DIR);
+  const clientDisabledDir = p(clientRoot, CLIENT_PLUGINS_DISABLED_DIR);
   if (fs.existsSync(clientDisabledDir)) {
     for (const entry of fs.readdirSync(clientDisabledDir, { withFileTypes: true })) {
       if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
@@ -540,9 +588,9 @@ export function scanMods(sptPath: string): ModInfo[] {
 
   // Mods "órfãos" rastreados por manifesto (arquivos sem pasta nomeada própria) — não suportam
   // habilitar/desabilitar, mas aparecem na lista e podem ser removidos de forma limpa.
-  const manifest = loadManifest(sptPath);
+  const manifest = loadManifest(clientRoot);
   for (const [manifestId, files] of Object.entries(manifest)) {
-    const stillExists = files.some((relPath) => fs.existsSync(path.join(sptPath, relPath)));
+    const stillExists = files.some((relPath) => fs.existsSync(resolveManifestFilePath(clientRoot, serverRoot, relPath)));
     if (!stillExists) continue; // arquivos já não existem mais (removidos por fora) — não mostra fantasma
     const registryEntry = registry.find((r) => r.id === manifestId);
     mods.push({
@@ -571,8 +619,13 @@ export interface InstallResult {
   archivePath?: string;
 }
 
-export async function installModFromArchive(sptPath: string, archivePath: string, preferredDisplayName?: string): Promise<InstallResult> {
-  const tmpExtractDir = path.join(sptPath, ".tmp-mod-extract-" + Date.now());
+export async function installModFromArchive(
+  clientRoot: string,
+  serverRoot: string,
+  archivePath: string,
+  preferredDisplayName?: string
+): Promise<InstallResult> {
+  const tmpExtractDir = path.join(clientRoot, ".tmp-mod-extract-" + Date.now());
   try {
     ensureDir(tmpExtractDir);
     await extractArchive(archivePath, tmpExtractDir);
@@ -580,7 +633,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
     const mergeRoot = findMergeRoot(tmpExtractDir);
 
     if (mergeRoot) {
-      return performMerge(sptPath, mergeRoot, archivePath, tmpExtractDir, preferredDisplayName);
+      return performMerge(clientRoot, serverRoot, mergeRoot, archivePath, tmpExtractDir, preferredDisplayName);
     }
 
     // Caso 2: zip contém DLLs soltas ou uma única pasta -> tentar identificar client vs server
@@ -597,7 +650,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       const singleDir = rootEntries.length === 1 && rootEntries[0].isDirectory() ? rootEntries[0].name : null;
       const sourceDir = singleDir ? path.join(tmpExtractDir, singleDir) : tmpExtractDir;
       modId = singleDir ?? path.parse(archivePath).name;
-      destBase = p(sptPath, SERVER_MODS_DIR);
+      destBase = p(serverRoot, SERVER_MODS_DIR);
       ensureDir(destBase);
       const serverDest = path.join(destBase, modId);
       copyRecursive(sourceDir, serverDest);
@@ -609,7 +662,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
       type = "server";
     } else if (dllFiles.length > 0) {
       // Client mod: copia pasta (ou soltas) pra BepInEx/plugins
-      destBase = p(sptPath, CLIENT_PLUGINS_DIR);
+      destBase = p(clientRoot, CLIENT_PLUGINS_DIR);
       ensureDir(destBase);
       const rootEntries = fs.readdirSync(tmpExtractDir, { withFileTypes: true });
       const singleDir = rootEntries.length === 1 && rootEntries[0].isDirectory() ? rootEntries[0].name : null;
@@ -652,7 +705,7 @@ export async function installModFromArchive(sptPath: string, archivePath: string
     }
 
     cleanup(tmpExtractDir);
-    addToRegistry(sptPath, {
+    addToRegistry(clientRoot, {
       id: modId,
       displayName: modId,
       type,
@@ -669,11 +722,23 @@ export async function installModFromArchive(sptPath: string, archivePath: string
 /**
  * Copia o conteúdo de `mergeRoot` (uma pasta que já tem "user/" e/ou "BepInEx/" dentro,
  * seja porque foi auto-detectada, seja porque o usuário confirmou uma estrutura incomum)
- * direto pra raiz da instância SPT, registra cada mod encontrado individualmente, e
- * rastreia qualquer arquivo "solto" por manifesto. Compartilhada entre o fluxo normal de
+ * pra dentro da instância SPT, registra cada mod encontrado individualmente, e rastreia
+ * qualquer arquivo "solto" por manifesto. Compartilhada entre o fluxo normal de
  * instalação e a confirmação manual de estrutura incomum.
+ *
+ * Quando a instância é "dividida" (clientRoot !== serverRoot), a cópia é dividida também:
+ * tudo que está dentro de "user/" vai pro serverRoot, e o resto (BepInEx/ e qualquer
+ * arquivo solto na raiz do mod) vai pro clientRoot. Em instâncias normais (a grande
+ * maioria) clientRoot e serverRoot são a mesma pasta, então isso não muda nada na prática.
  */
-function performMerge(sptPath: string, mergeRoot: string, archivePath: string, tmpExtractDir: string, preferredDisplayName?: string): InstallResult {
+function performMerge(
+  clientRoot: string,
+  serverRoot: string,
+  mergeRoot: string,
+  archivePath: string,
+  tmpExtractDir: string,
+  preferredDisplayName?: string
+): InstallResult {
   const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
   const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
   const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
@@ -714,27 +779,50 @@ function performMerge(sptPath: string, mergeRoot: string, archivePath: string, t
     (f) => !attributedExactFiles.has(f) && !attributedPrefixes.some((prefix) => f.startsWith(prefix))
   );
 
-  copyRecursive(mergeRoot, sptPath);
-  const verification = verifyCopyRecursive(mergeRoot, sptPath);
-  if (!verification.ok) {
-    cleanup(tmpExtractDir);
-    return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+  // Cópia dividida: "user/" vai pro serverRoot, o resto (BepInEx/ e qualquer arquivo
+  // solto na raiz) vai pro clientRoot. Quando as duas raízes são a mesma pasta, dá
+  // exatamente no mesmo resultado de sempre.
+  const userSrc = path.join(mergeRoot, "user");
+  if (hasUserFolder) {
+    copyRecursive(userSrc, path.join(serverRoot, "user"));
+    const verification = verifyCopyRecursive(userSrc, path.join(serverRoot, "user"));
+    if (!verification.ok) {
+      cleanup(tmpExtractDir);
+      return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+    }
   }
+  for (const entry of mergeEntries) {
+    if (entry.name.toLowerCase() === "user") continue; // já tratado acima
+    const srcPath = path.join(mergeRoot, entry.name);
+    const destPath = path.join(clientRoot, entry.name);
+    if (entry.isDirectory()) {
+      copyRecursive(srcPath, destPath);
+      const verification = verifyCopyRecursive(srcPath, destPath);
+      if (!verification.ok) {
+        cleanup(tmpExtractDir);
+        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+      }
+    } else {
+      ensureDir(clientRoot);
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+
   cleanup(tmpExtractDir);
   const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : hasBepInExFolder ? "client" : "unknown";
 
   for (const name of serverModNames) {
-    addToRegistry(sptPath, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
+    addToRegistry(clientRoot, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
   }
   for (const name of clientModNames) {
-    addToRegistry(sptPath, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
+    addToRegistry(clientRoot, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
   }
   if (orphanFiles.length > 0) {
     // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
     // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
     const orphanId = "hybrid-manifest-" + Date.now();
-    addManifestEntry(sptPath, orphanId, orphanFiles);
-    addToRegistry(sptPath, {
+    addManifestEntry(clientRoot, orphanId, orphanFiles);
+    addToRegistry(clientRoot, {
       id: orphanId,
       displayName: preferredDisplayName ?? path.parse(archivePath).name,
       type: mergedType,
@@ -748,30 +836,37 @@ function performMerge(sptPath: string, mergeRoot: string, archivePath: string, t
 /**
  * Só aceita operar em pastas que o próprio Manager criou pra extração temporária desta
  * instância — nunca um caminho arbitrário vindo do processo renderer, que não é
- * totalmente confiável pra apagar ou mesclar coisas direto na instância SPT.
+ * totalmente confiável pra apagar ou mesclar coisas direto na instância SPT. As pastas
+ * temporárias são sempre criadas dentro de clientRoot (ver installModFromArchive acima).
  */
-function isOwnTempExtractDir(sptPath: string, tmpDir: string): boolean {
+function isOwnTempExtractDir(clientRoot: string, tmpDir: string): boolean {
   const resolved = path.resolve(tmpDir);
-  const expectedParent = path.resolve(sptPath);
+  const expectedParent = path.resolve(clientRoot);
   return path.dirname(resolved) === expectedParent && path.basename(resolved).startsWith(".tmp-mod-extract-");
 }
 
 // Usada quando o usuário revisa uma estrutura de arquivo incomum e escolhe "Continuar
 // mesmo assim" — reaproveita a extração já feita (sem baixar/extrair de novo) e força a
-// mesclagem direto na raiz da instância SPT.
-export function finalizeUnrecognizedInstall(sptPath: string, tmpDir: string, archivePath: string, preferredDisplayName?: string): InstallResult {
-  if (!isOwnTempExtractDir(sptPath, tmpDir)) {
+// mesclagem direto na instância SPT.
+export function finalizeUnrecognizedInstall(
+  clientRoot: string,
+  serverRoot: string,
+  tmpDir: string,
+  archivePath: string,
+  preferredDisplayName?: string
+): InstallResult {
+  if (!isOwnTempExtractDir(clientRoot, tmpDir)) {
     return { success: false, message: "Caminho temporário inválido." };
   }
   if (!fs.existsSync(tmpDir)) {
     return { success: false, message: "A extração temporária não existe mais — tente instalar o arquivo de novo." };
   }
-  return performMerge(sptPath, tmpDir, archivePath, tmpDir, preferredDisplayName);
+  return performMerge(clientRoot, serverRoot, tmpDir, archivePath, tmpDir, preferredDisplayName);
 }
 
 // Usada quando o usuário aborta depois de revisar uma estrutura de arquivo incomum.
-export function discardPendingInstall(sptPath: string, tmpDir: string): { success: boolean; message: string } {
-  if (!isOwnTempExtractDir(sptPath, tmpDir)) {
+export function discardPendingInstall(clientRoot: string, tmpDir: string): { success: boolean; message: string } {
+  if (!isOwnTempExtractDir(clientRoot, tmpDir)) {
     return { success: false, message: "Caminho temporário inválido." };
   }
   cleanup(tmpDir);
@@ -779,14 +874,15 @@ export function discardPendingInstall(sptPath: string, tmpDir: string): { succes
 }
 
 // --- Habilitar/desabilitar (move entre pasta ativa e .disabled) ---
-export function toggleMod(sptPath: string, mod: ModInfo): { success: boolean; message: string } {
+export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
     return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser alternado." };
   }
 
   const isServer = mod.type === "server";
-  const activeDir = p(sptPath, isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR);
-  const disabledDir = p(sptPath, isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
+  const base = isServer ? serverRoot : clientRoot;
+  const activeDir = p(base, isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR);
+  const disabledDir = p(base, isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
   ensureDir(disabledDir);
   ensureDir(activeDir);
 
@@ -801,7 +897,7 @@ export function toggleMod(sptPath: string, mod: ModInfo): { success: boolean; me
 }
 
 // --- Desinstalar ---
-export function uninstallMod(sptPath: string, mod: ModInfo): { success: boolean; message: string } {
+export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
     return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser removido pelo Manager." };
   }
@@ -810,42 +906,43 @@ export function uninstallMod(sptPath: string, mod: ModInfo): { success: boolean;
   // são arquivos soltos rastreados individualmente no manifesto. Precisa apagar
   // cada arquivo listado, em vez de tentar achar uma pasta chamada `mod.id`.
   if (mod.manifestOnly) {
-    const manifest = loadManifest(sptPath);
+    const manifest = loadManifest(clientRoot);
     const files = manifest[mod.id];
     if (!files || files.length === 0) {
       // Registro já estava vazio/inconsistente — ainda assim limpa a entrada
       // da lista pra não deixar um fantasma que ninguém consegue remover.
-      removeManifestEntry(sptPath, mod.id);
-      removeFromRegistry(sptPath, mod.id);
+      removeManifestEntry(clientRoot, mod.id);
+      removeFromRegistry(clientRoot, mod.id);
       return { success: true, message: "Entrada removida da lista (nenhum arquivo rastreado)." };
     }
     let removedCount = 0;
     for (const relPath of files) {
-      const target = path.join(sptPath, relPath);
+      const target = resolveManifestFilePath(clientRoot, serverRoot, relPath);
       if (fs.existsSync(target)) {
         fs.rmSync(target, { force: true });
         removedCount++;
       }
     }
-    removeManifestEntry(sptPath, mod.id);
-    removeFromRegistry(sptPath, mod.id);
+    removeManifestEntry(clientRoot, mod.id);
+    removeFromRegistry(clientRoot, mod.id);
     return { success: true, message: `${removedCount} arquivo(s) órfão(s) removido(s).` };
   }
 
   const isServer = mod.type === "server";
-  const dir = p(sptPath, mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
+  const base = isServer ? serverRoot : clientRoot;
+  const dir = p(base, mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
   const target = path.join(dir, mod.id);
   if (!fs.existsSync(target)) {
     return { success: false, message: "Mod não encontrado: " + target };
   }
   fs.rmSync(target, { recursive: true, force: true });
-  removeFromRegistry(sptPath, mod.id);
+  removeFromRegistry(clientRoot, mod.id);
   return { success: true, message: "Mod removido." };
 }
 
 // --- Reordenar load order (só server mods) ---
-export function reorderServerMods(sptPath: string, orderedIds: string[]): { success: boolean; message: string } {
-  const activeDir = p(sptPath, SERVER_MODS_DIR);
+export function reorderServerMods(serverRoot: string, orderedIds: string[]): { success: boolean; message: string } {
+  const activeDir = p(serverRoot, SERVER_MODS_DIR);
   if (!fs.existsSync(activeDir)) return { success: false, message: "Pasta de server mods não existe." };
 
   orderedIds.forEach((id, index) => {
@@ -1244,7 +1341,8 @@ export async function getForgeCategories(): Promise<ForgeCategory[]> {
 // pelo Content-Disposition quando presente; senão, pela URL; senão, assume
 // .zip (formato mais comum na Forge).
 export async function installForgeModVersion(
-  sptPath: string,
+  clientRoot: string,
+  serverRoot: string,
   downloadLink: string,
   suggestedName: string
 ): Promise<InstallResult> {
@@ -1266,12 +1364,12 @@ export async function installForgeModVersion(
     }
 
     const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "forge-mod";
-    tmpFilePath = path.join(sptPath, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
+    tmpFilePath = path.join(clientRoot, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
 
     const arrayBuffer = await res.arrayBuffer();
     fs.writeFileSync(tmpFilePath, Buffer.from(arrayBuffer));
 
-    return await installModFromArchive(sptPath, tmpFilePath, suggestedName);
+    return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName);
   } catch (err: any) {
     return { success: false, message: `Falha ao baixar/instalar da Forge: ${err.message || err}` };
   } finally {

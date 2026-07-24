@@ -100,8 +100,8 @@ export interface InstallResult {
 }
 
 export interface ModManagerAPI {
-  getSptPath: () => Promise<string | null>;
-  selectSptFolder: () => Promise<{ success: boolean; path?: string; message?: string }>;
+  getSptPath: () => Promise<{ path: string; serverRoot: string; split: boolean } | null>;
+  selectSptFolder: () => Promise<{ success: boolean; path?: string; serverRoot?: string; split?: boolean; message?: string }>;
   openModHub: () => Promise<void>;
   scanMods: () => Promise<ModInfo[]>;
   installMod: () => Promise<InstallResult>;

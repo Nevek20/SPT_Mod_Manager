@@ -16,6 +16,7 @@ export interface ModInfo {
 
 export interface InstanceConfig {
   sptPath: string | null;
+  serverRoot: string | null; // normalmente igual a sptPath; diferente só em instalações "divididas" (client numa pasta, server numa subpasta)
   sptVersionOverride: string | null;
   forgeStatusCache: { name: string; status: "update" | "blocked" | "incompatible" | "info"; version?: string }[] | null;
   forgeCheckedAt: string | null;

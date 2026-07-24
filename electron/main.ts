@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import Store from "electron-store";
 import {
-  resolveSptPath,
+  resolveSptInstance,
   scanMods,
   installModFromArchive,
   toggleMod,
@@ -29,8 +29,16 @@ import { InstanceConfig, ModInfo } from "./types";
 const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
 
 const store = new Store<InstanceConfig>({
-  defaults: { sptPath: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null }
+  defaults: { sptPath: null, serverRoot: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null }
 });
+
+// sptPath (armazenado) é sempre a raiz de CLIENT. serverRoot é igual a sptPath na
+// grande maioria das instâncias; só é diferente quando a instalação é "dividida" (o
+// instalador da SPT 4.x pode criar uma subpasta separada pro server). O fallback aqui
+// cobre configs salvas antes dessa mudança, onde serverRoot nunca foi definido.
+function getServerRoot(): string | null {
+  return store.get("serverRoot") || store.get("sptPath");
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -65,7 +73,12 @@ app.on("window-all-closed", () => {
 });
 
 // --- IPC: configuração da instância ---
-ipcMain.handle("get-spt-path", () => store.get("sptPath"));
+ipcMain.handle("get-spt-path", () => {
+  const path = store.get("sptPath");
+  if (!path) return null;
+  const serverRoot = getServerRoot()!;
+  return { path, serverRoot, split: serverRoot !== path };
+});
 
 ipcMain.handle("open-mod-hub", () => {
   shell.openExternal(MOD_HUB_URL);
@@ -76,18 +89,25 @@ ipcMain.handle("select-spt-folder", async () => {
   if (result.canceled || result.filePaths.length === 0) return { success: false };
 
   const chosen = result.filePaths[0];
-  const resolved = resolveSptPath(chosen);
+  const resolved = resolveSptInstance(chosen);
   if (!resolved) {
     return {
       success: false,
       message: "Não achei uma instância SPT nessa pasta nem nas subpastas diretas dela. Selecione a pasta que tem o SPT.Server.exe."
     };
   }
-  store.set("sptPath", resolved.path);
+  store.set("sptPath", resolved.instance.clientRoot);
+  store.set("serverRoot", resolved.instance.serverRoot);
   return {
     success: true,
-    path: resolved.path,
-    message: resolved.autoDetected ? `Instância encontrada automaticamente em: ${resolved.path}` : undefined
+    path: resolved.instance.clientRoot,
+    serverRoot: resolved.instance.serverRoot,
+    split: resolved.instance.split,
+    message: resolved.autoDetected
+      ? resolved.instance.split
+        ? `Instância dividida detectada — client em "${resolved.instance.clientRoot}", server em "${resolved.instance.serverRoot}".`
+        : `Instância encontrada automaticamente em: ${resolved.instance.clientRoot}`
+      : undefined
   };
 });
 
@@ -95,7 +115,7 @@ ipcMain.handle("select-spt-folder", async () => {
 ipcMain.handle("scan-mods", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return [];
-  return scanMods(sptPath);
+  return scanMods(sptPath, getServerRoot()!);
 });
 
 ipcMain.handle("get-spt-version", () => {
@@ -107,7 +127,7 @@ ipcMain.handle("get-spt-version", () => {
 ipcMain.handle("detect-conflicts", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { clientFileConflicts: [], duplicateServerNames: [] };
-  return detectConflicts(sptPath);
+  return detectConflicts(sptPath, getServerRoot()!);
 });
 
 ipcMain.handle("get-spt-semver", () => {
@@ -168,7 +188,7 @@ ipcMain.handle(
   async (_event, downloadLink: string, suggestedName: string) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-    return installForgeModVersion(sptPath, downloadLink, suggestedName);
+    return installForgeModVersion(sptPath, getServerRoot()!, downloadLink, suggestedName);
   }
 );
 
@@ -182,7 +202,7 @@ ipcMain.handle("install-mod", async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelado." };
 
-  return installModFromArchive(sptPath, result.filePaths[0]);
+  return installModFromArchive(sptPath, getServerRoot()!, result.filePaths[0]);
 });
 
 ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
@@ -194,13 +214,13 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
     return { success: false, message: `Arquivo "${path.basename(filePath)}" não é .zip, .7z nem .rar.` };
   }
 
-  return installModFromArchive(sptPath, filePath);
+  return installModFromArchive(sptPath, getServerRoot()!, filePath);
 });
 
 ipcMain.handle("install-mod-confirm", (_event, tmpDir: string, archivePath: string) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-  return finalizeUnrecognizedInstall(sptPath, tmpDir, archivePath);
+  return finalizeUnrecognizedInstall(sptPath, getServerRoot()!, tmpDir, archivePath);
 });
 
 ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
@@ -212,19 +232,19 @@ ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
 ipcMain.handle("toggle-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-  return toggleMod(sptPath, mod);
+  return toggleMod(sptPath, getServerRoot()!, mod);
 });
 
 ipcMain.handle("uninstall-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-  return uninstallMod(sptPath, mod);
+  return uninstallMod(sptPath, getServerRoot()!, mod);
 });
 
 ipcMain.handle("reorder-mods", (_event, orderedIds: string[]) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-  return reorderServerMods(sptPath, orderedIds);
+  return reorderServerMods(getServerRoot()!, orderedIds);
 });
 
 ipcMain.handle("rename-mod", (_event, modId: string, alias: string) => {
@@ -237,7 +257,7 @@ ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
 
-  const target = resolveModPath(sptPath, mod);
+  const target = resolveModPath(sptPath, getServerRoot()!, mod);
   if (!fs.existsSync(target)) {
     return { success: false, message: "Caminho do mod não encontrado: " + target };
   }
@@ -253,7 +273,7 @@ ipcMain.handle("export-mod-list", async () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
 
-  const data = exportModListData(sptPath);
+  const data = exportModListData(sptPath, getServerRoot()!);
   const result = await dialog.showSaveDialog({
     defaultPath: "spt-modlist.json",
     filters: [{ name: "JSON", extensions: ["json"] }]
@@ -283,7 +303,7 @@ ipcMain.handle("import-mod-list", async () => {
     if (names.length === 0) {
       return { success: false, message: "Esse arquivo não parece uma lista de mods exportada por este app." };
     }
-    const comparison = compareModList(sptPath, names);
+    const comparison = compareModList(sptPath, getServerRoot()!, names);
     return {
       success: true,
       message: `Comparado com ${names.length} mod(s) da lista importada.`,

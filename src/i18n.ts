@@ -37,6 +37,7 @@ const pt: Dict = {
   "header.installButton": "Instalar mod (.zip / .7z / .rar)",
   "header.installButtonTitle": "Escolher um .zip, .7z ou .rar pra instalar",
   "header.installing": "Instalando...",
+  "header.splitInstance": "Client: {client}  •  Server: {server}",
 
   "summary.total": "mod(s) instalado(s)",
   "summary.active": "Ativos:",
@@ -214,6 +215,7 @@ const en: Dict = {
   "header.installButton": "Install mod (.zip / .7z / .rar)",
   "header.installButtonTitle": "Choose a .zip, .7z, or .rar to install",
   "header.installing": "Installing...",
+  "header.splitInstance": "Client: {client}  •  Server: {server}",
 
   "summary.total": "mod(s) installed",
   "summary.active": "Active:",
@@ -448,6 +450,10 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   { pattern: /^Não foi possível baixar o mod da Forge \(HTTP (\d+)\)\.$/, en: (m) => `Couldn't download the mod from Forge (HTTP ${m[1]}).` },
   { pattern: /^Falha ao baixar\/instalar da Forge: (.+)$/, en: (m) => `Failed to download/install from Forge: ${m[1]}` },
   { pattern: /^Instância encontrada automaticamente em: (.+)$/, en: (m) => `Instance automatically found at: ${m[1]}` },
+  {
+    pattern: /^Instância dividida detectada — client em "(.+)", server em "(.+)"\.$/,
+    en: (m) => `Split instance detected — client at "${m[1]}", server at "${m[2]}".`
+  },
   { pattern: /^Arquivo "(.+)" não é \.zip, \.7z nem \.rar\.$/, en: (m) => `File "${m[1]}" isn't .zip, .7z, or .rar.` },
   { pattern: /^Caminho do mod não encontrado: (.+)$/, en: (m) => `Mod path not found: ${m[1]}` },
   { pattern: /^Lista exportada com (\d+) mod\(s\) para (.+)\.$/, en: (m) => `List exported with ${m[1]} mod(s) to ${m[2]}.` },
