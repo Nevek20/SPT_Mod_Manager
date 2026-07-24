@@ -56,8 +56,8 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 ## Screenshots
 
-![main 1](docs/screenshot.png)
-![main 2](docs/screenshot2.png)
+![main1](docs/screenshot.png)
+![main2](docs/screenshot2.png)
 
 
 ---
@@ -174,7 +174,7 @@ Still open:
 
 ## Contributing
 
-Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
+Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it!
 
 ## License
 
