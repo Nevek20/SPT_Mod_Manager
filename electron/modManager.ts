@@ -91,8 +91,63 @@ export function detectSptSemver(sptPath: string): string | undefined {
  * .7z usa o binário 7za empacotado via 7zip-bin, através do node-7z.
  * .rar usa node-unrar-js (WASM da biblioteca oficial unrar, sem binário externo).
  */
+// Detecta entrada de arquivo tentando escapar da pasta de destino ("zip slip") — ex:
+// uma entrada chamada "../../../Windows/System32/evil.dll", ou um caminho absoluto tipo
+// "C:\Windows\evil.dll". Normaliza barra invertida pra barra normal antes de checar, pra
+// pegar os dois estilos de caminho independente de qual SO gerou o arquivo.
+function isDangerousEntryPath(entryPath: string): boolean {
+  const normalized = entryPath.replace(/\\/g, "/");
+  if (path.isAbsolute(normalized) || /^[a-zA-Z]:/.test(normalized)) return true;
+  return normalized.split("/").some((segment) => segment === "..");
+}
+
+/**
+ * Confere a lista de entradas de um arquivo ANTES de extrair de verdade — nunca depois.
+ * Um mod malicioso (ou um arquivo corrompido/adulterado) poderia, em tese, tentar gravar
+ * fora da pasta temporária de extração. .zip já vem protegido pela própria lib (AdmZip
+ * normaliza e trava cada caminho dentro do destino). Pra .7z e .rar, que não têm essa
+ * garantia embutida confirmada, listamos as entradas sem extrair e recusamos o arquivo
+ * inteiro se achar qualquer uma suspeita — melhor rejeitar tudo do que extrair parcial ou
+ * tentar "consertar" nomes de arquivo sozinho.
+ */
+async function validateArchiveEntries(archivePath: string): Promise<void> {
+  const ext = path.extname(archivePath).toLowerCase();
+
+  if (ext === ".7z") {
+    const entries: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = Seven.list(archivePath, { $bin: resolveUnpackedBinaryPath(path7za) });
+      stream.on("data", (data: any) => {
+        if (data?.file) entries.push(data.file);
+      });
+      stream.on("end", () => resolve());
+      stream.on("error", (err: Error) => reject(err));
+    });
+    const dangerous = entries.find(isDangerousEntryPath);
+    if (dangerous) {
+      throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no .7z ("${dangerous}").`);
+    }
+    return;
+  }
+
+  if (ext === ".rar") {
+    const extractor = await createExtractorFromFile({ filepath: archivePath });
+    const { fileHeaders } = extractor.getFileList();
+    for (const header of fileHeaders) {
+      if (isDangerousEntryPath(header.name)) {
+        throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no .rar ("${header.name}").`);
+      }
+    }
+    return;
+  }
+
+  // .zip: a própria AdmZip já sanitiza cada caminho contra o destino antes de gravar
+  // (confirmado na versão instalada) — não precisa de checagem adicional aqui.
+}
+
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   const ext = path.extname(archivePath).toLowerCase();
+  await validateArchiveEntries(archivePath);
 
   if (ext === ".zip") {
     const zip = new AdmZip(archivePath);
@@ -1344,7 +1399,8 @@ export async function installForgeModVersion(
   clientRoot: string,
   serverRoot: string,
   downloadLink: string,
-  suggestedName: string
+  suggestedName: string,
+  onProgress?: (receivedBytes: number, totalBytes: number) => void
 ): Promise<InstallResult> {
   let tmpFilePath: string | undefined;
   try {
@@ -1366,8 +1422,33 @@ export async function installForgeModVersion(
     const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "forge-mod";
     tmpFilePath = path.join(clientRoot, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
 
-    const arrayBuffer = await res.arrayBuffer();
-    fs.writeFileSync(tmpFilePath, Buffer.from(arrayBuffer));
+    // Lê em streaming (em vez de esperar o arquivo inteiro de uma vez) pra poder reportar
+    // progresso — importante pra mods grandes, onde "Instalando..." sem mais nada deixa a
+    // pessoa sem saber se travou ou só tá demorando.
+    const totalBytes = Number(res.headers.get("content-length") || 0);
+    const reader = res.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
+    if (reader) {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          receivedBytes += value.byteLength;
+          onProgress?.(receivedBytes, totalBytes);
+        }
+      }
+    } else {
+      // Sem body em stream (não deveria acontecer com fetch normal, mas por segurança
+      // cai pra leitura de uma vez só, sem progresso incremental).
+      const arrayBuffer = await res.arrayBuffer();
+      chunks.push(new Uint8Array(arrayBuffer));
+      receivedBytes = arrayBuffer.byteLength;
+      onProgress?.(receivedBytes, totalBytes || receivedBytes);
+    }
+    fs.writeFileSync(tmpFilePath, Buffer.concat(chunks.map((c) => Buffer.from(c))));
 
     return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName);
   } catch (err: any) {

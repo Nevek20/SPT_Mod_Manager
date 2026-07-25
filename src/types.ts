@@ -133,7 +133,8 @@ export interface ModManagerAPI {
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
-  installForgeMod: (downloadLink: string, suggestedName: string) => Promise<InstallResult>;
+  installForgeMod: (jobId: string, downloadLink: string, suggestedName: string) => Promise<InstallResult>;
+  onDownloadProgress: (callback: (data: { jobId: string; receivedBytes: number; totalBytes: number }) => void) => () => void;
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) => Promise<InstallResult>;
   abortUnrecognizedInstall: (tmpDir: string) => Promise<{ success: boolean; message: string }>;
 }

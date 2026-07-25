@@ -915,3 +915,82 @@ h2 {
   top: 20px;
   right: 24px;
 }
+
+/* ==========================================================================
+   Fila de downloads/instalação (canto inferior direito)
+   ========================================================================== */
+
+.download-queue-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 900;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.download-queue-item {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.download-queue-item.queue-status-done {
+  border-color: var(--accent);
+}
+
+.download-queue-item.queue-status-error {
+  border-color: #c0392b;
+}
+
+.queue-item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.queue-item-status {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.queue-status-done-text {
+  color: var(--accent-strong);
+}
+
+.queue-status-error-text {
+  color: #e57368;
+}
+
+.queue-progress-track {
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-soft);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.queue-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.queue-item-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  gap: 6px;
+}

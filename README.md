@@ -35,6 +35,8 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 - Search/browse the Forge catalogue from inside the app (by name, category, and optionally filtered to your selected SPT version) and install a mod in one click — it downloads the chosen version and runs it through the same installer as a manually picked archive
 - SPT version picker pulled straight from Forge's own version list (with a mod count per version) instead of free text
 - Bilingual UI (Portuguese/English), with a PT/EN toggle in the corner — including error/confirmation messages
+- Archive entries are validated before extraction (.7z, .rar) or sanitized during it (.zip) to reject anything trying to write outside the target folder
+- A download queue panel (bottom-right) shows per-item progress, percentage, and speed for Forge installs, plus a visible queue when installing several files at once via drag-and-drop
 - Never lists or touches SPT's own core client files (e.g. `BepInEx/plugins/spt/spt-core.dll`) as if they were a mod, even under "select all + remove"
 - If an installed archive's structure isn't recognized (no DLL, no `package.json`, no `user`/`BepInEx` folder), shows a confirmation dialog with the archive's root contents instead of silently failing or guessing
 - A newly installed mod gets checked against Forge right away, without re-querying every other mod you'd already checked
@@ -56,8 +58,8 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 ## Screenshots
 
-![main1](docs/screenshot.png)
-![main2](docs/screenshot2.png)
+![main 1](docs/screenshot.png)
+![main 2](docs/screenshot2.png)
 
 
 ---
@@ -163,18 +165,21 @@ Done (moved up into Features ⬆️):
 - [x] Install manifest for hybrid mods (they show up in the list and can be removed cleanly)
 - [x] Update checking against Forge, with per-mod inline status and a version picker sourced from Forge itself
 - [x] Full mod search/browse/one-click install from Forge
+- [x] Zip-slip hardening on archive extraction (.zip was already safe via AdmZip's own path sanitization; .7z and .rar now get their entry list validated before extraction, rejecting the whole archive if anything tries to escape the target folder)
+- [x] Download queue with per-item progress (bytes/percentage/speed) for Forge installs, plus queue visibility for batch drag-and-drop installs
+
+Considered and decided against:
+- Reinstall remembering the original archive file — would double disk usage for every installed mod (a 3GB mod becomes 6GB on disk just sitting there in case of a future reinstall). Re-prompting for the file, like today, is the better tradeoff.
 
 Still open:
-- [ ] A real one-click "reinstall", remembering the original `.zip`/`.7z`/`.rar` instead of reopening the generic file picker
 - [ ] Deeper conflict detection (e.g. two mods editing the same loot table), not just duplicate file names
-- [ ] Zip-slip hardening on archive extraction (defense in depth, since mod files come from third parties)
 - [ ] Linux/macOS support
 
 ---
 
 ## Contributing
 
-Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it!
+Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
 
 ## License
 

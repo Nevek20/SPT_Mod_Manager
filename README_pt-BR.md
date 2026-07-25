@@ -41,6 +41,8 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 - Busca/navegação pelo catálogo da Forge de dentro do app (por nome, categoria e, opcionalmente, filtrando pela versão do SPT selecionada) e instalação com 1 clique — baixa a versão escolhida e passa pelo mesmo instalador usado pra um arquivo escolhido manualmente
 - Seletor de versão do SPT vindo direto da lista oficial da Forge (com contagem de mods por versão), em vez de digitação livre
 - Interface bilíngue (Português/Inglês), com um toggle PT/EN no canto do app — inclusive as mensagens de erro/confirmação
+- Entradas de arquivo são validadas antes de extrair (.7z, .rar) ou sanitizadas durante a extração (.zip), rejeitando qualquer coisa que tente escrever fora da pasta de destino
+- Um painel de fila de downloads (canto inferior direito) mostra progresso, porcentagem e velocidade por item nas instalações via Forge, além de mostrar a fila quando instala vários arquivos de uma vez por arrastar-e-soltar
 - Nunca lista nem mexe nos arquivos do próprio core do client da SPT (ex: `BepInEx/plugins/spt/spt-core.dll`) como se fossem um mod, nem com "selecionar tudo + remover"
 - Se a estrutura de um arquivo instalado não é reconhecida (sem DLL, sem `package.json`, sem pasta `user`/`BepInEx`), mostra um diálogo de confirmação com o conteúdo da raiz do arquivo em vez de falhar silenciosamente ou chutar
 - Um mod recém-instalado já é checado na Forge na hora, sem precisar re-consultar todo o resto que já tinha sido checado antes
@@ -165,11 +167,14 @@ Já feito (virou funcionalidade lá em cima ⬆️):
 - [x] Manifesto de instalação pra mods hybrid (aparecem na lista e dá pra remover)
 - [x] Verificação de atualizações contra a Forge, com status por mod e seletor de versão vindo da própria Forge
 - [x] Busca/navegação/instalação com 1 clique direto da Forge
+- [x] Proteção contra zip slip na extração de arquivo (.zip já era protegido pela própria sanitização de caminho do AdmZip; .7z e .rar agora têm a lista de entradas validada antes de extrair, rejeitando o arquivo inteiro se alguma entrada tentar escapar da pasta de destino)
+- [x] Fila de download com progresso por item (bytes/porcentagem/velocidade) pras instalações via Forge, e visibilidade da fila em lotes de instalação por arrastar-e-soltar
+
+Consideramos e decidimos não fazer:
+- "Reinstalar" guardando o arquivo original — dobraria o uso de disco pra cada mod instalado (um mod de 3GB vira 6GB parado no disco só de segurança pra um reinstalar futuro). Pedir o arquivo de novo, como já é hoje, é a troca melhor.
 
 Ainda na fila:
-- [ ] "Reinstalar" de verdade guardando o `.zip`/`.7z`/`.rar` original, em vez de reabrir o seletor de arquivo genérico
 - [ ] Detecção de conflitos mais profunda (ex: dois mods editando a mesma tabela de loot), não só nome de arquivo duplicado
-- [ ] Proteção contra zip slip na extração de arquivo (defesa extra, já que o arquivo do mod vem de terceiros)
 - [ ] Suporte a Linux/macOS
 
 ---

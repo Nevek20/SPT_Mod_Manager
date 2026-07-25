@@ -105,6 +105,50 @@ export default function App() {
   const [selectedVersionByModId, setSelectedVersionByModId] = useState<Map<number, number>>(new Map());
   const [installingModId, setInstallingModId] = useState<number | null>(null);
 
+  interface QueueItem {
+    id: string;
+    name: string;
+    status: "queued" | "active" | "done" | "error";
+    receivedBytes?: number;
+    totalBytes?: number;
+    startedAt?: number;
+    message?: string;
+  }
+  const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = window.modManagerAPI.onDownloadProgress(({ jobId, receivedBytes, totalBytes }) => {
+      setDownloadQueue((prev) => prev.map((q) => (q.id === jobId ? { ...q, receivedBytes, totalBytes } : q)));
+    });
+    return unsubscribe;
+  }, []);
+
+  function pushQueueItem(name: string): string {
+    const id = `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setDownloadQueue((prev) => [...prev, { id, name, status: "queued" }]);
+    return id;
+  }
+  function markQueueActive(id: string) {
+    setDownloadQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: "active", startedAt: Date.now() } : q)));
+  }
+  function markQueueDone(id: string, success: boolean, message?: string) {
+    setDownloadQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: success ? "done" : "error", message } : q)));
+    // Some da lista sozinho depois de um tempo, sem precisar de ação manual — erro fica
+    // visível um pouco mais que sucesso, já que é mais provável que a pessoa queira ler.
+    setTimeout(
+      () => {
+        setDownloadQueue((prev) => prev.filter((q) => q.id !== id));
+      },
+      success ? 3000 : 6000
+    );
+  }
+  function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes < 0) return "—";
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   const pushToast = useCallback((text: string, ok: boolean) => {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev, { id, text, ok }]);
@@ -319,12 +363,22 @@ export default function App() {
     setLoading(true);
     const previousKeys = new Set(mods.map(selectionKey));
     let successCount = 0;
-    for (const file of archives) {
+    // Pré-popula a fila com todos os arquivos de uma vez, pra já mostrar o que vem a seguir
+    // — sem isso, um lote de vários arquivos processava em silêncio, um de cada vez.
+    const queueIds = archives.map((file) => pushQueueItem(file.name));
+    for (let i = 0; i < archives.length; i++) {
+      const file = archives[i];
+      const queueId = queueIds[i];
       // @ts-expect-error o Electron injeta `.path` no objeto File nativo, fora da tipagem padrão do DOM
       const filePath: string | undefined = file.path;
-      if (!filePath) continue;
+      if (!filePath) {
+        markQueueDone(queueId, false, t("queue.noFilePath"));
+        continue;
+      }
+      markQueueActive(queueId);
       const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installModFromPath(filePath));
       if (result.success) successCount++;
+      markQueueDone(queueId, result.success, tMsg(result.message));
       pushToast(tMsg(result.message), result.success);
     }
     setLoading(false);
@@ -507,7 +561,10 @@ export default function App() {
     }
     setInstallingModId(mod.id);
     const previousKeys = new Set(mods.map(selectionKey));
-    const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installForgeMod(version.link, mod.name));
+    const queueId = pushQueueItem(mod.name);
+    markQueueActive(queueId);
+    const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installForgeMod(queueId, version.link, mod.name));
+    markQueueDone(queueId, result.success, tMsg(result.message));
     setInstallingModId(null);
     pushToast(tMsg(result.message), result.success);
     if (result.success) {
@@ -635,6 +692,44 @@ export default function App() {
   return (
     <>
       <ToastStack toasts={toasts} />
+
+      {downloadQueue.length > 0 && (
+        <div className="download-queue-panel">
+          {downloadQueue.map((item) => {
+            const hasProgress = (item.totalBytes ?? 0) > 0;
+            const pct = hasProgress ? Math.min(100, Math.round(((item.receivedBytes ?? 0) / item.totalBytes!) * 100)) : null;
+            const elapsedSec = item.startedAt ? (Date.now() - item.startedAt) / 1000 : 0;
+            const speedBps = item.status === "active" && elapsedSec > 0.5 ? (item.receivedBytes ?? 0) / elapsedSec : 0;
+            return (
+              <div key={item.id} className={`download-queue-item queue-status-${item.status}`}>
+                <div className="queue-item-name" title={item.name}>{item.name}</div>
+                {item.status === "queued" && <div className="queue-item-status">{t("queue.waiting")}</div>}
+                {item.status === "active" &&
+                  (hasProgress ? (
+                    <>
+                      <div className="queue-progress-track">
+                        <div className="queue-progress-fill" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="queue-item-meta">
+                        <span>{pct}%</span>
+                        <span>
+                          {formatBytes(item.receivedBytes ?? 0)} / {formatBytes(item.totalBytes ?? 0)}
+                        </span>
+                        {speedBps > 0 && <span>{formatBytes(speedBps)}/s</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="queue-item-status">{t("queue.installing")}</div>
+                  ))}
+                {item.status === "done" && <div className="queue-item-status queue-status-done-text">✔ {t("queue.done")}</div>}
+                {item.status === "error" && (
+                  <div className="queue-item-status queue-status-error-text">✕ {item.message ?? t("queue.failed")}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {!sptPath ? (
         <div className="empty-state">

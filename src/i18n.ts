@@ -182,7 +182,13 @@ const pt: Dict = {
   "modlist.actionsTitle": "Ações",
   "modlist.openFolder": "Abrir pasta",
   "modlist.rename": "Renomear",
-  "modlist.reinstall": "Reinstalar"
+  "modlist.reinstall": "Reinstalar",
+
+  "queue.waiting": "Na fila...",
+  "queue.installing": "Instalando...",
+  "queue.done": "Concluído",
+  "queue.failed": "Falhou",
+  "queue.noFilePath": "Caminho do arquivo não disponível."
 };
 
 const en: Dict = {
@@ -361,7 +367,13 @@ const en: Dict = {
   "modlist.actionsTitle": "Actions",
   "modlist.openFolder": "Open folder",
   "modlist.rename": "Rename",
-  "modlist.reinstall": "Reinstall"
+  "modlist.reinstall": "Reinstall",
+
+  "queue.waiting": "Waiting...",
+  "queue.installing": "Installing...",
+  "queue.done": "Done",
+  "queue.failed": "Failed",
+  "queue.noFilePath": "File path not available."
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en };
@@ -387,7 +399,7 @@ export function translate(lang: Lang, key: string, vars?: Record<string, string 
  */
 interface BackendMessageRule {
   pattern: RegExp;
-  en: (m: RegExpMatchArray) => string;
+  en: (m: RegExpMatchArray, lang: Lang) => string;
 }
 
 const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
@@ -443,7 +455,7 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
     pattern: /^Mod "(.+)" instalado e verificado como (server mod|client mod)\.$/,
     en: (m) => `Mod "${m[1]}" installed and verified as a ${m[2] === "server mod" ? "server mod" : "client mod"}.`
   },
-  { pattern: /^Erro ao instalar: (.+)$/, en: (m) => `Error installing: ${m[1]}` },
+  { pattern: /^Erro ao instalar: (.+)$/, en: (m, lang) => `Error installing: ${translateBackendMessage(m[1], lang)}` },
   { pattern: /^(\d+) arquivo\(s\) órfão\(s\) removido\(s\)\.$/, en: (m) => `${m[1]} orphan file(s) removed.` },
   { pattern: /^Arquivo\/pasta do mod não encontrado: (.+)$/, en: (m) => `Mod file/folder not found: ${m[1]}` },
   { pattern: /^Mod não encontrado: (.+)$/, en: (m) => `Mod not found: ${m[1]}` },
@@ -460,7 +472,11 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   { pattern: /^Comparado com (\d+) mod\(s\) da lista importada\.$/, en: (m) => `Compared against ${m[1]} mod(s) from the imported list.` },
   { pattern: /^Erro ao ler o arquivo: (.+)$/, en: (m) => `Error reading the file: ${m[1]}` },
   { pattern: /^Não foi possível consultar o Forge: (.+)$/, en: (m) => `Couldn't reach Forge: ${m[1]}` },
-  { pattern: /^Forge respondeu (\d+)$/, en: (m) => `Forge responded ${m[1]}` }
+  { pattern: /^Forge respondeu (\d+)$/, en: (m) => `Forge responded ${m[1]}` },
+  {
+    pattern: /^Arquivo rejeitado por segurança: entrada suspeita no \.(7z|rar) \("(.+)"\)\.$/,
+    en: (m) => `File rejected for security reasons: suspicious entry in the .${m[1]} ("${m[2]}").`
+  }
 ];
 
 export function translateBackendMessage(msg: string | undefined | null, lang: Lang): string {
@@ -468,7 +484,7 @@ export function translateBackendMessage(msg: string | undefined | null, lang: La
   if (lang === "pt-BR") return msg;
   for (const rule of BACKEND_MESSAGE_RULES) {
     const match = msg.match(rule.pattern);
-    if (match) return rule.en(match);
+    if (match) return rule.en(match, lang);
   }
   return msg; // sem regra — melhor mostrar em PT do que quebrar a mensagem
 }

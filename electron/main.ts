@@ -185,10 +185,12 @@ ipcMain.handle("get-forge-categories", () => getForgeCategories());
 
 ipcMain.handle(
   "install-forge-mod",
-  async (_event, downloadLink: string, suggestedName: string) => {
+  async (_event, jobId: string, downloadLink: string, suggestedName: string) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-    return installForgeModVersion(sptPath, getServerRoot()!, downloadLink, suggestedName);
+    return installForgeModVersion(sptPath, getServerRoot()!, downloadLink, suggestedName, (receivedBytes, totalBytes) => {
+      mainWindow?.webContents.send("download-progress", { jobId, receivedBytes, totalBytes });
+    });
   }
 );
 
