@@ -93,7 +93,7 @@ const pt: Dict = {
   "compare.missing": "Faltando aqui ({count}):",
   "compare.extra": "A mais aqui, fora da lista importada ({count}):",
   "compare.note":
-    "Isso é só uma comparação — o app não guarda os arquivos originais dos mods, então reinstalar os que estão faltando precisa ser feito manualmente.",
+    "Faltando aqui vira uma oferta de baixar automaticamente da Forge (por nome) — o que não for encontrado assim ainda precisa de instalação manual, já que o app não guarda os arquivos originais dos mods.",
 
   "conflicts.title": "Verificação de conflitos",
   "conflicts.appearsIn": "aparece em:",
@@ -188,7 +188,13 @@ const pt: Dict = {
   "queue.installing": "Instalando...",
   "queue.done": "Concluído",
   "queue.failed": "Falhou",
-  "queue.noFilePath": "Caminho do arquivo não disponível."
+  "queue.noFilePath": "Caminho do arquivo não disponível.",
+
+  "restore.confirmDownload": "Encontrei {count} mod(s) faltando na lista importada. Baixar automaticamente da Forge?",
+  "restore.allInstalled": "{count} mod(s) instalado(s) com sucesso.",
+  "restore.partialInstalled": "{installed} instalado(s); não encontrado(s) ou falhou(aram) na Forge: {notFound}",
+  "restore.confirmDisable": "{count} mod(s) instalado(s) não estão na lista importada. Desativar esses mods?",
+  "restore.disabledCount": "{count} mod(s) desativado(s)."
 };
 
 const en: Dict = {
@@ -278,7 +284,7 @@ const en: Dict = {
   "compare.missing": "Missing here ({count}):",
   "compare.extra": "Extra here, not in the imported list ({count}):",
   "compare.note":
-    "This is just a comparison — the app doesn't keep the mods' original files, so reinstalling the missing ones has to be done manually.",
+    "Anything missing here comes with an offer to download it automatically from Forge (matched by name) — whatever it can't find that way still needs a manual install, since the app doesn't keep the mods' original files.",
 
   "conflicts.title": "Conflict check",
   "conflicts.appearsIn": "appears in:",
@@ -373,7 +379,13 @@ const en: Dict = {
   "queue.installing": "Installing...",
   "queue.done": "Done",
   "queue.failed": "Failed",
-  "queue.noFilePath": "File path not available."
+  "queue.noFilePath": "File path not available.",
+
+  "restore.confirmDownload": "Found {count} missing mod(s) from the imported list. Download them automatically from Forge?",
+  "restore.allInstalled": "{count} mod(s) installed successfully.",
+  "restore.partialInstalled": "{installed} installed; not found or failed on Forge: {notFound}",
+  "restore.confirmDisable": "{count} installed mod(s) aren't in the imported list. Disable those mods?",
+  "restore.disabledCount": "{count} mod(s) disabled."
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en };

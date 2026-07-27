@@ -21,6 +21,7 @@ import {
   searchForgeMods,
   getForgeCategories,
   installForgeModVersion,
+  findForgeDownloadForName,
   finalizeUnrecognizedInstall,
   discardPendingInstall
 } from "./modManager";
@@ -182,6 +183,14 @@ ipcMain.handle(
 );
 
 ipcMain.handle("get-forge-categories", () => getForgeCategories());
+
+ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptVersion?: string) => {
+  try {
+    return await findForgeDownloadForName(name, sptVersion);
+  } catch (err: any) {
+    return { found: false };
+  }
+});
 
 ipcMain.handle(
   "install-forge-mod",

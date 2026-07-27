@@ -34,7 +34,7 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 - Seleção múltipla — clique em cada checkbox ou Shift+Clique pra selecionar um intervalo — com ações em lote (habilitar/desabilitar/remover vários de uma vez)
 
 **Confiabilidade**
-- Export/import de lista de mods (JSON) pra comparar duas instâncias ou guardar um backup de "quais mods eu tinha instalado"
+- Exportar a lista de mods atual pra um JSON, e importar uma exportação anterior pra comparar com o que tá instalado agora (mostra o que falta / o que sobra). Pro que falta, oferece buscar e baixar automaticamente da Forge (por nome, o mesmo casamento exato usado na checagem de atualização); pro que sobra (instalado agora mas fora da lista importada), oferece desativar. O que a Forge não achar por nome ainda precisa de instalação manual.
 - Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
 - Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão do Tarkov compatível como alternativa
 - Verifica os mods instalados contra a API pública da [Forge](https://forge.sp-tarkov.com) por atualizações, com um chip de status por mod: atualização disponível, atualização bloqueada por conflito de dependência, incompatível com a tua versão do SPT, ou — pra mods sem versão legível localmente (ex: mods só de `.dll`, sem `package.json`) — a versão mais recente que a Forge conhece

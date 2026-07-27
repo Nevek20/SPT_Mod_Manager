@@ -435,8 +435,57 @@ export default function App() {
   async function handleImportList() {
     const result = await window.modManagerAPI.importModList();
     pushToast(tMsg(result.message), result.success);
-    if (result.success && result.comparison) {
-      setCompareResult(result.comparison);
+    if (!result.success || !result.comparison) return;
+    setCompareResult(result.comparison);
+
+    const { missing, extra } = result.comparison;
+
+    if (missing.length > 0) {
+      const wantsDownload = window.confirm(t("restore.confirmDownload", { count: missing.length }));
+      if (wantsDownload) {
+        const previousKeys = new Set(mods.map(selectionKey));
+        let installedCount = 0;
+        const problems: string[] = [];
+        for (const name of missing) {
+          const lookup = await window.modManagerAPI.findForgeDownloadForName(name, sptVersionInput.trim() || undefined);
+          if (!lookup.found || !lookup.downloadLink) {
+            problems.push(name);
+            continue;
+          }
+          const queueId = pushQueueItem(lookup.forgeName ?? name);
+          markQueueActive(queueId);
+          const installResult = await installArchiveWithConfirmFlow(
+            window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name)
+          );
+          markQueueDone(queueId, installResult.success, tMsg(installResult.message));
+          if (installResult.success) installedCount++;
+          else problems.push(name);
+        }
+        pushToast(
+          problems.length === 0
+            ? t("restore.allInstalled", { count: installedCount })
+            : t("restore.partialInstalled", { installed: installedCount, notFound: problems.join(", ") }),
+          problems.length === 0
+        );
+        if (installedCount > 0) {
+          const updated = await refreshMods();
+          checkForgeForNewMods(previousKeys, updated);
+        }
+      }
+    }
+
+    if (extra.length > 0) {
+      const wantsDisable = window.confirm(t("restore.confirmDisable", { count: extra.length }));
+      if (wantsDisable) {
+        const targets = mods.filter((m) => extra.includes(m.originalName) && m.enabled);
+        let disabledCount = 0;
+        for (const mod of targets) {
+          const toggleResult = await window.modManagerAPI.toggleMod(mod);
+          if (toggleResult.success) disabledCount++;
+        }
+        pushToast(t("restore.disabledCount", { count: disabledCount }), true);
+        if (disabledCount > 0) refreshMods();
+      }
     }
   }
 

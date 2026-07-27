@@ -25,7 +25,7 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 - Reorder server mod load order (up/down buttons, using numeric folder prefixes — that's how SPT respects load order)
 - Rename a mod's display name (alias) without touching any real file or folder
 - Detects manually installed mods (outside the app) and distinguishes them from "installed by the Manager"
-- Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra — it doesn't reinstall anything automatically, since the app doesn't keep the original archives)
+- Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra). For anything missing, offers to automatically look it up and download it from Forge (matched by name, same exact-match lookup used for update checking); for anything extra (installed now but not in the imported list), offers to disable it. Whatever Forge can't find by name still needs a manual install.
 - "Hybrid" mods installed via merge that leave loose files with no folder of their own still show up as an "Orphan" row, tracked through a manifest — removable cleanly even without a named folder
 
 **Reliability**

@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   searchForgeMods: (params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; sort?: string; page?: number }) =>
     ipcRenderer.invoke("search-forge-mods", params),
   getForgeCategories: () => ipcRenderer.invoke("get-forge-categories"),
+  findForgeDownloadForName: (name: string, sptVersion?: string) =>
+    ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),
   installForgeMod: (jobId: string, downloadLink: string, suggestedName: string) =>
     ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName),
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) =>

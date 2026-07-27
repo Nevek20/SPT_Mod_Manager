@@ -1162,20 +1162,46 @@ function delay(ms: number): Promise<void> {
 // chamada só — útil pra mods sem versão local legível (ex: mods puramente
 // .dll sem package.json, tipo o SVM), onde não dá pra comparar mas ainda dá
 // pra mostrar "essa é a versão mais recente que a Forge conhece".
-async function findForgeModInfo(name: string): Promise<{ identifier: string; latestVersion?: string } | null> {
+async function findForgeModInfo(
+  name: string,
+  sptVersion?: string
+): Promise<{ identifier: string; latestVersion?: string; latestVersionLink?: string; forgeName?: string } | null> {
   try {
-    const url = `${FORGE_API_BASE}/mods?filter[name]=${encodeURIComponent(name)}&per_page=1&include=versions&fields=id,guid,name`;
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const url = new URL(`${FORGE_API_BASE}/mods`);
+    url.searchParams.set("filter[name]", name);
+    url.searchParams.set("per_page", "1");
+    url.searchParams.set("include", "versions");
+    url.searchParams.set("fields", "id,guid,name");
+    if (sptVersion?.trim()) url.searchParams.set("filter[spt_version]", sptVersion.trim());
+    const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     if (!res.ok) return null;
     const json: any = await res.json();
     const match = json?.data?.[0];
     if (!match) return null;
     const identifier = typeof match.guid === "string" ? match.guid : String(match.id);
-    const latestVersion = Array.isArray(match.versions) && match.versions.length > 0 ? match.versions[0]?.version : undefined;
-    return { identifier, latestVersion };
+    const versions = Array.isArray(match.versions) ? match.versions : [];
+    const latest = versions[0];
+    return {
+      identifier,
+      latestVersion: latest?.version,
+      latestVersionLink: latest?.link,
+      forgeName: typeof match.name === "string" ? match.name : undefined
+    };
   } catch {
     return null;
   }
+}
+
+// Acha, pelo nome (o mesmo casamento exato usado na checagem de atualização), o link de
+// download da versão mais recente de um mod na Forge — usado pra "restaurar" uma modlist
+// importada baixando automaticamente o que estiver faltando.
+export async function findForgeDownloadForName(
+  name: string,
+  sptVersion?: string
+): Promise<{ found: boolean; downloadLink?: string; version?: string; forgeName?: string }> {
+  const info = await findForgeModInfo(name, sptVersion);
+  if (!info || !info.latestVersionLink) return { found: false };
+  return { found: true, downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
 }
 
 export async function checkForgeUpdates(
