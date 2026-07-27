@@ -8,7 +8,6 @@ import {
   installModFromArchive,
   toggleMod,
   uninstallMod,
-  reorderServerMods,
   setModAlias,
   resolveModPath,
   exportModListData,
@@ -250,12 +249,6 @@ ipcMain.handle("uninstall-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
   return uninstallMod(sptPath, getServerRoot()!, mod);
-});
-
-ipcMain.handle("reorder-mods", (_event, orderedIds: string[]) => {
-  const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-  return reorderServerMods(getServerRoot()!, orderedIds);
 });
 
 ipcMain.handle("rename-mod", (_event, modId: string, alias: string) => {

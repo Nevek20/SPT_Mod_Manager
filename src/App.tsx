@@ -622,21 +622,6 @@ export default function App() {
     }
   }
 
-  async function handleMove(mod: ModInfo, direction: -1 | 1) {
-    const serverMods = mods.filter((m) => m.type === "server" && m.enabled).sort((a, b) => a.loadOrder - b.loadOrder);
-    const index = serverMods.findIndex((m) => m.id === mod.id);
-    const swapIndex = index + direction;
-    if (swapIndex < 0 || swapIndex >= serverMods.length) return;
-
-    const reordered = [...serverMods];
-    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
-
-    const result = await window.modManagerAPI.reorderMods(reordered.map((m) => m.id));
-    pushToast(tMsg(result.message), result.success);
-    // Renumerar mexe nos nomes das pastas de vários mods de uma vez, então aqui vale a pena re-escanear.
-    if (result.success) refreshMods();
-  }
-
   function startRename(mod: ModInfo) {
     setEditingKey(selectionKey(mod));
     setEditingValue(mod.name);
@@ -1076,7 +1061,7 @@ export default function App() {
             </div>
           )}
 
-          <Section title="Server Mods" mods={filteredMods.filter((m) => m.type === "server")} onMove={handleMove} reorderable {...listProps} />
+          <Section title="Server Mods" mods={filteredMods.filter((m) => m.type === "server")} {...listProps} />
           <Section title="Client Mods" mods={filteredMods.filter((m) => m.type === "client")} {...listProps} />
           {mods.some((m) => m.type === "hybrid" || m.type === "unknown") && (
             <Section title="Hybrid / Unknown" mods={filteredMods.filter((m) => m.type === "hybrid" || m.type === "unknown")} {...listProps} />
@@ -1245,8 +1230,6 @@ function ModList({
   onUninstall,
   onOpenFolder,
   onReinstall,
-  onMove,
-  reorderable = false,
   onRenameStart,
   onRenameCancel,
   onRenameConfirm,
@@ -1319,12 +1302,6 @@ function ModList({
               title={t("modlist.checkboxTitle")}
             />
             <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
-            {reorderable && mod.enabled && (
-              <div className="reorder-buttons">
-                <button onClick={() => onMove?.(mod, -1)} title={t("modlist.moveUpTitle")} disabled={disabled}>▲</button>
-                <button onClick={() => onMove?.(mod, 1)} title={t("modlist.moveDownTitle")} disabled={disabled}>▼</button>
-              </div>
-            )}
             <div className="mod-info">
               {isEditing ? (
                 <input

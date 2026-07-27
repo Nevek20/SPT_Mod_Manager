@@ -454,7 +454,7 @@ function listFilesRelative(baseDir: string, currentDir: string = baseDir): strin
   return results;
 }
 
-// --- Load order (server mods carregam em ordem alfabética; prefixamos com número) ---
+// --- Load order (server mods carregam em ordem alfabética; prefixamos com número), ela só serve pra ler prefixos que já existem em pastas antigas (pra continuar mostrando o nome limpo e ordenando direito na lista), nunca escreve nada. ---
 function stripLoadOrderPrefix(name: string): { order: number; cleanName: string } {
   const match = name.match(/^(\d{2})_(.+)$/);
   if (match) {
@@ -993,24 +993,6 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
   fs.rmSync(target, { recursive: true, force: true });
   removeFromRegistry(clientRoot, mod.id);
   return { success: true, message: "Mod removido." };
-}
-
-// --- Reordenar load order (só server mods) ---
-export function reorderServerMods(serverRoot: string, orderedIds: string[]): { success: boolean; message: string } {
-  const activeDir = p(serverRoot, SERVER_MODS_DIR);
-  if (!fs.existsSync(activeDir)) return { success: false, message: "Pasta de server mods não existe." };
-
-  orderedIds.forEach((id, index) => {
-    const { cleanName } = stripLoadOrderPrefix(id);
-    const prefix = String(index + 1).padStart(2, "0");
-    const newName = `${prefix}_${cleanName}`;
-    const oldPath = path.join(activeDir, id);
-    const newPath = path.join(activeDir, newName);
-    if (fs.existsSync(oldPath) && oldPath !== newPath) {
-      fs.renameSync(oldPath, newPath);
-    }
-  });
-  return { success: true, message: "Ordem de carregamento atualizada." };
 }
 
 // --- Helpers de sistema de arquivos ---
