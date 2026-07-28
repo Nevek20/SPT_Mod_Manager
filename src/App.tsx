@@ -272,6 +272,11 @@ export default function App() {
         const override = await window.modManagerAPI.getSptVersionOverride();
         setSptVersionInput(override || "");
       }
+      // Sem isso, o dropdown de versão do SPT ficava só com o placeholder na primeira
+      // vez que alguém selecionava a pasta — só populava depois de fechar e reabrir o
+      // app (quando o efeito de inicialização, que já buscava isso, finalmente rodava
+      // com um sptPath salvo).
+      window.modManagerAPI.getForgeSptVersions().then(setForgeSptVersions);
     } else {
       pushToast(tMsg(result.message) || t("toast.folderSelectFailed"), false);
     }
