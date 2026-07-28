@@ -658,17 +658,6 @@ h2 {
   opacity: 0.55;
 }
 
-.reorder-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.reorder-buttons button {
-  padding: 0 6px;
-  font-size: 10px;
-}
-
 .badge {
   font-family: var(--font-mono);
   font-size: 11px;

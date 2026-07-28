@@ -162,8 +162,6 @@ const pt: Dict = {
 
   "modlist.emptyCategory": "Nenhum mod nessa categoria.",
   "modlist.checkboxTitle": "Clique para selecionar, Shift+Clique para selecionar um intervalo",
-  "modlist.moveUpTitle": "Mover pra cima",
-  "modlist.moveDownTitle": "Mover pra baixo",
   "modlist.renameTitle": "{name} (duplo-clique pra renomear)",
   "modlist.statusActive": "Ativo",
   "modlist.statusDisabled": "Desativado",
@@ -353,8 +351,6 @@ const en: Dict = {
 
   "modlist.emptyCategory": "No mods in this category.",
   "modlist.checkboxTitle": "Click to select, Shift+Click to select a range",
-  "modlist.moveUpTitle": "Move up",
-  "modlist.moveDownTitle": "Move down",
   "modlist.renameTitle": "{name} (double-click to rename)",
   "modlist.statusActive": "Active",
   "modlist.statusDisabled": "Disabled",

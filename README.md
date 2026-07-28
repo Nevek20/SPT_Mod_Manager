@@ -22,7 +22,6 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 **Organization**
 - Enable/disable mods without deleting anything (moves between an active folder and a `.disabled` one)
-- Reorder server mod load order (up/down buttons, using numeric folder prefixes — that's how SPT respects load order)
 - Rename a mod's display name (alias) without touching any real file or folder
 - Detects manually installed mods (outside the app) and distinguishes them from "installed by the Manager"
 - Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra). For anything missing, offers to automatically look it up and download it from Forge (matched by name, same exact-match lookup used for update checking); for anything extra (installed now but not in the imported list), offers to disable it. Whatever Forge can't find by name still needs a manual install.
@@ -128,7 +127,7 @@ spt-mod-manager/
 | Disabled client mods | `<instance>/BepInEx/plugins.disabled/` |
 
 ### Load order
-SPT loads server mods in alphabetical order. The app controls this by prefixing the mod's folder with a 2-digit number (`01_modname`, `02_othermod`, ...), which gets updated whenever you use the reorder buttons.
+This was a manual thing (up/down buttons renaming folders with a numeric prefix, `01_modname`, `02_othermod`, ...) for SPT 3.11-era server mods, which load in alphabetical order. Starting with SPT 4.0, mods appear to handle their own load order automatically — manually forcing a numeric prefix caused real problems, so the reorder buttons and the renaming logic behind them were removed. The app still reads an existing numeric prefix if a folder has one (for display and sorting), it just never writes one anymore.
 
 ### Control files (at the instance root)
 - `.spt-mod-manager-registry.json` — tracks which mods were installed by the app (to tell them apart from "manually installed")

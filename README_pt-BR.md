@@ -22,7 +22,6 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 
 **Organização**
 - Habilitar/desabilitar mods sem apagar nada (move entre pasta ativa e uma pasta `.disabled`)
-- Reordenar load order de server mods (setas ▲▼, com prefixo numérico nas pastas — é assim que o SPT respeita ordem de carregamento)
 - Renomear a exibição de um mod (alias) sem tocar em nenhum arquivo ou pasta real
 - Detecta mods instalados manualmente (fora do app) e diferencia de "instalado pelo Manager"
 - Mods "hybrid" instalados via merge que deixam arquivos soltos (sem pasta própria) ainda aparecem na lista como um item "Órfão", rastreado por manifesto — dá pra remover de forma limpa mesmo sem uma pasta nomeada
@@ -127,7 +126,7 @@ spt-mod-manager/
 | Client mods desabilitados | `<instância>/BepInEx/plugins.disabled/` |
 
 ### Load order
-SPT carrega server mods em ordem alfabética. O app controla isso prefixando a pasta do mod com um número de 2 dígitos (`01_nomedomod`, `02_outromod`, ...), que é atualizado sempre que você usa as setas ▲▼.
+Isso era uma coisa manual (setas pra cima/baixo renomeando pastas com prefixo numérico, `01_nomedomod`, `02_outromod`, ...) pros server mods da era SPT 3.11, que carregam em ordem alfabética. A partir do SPT 4.0, os mods parecem cuidar da própria ordem de carregamento sozinhos — forçar um prefixo numérico manualmente causou problema de verdade, então as setas e a lógica de renomear por trás delas foram removidas. O app ainda lê um prefixo numérico existente se a pasta já tiver um (pra exibição e ordenação), só não escreve mais nenhum.
 
 ### Arquivos de controle (na raiz da instância)
 - `.spt-mod-manager-registry.json` — quais mods foram instalados pelo app (pra diferenciar de "instalado manualmente")

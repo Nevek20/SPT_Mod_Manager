@@ -454,7 +454,7 @@ function listFilesRelative(baseDir: string, currentDir: string = baseDir): strin
   return results;
 }
 
-// --- Load order (server mods carregam em ordem alfabética; prefixamos com número), ela só serve pra ler prefixos que já existem em pastas antigas (pra continuar mostrando o nome limpo e ordenando direito na lista), nunca escreve nada. ---
+// --- Load order (server mods carregam em ordem alfabética; prefixamos com número) ---
 function stripLoadOrderPrefix(name: string): { order: number; cleanName: string } {
   const match = name.match(/^(\d{2})_(.+)$/);
   if (match) {

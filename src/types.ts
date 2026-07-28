@@ -108,7 +108,6 @@ export interface ModManagerAPI {
   installModFromPath: (filePath: string) => Promise<InstallResult>;
   toggleMod: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   uninstallMod: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
-  reorderMods: (orderedIds: string[]) => Promise<{ success: boolean; message: string }>;
   renameMod: (modId: string, alias: string) => Promise<{ success: boolean; message: string }>;
   openModFolder: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   exportModList: () => Promise<{ success: boolean; message: string }>;

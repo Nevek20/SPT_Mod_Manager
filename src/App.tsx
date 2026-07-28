@@ -1250,8 +1250,6 @@ function ModList({
   onUninstall: (mod: ModInfo) => void;
   onOpenFolder: (mod: ModInfo) => void;
   onReinstall: (mod: ModInfo) => void;
-  onMove?: (mod: ModInfo, direction: -1 | 1) => void;
-  reorderable?: boolean;
   onRenameStart: (mod: ModInfo) => void;
   onRenameCancel: () => void;
   onRenameConfirm: (mod: ModInfo) => void;
