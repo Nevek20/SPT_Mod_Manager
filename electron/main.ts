@@ -160,7 +160,9 @@ ipcMain.handle(
 
 ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string }[], sptVersion: string) => {
   try {
-    const result = await checkForgeUpdates(mods, sptVersion);
+    const result = await checkForgeUpdates(mods, sptVersion, (done, total) => {
+      mainWindow?.webContents.send("forge-check-progress", { done, total });
+    });
     return { success: true, result };
   } catch (err: any) {
     return { success: false, message: err?.message || "Falha ao verificar atualizações." };

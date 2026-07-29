@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     ipcRenderer.invoke("search-forge-mods", params),
   getForgeCategories: () => ipcRenderer.invoke("get-forge-categories"),
   checkAppUpdate: () => ipcRenderer.invoke("check-app-update"),
+  onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => {
+    const handler = (_e: unknown, data: { done: number; total: number }) => callback(data);
+    ipcRenderer.on("forge-check-progress", handler);
+    return () => ipcRenderer.removeListener("forge-check-progress", handler);
+  },
   openReleasePage: (url: string) => ipcRenderer.invoke("open-release-page", url),
   findForgeDownloadForName: (name: string, sptVersion?: string) =>
     ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),

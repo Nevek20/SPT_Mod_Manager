@@ -143,6 +143,7 @@ export interface ModManagerAPI {
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
+  onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   findForgeDownloadForName: (
     name: string,

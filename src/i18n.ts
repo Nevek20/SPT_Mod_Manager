@@ -82,6 +82,7 @@ const pt: Dict = {
   "filters.sptVersionNotListed": "(não listada na Forge)",
   "filters.forgeCheckTitle": "Consulta a API pública da Forge (forge.sp-tarkov.com) por atualizações dos mods instalados",
   "filters.forgeChecking": "Consultando Forge...",
+  "filters.forgeCheckingProgress": "Consultando Forge... ({done}/{total})",
   "filters.forgeCheckButton": "Verificar atualizações (Forge)",
 
   "hint.forgeLastChecked": "Última verificação da Forge: {date}",
@@ -276,6 +277,7 @@ const en: Dict = {
   "filters.sptVersionNotListed": "(not listed on Forge)",
   "filters.forgeCheckTitle": "Queries Forge's public API (forge.sp-tarkov.com) for updates to installed mods",
   "filters.forgeChecking": "Checking Forge...",
+  "filters.forgeCheckingProgress": "Checking Forge... ({done}/{total})",
   "filters.forgeCheckButton": "Check for updates (Forge)",
 
   "hint.forgeLastChecked": "Last checked on Forge: {date}",

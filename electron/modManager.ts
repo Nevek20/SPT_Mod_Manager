@@ -1178,6 +1178,294 @@ function delay(ms: number): Promise<void> {
 // chamada só — útil pra mods sem versão local legível (ex: mods puramente
 // .dll sem package.json, tipo o SVM), onde não dá pra comparar mas ainda dá
 // pra mostrar "essa é a versão mais recente que a Forge conhece".
+/* --------------------------------------------------------------------------
+ * Casamento de mod instalado -> mod da Forge.
+ *
+ * O nome da pasta quase nunca é igual ao nome publicado na Forge:
+ *   "DrakiaXYZ-BigBrain"                -> "BigBrain"
+ *   "unbreakableKeys"                   -> "Unbreakable keys"
+ *   "acidphantasm-bosseshavelegamedals" -> "Bosses Have Lega Medals"
+ * Por isso a busca só por nome exato (como era antes) falhava na maioria dos
+ * mods, e quase tudo caía em "não encontrado".
+ *
+ * Agora tentamos várias estratégias, da mais confiável pra menos:
+ *   1. slug exato          (derivado do nome da pasta, inclusive quebrando camelCase)
+ *   2. nome exato
+ *   3. slug/nome sem o prefixo de autor ("DrakiaXYZ-" etc.)
+ *   4. busca full-text     (último recurso)
+ *
+ * As estratégias 3 e 4 podem gerar candidato genérico demais ("Amands-Graphics"
+ * vira "graphics"), então elas SÓ são aceitas se passarem numa verificação de
+ * plausibilidade. Casar errado é pior que não casar: além de mostrar
+ * "atualização disponível" mentirosa, o restaurador de modlist usa esse mesmo
+ * casamento pra baixar mod automaticamente — casar errado instalaria o mod errado.
+ * ------------------------------------------------------------------------ */
+
+function slugifyName(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2") // camelCase -> camel-Case
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-zA-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
+// Reduz a uma forma comparável: só letras e números, minúsculo. Usado pra
+// verificar se um resultado da Forge realmente corresponde ao que pedimos.
+function normalizeForCompare(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function splitAuthorPrefix(name: string): { author?: string; rest: string } {
+  const match = /^([A-Za-z0-9]+)[-_](.+)$/.exec(name);
+  if (match && match[2].length >= 3) return { author: match[1], rest: match[2] };
+  return { rest: name };
+}
+
+interface MatchCandidates {
+  strictSlugs: string[]; // derivados do nome COMPLETO da pasta — alta confiança
+  strictNames: string[];
+  looseSlugs: string[]; // sem o prefixo de autor — precisam de verificação
+  looseNames: string[];
+  authorHint?: string;
+}
+
+function buildMatchCandidates(folderName: string): MatchCandidates {
+  const { cleanName } = stripLoadOrderPrefix(folderName); // ignora "01_" de pastas legadas
+  const { author, rest } = splitAuthorPrefix(cleanName);
+  const spaced = (v: string) =>
+    v.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ").trim();
+
+  const strictSlugs = [...new Set([slugifyName(cleanName)])].filter(Boolean);
+  const strictNames = [...new Set([cleanName, spaced(cleanName)])].filter(Boolean);
+  const looseSlugs =
+    rest !== cleanName ? [...new Set([slugifyName(rest)])].filter(Boolean) : [];
+  const looseNames = rest !== cleanName ? [...new Set([rest, spaced(rest)])].filter(Boolean) : [];
+
+  return { strictSlugs, strictNames, looseSlugs, looseNames, authorHint: author };
+}
+
+/**
+ * Um casamento "solto" (sem prefixo de autor, ou via busca full-text) só vale se
+ * der pra confirmar de outro jeito: ou o autor na Forge bate com o prefixo que a
+ * gente tirou do nome da pasta, ou o nome publicado contém o que procuramos.
+ */
+function isPlausibleMatch(candidate: any, searched: string, authorHint?: string): boolean {
+  const forgeName = normalizeForCompare(String(candidate?.name ?? ""));
+  const forgeSlug = normalizeForCompare(String(candidate?.slug ?? ""));
+  const forgeOwner = normalizeForCompare(String(candidate?.owner?.name ?? ""));
+  const target = normalizeForCompare(searched);
+  if (!target) return false;
+
+  if (authorHint && forgeOwner && forgeOwner === normalizeForCompare(authorHint)) return true;
+  if (forgeSlug === target || forgeName === target) return true;
+  // Nome publicado costuma ser mais longo ("SAIN - Solarint's AI Modifications..."),
+  // então aceitar "começa com" cobre bastante caso real sem abrir demais.
+  if (target.length >= 5 && (forgeName.startsWith(target) || forgeSlug.startsWith(target))) return true;
+  return false;
+}
+
+interface ForgeMatch {
+  identifier: string;
+  latestVersion?: string;
+  latestVersionLink?: string;
+  forgeName?: string;
+  confidence: "exact" | "derived";
+}
+
+function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
+  const versions = Array.isArray(entry.versions) ? entry.versions : [];
+  const latest = versions[0];
+  return {
+    identifier: typeof entry.guid === "string" ? entry.guid : String(entry.id),
+    latestVersion: latest?.version,
+    latestVersionLink: latest?.link,
+    forgeName: typeof entry.name === "string" ? entry.name : undefined,
+    confidence
+  };
+}
+
+/* Limites documentados da API da Forge: 40 req/10s (burst) e 200 req/60s (sustentado).
+ * 40/10s = 1 requisição a cada 250ms no melhor caso; usamos 320ms de folga pra não
+ * encostar no limite (era 120ms antes, que dava ~83 req/10s — o dobro do permitido, e
+ * por isso a checagem entrava num ciclo de 429 -> espera -> 429 que parecia travada). */
+const FORGE_MIN_REQUEST_INTERVAL_MS = 320;
+let lastForgeRequestAt = 0;
+
+async function forgeRateLimitGate(): Promise<void> {
+  const since = Date.now() - lastForgeRequestAt;
+  if (since < FORGE_MIN_REQUEST_INTERVAL_MS) {
+    await delay(FORGE_MIN_REQUEST_INTERVAL_MS - since);
+  }
+  lastForgeRequestAt = Date.now();
+}
+
+// Estado por execução de checagem: teto de requisições e contagem de 429, pra garantir
+// que a operação SEMPRE termina em tempo previsível em vez de ficar tentando pra sempre.
+interface ForgeBudget {
+  remaining: number;
+  rateLimitHits: number;
+  aborted: boolean;
+}
+
+function newForgeBudget(modCount: number): ForgeBudget {
+  // ~4 tentativas por mod, com piso e teto — o suficiente pras estratégias, sem
+  // deixar uma instância gigante rodar por muitos minutos.
+  return { remaining: Math.min(Math.max(modCount * 4, 20), 160), rateLimitHits: 0, aborted: false };
+}
+
+/**
+ * Requisição à Forge respeitando rate limit, orçamento e 429 (com Retry-After).
+ * Devolve null em qualquer falha — o chamador segue sem quebrar a checagem inteira.
+ */
+async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 = false): Promise<any | null> {
+  if (budget.aborted || budget.remaining <= 0) return null;
+  budget.remaining--;
+  await forgeRateLimitGate();
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "SPT-Mod-Manager" }
+    });
+    if (res.status === 429) {
+      budget.rateLimitHits++;
+      // Se continuar batendo no limite, desistir é melhor que insistir: a doc trata
+      // burlar o limite como hostilidade, e o usuário prefere um resultado parcial
+      // rápido a uma tela "Consultando..." parada por minutos.
+      if (budget.rateLimitHits >= 3 || retriedAfter429) {
+        budget.aborted = true;
+        return null;
+      }
+      const retryAfter = Number(res.headers.get("retry-after") || 0);
+      await delay(Math.min(Math.max(retryAfter, 1), 35) * 1000);
+      return forgeFetchJson(url, budget, true);
+    }
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ATENÇÃO: na API da Forge, filter[name] e filter[slug] são filtros FUZZY de valor
+ * único — não aceitam lista separada por vírgula (só filter[guid], filter[id] e
+ * filter[hub_id] aceitam). Por isso aqui é uma requisição por valor, e o resultado
+ * ainda passa por verificação, já que "fuzzy" pode trazer coisa parecida mas errada.
+ *
+ * include_legacy=true porque, por padrão, a Forge ESCONDE mods legados (sem
+ * constraint de versão do SPT) — e vários mods instalados são justamente esses.
+ */
+async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string, budget: ForgeBudget): Promise<any[]> {
+  const url = new URL(`${FORGE_API_BASE}/mods`);
+  url.searchParams.set(`filter[${filterKey}]`, value);
+  url.searchParams.set("per_page", "10");
+  url.searchParams.set("include", "versions");
+  url.searchParams.set("fields", "id,guid,name,slug");
+  url.searchParams.set("filter[include_legacy]", "true");
+  const json = await forgeFetchJson(url.toString(), budget);
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+// GUID SIM aceita lote de verdade — é o único caminho realmente confiável e barato.
+// Uma requisição resolve dezenas de mods, sem fuzzy e sem ambiguidade.
+async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<any[]> {
+  if (guids.length === 0) return [];
+  const results: any[] = [];
+  const CHUNK = 25;
+  for (let i = 0; i < guids.length; i += CHUNK) {
+    const url = new URL(`${FORGE_API_BASE}/mods`);
+    url.searchParams.set("filter[guid]", guids.slice(i, i + CHUNK).join(","));
+    url.searchParams.set("per_page", "50");
+    url.searchParams.set("include", "versions");
+    url.searchParams.set("fields", "id,guid,name,slug");
+    url.searchParams.set("filter[include_legacy]", "true");
+    const json = await forgeFetchJson(url.toString(), budget);
+    if (Array.isArray(json?.data)) results.push(...json.data);
+  }
+  return results;
+}
+
+/**
+ * Resolve vários mods de uma vez. Retorna um mapa nome-da-pasta -> casamento.
+ * Faz o grosso em poucas requisições em lote e só cai pra busca individual
+ * (full-text) no que sobrar.
+ */
+export async function matchForgeMods(
+  folderNames: string[],
+  onProgress?: (done: number, total: number) => void
+): Promise<Map<string, ForgeMatch>> {
+  const budget = newForgeBudget(folderNames.length);
+  const matched = new Map<string, ForgeMatch>();
+  let progressDone = 0;
+  const reportProgress = () => onProgress?.(Math.min(++progressDone, folderNames.length), folderNames.length);
+  const candidatesByName = new Map<string, MatchCandidates>();
+  for (const folderName of folderNames) {
+    candidatesByName.set(folderName, buildMatchCandidates(folderName));
+  }
+
+  // --- Passo 1: slug (fuzzy, uma requisição por candidato, resultado verificado) ---
+  for (const [folderName, cand] of candidatesByName) {
+    if (budget.aborted) break;
+    for (const slug of cand.strictSlugs) {
+      const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
+      const hit = hits.find((entry) => normalizeForCompare(entry?.slug ?? "") === normalizeForCompare(slug));
+      if (hit) {
+        matched.set(folderName, toForgeMatch(hit, "exact"));
+        break;
+      }
+    }
+    reportProgress(); // progresso é por mod, no primeiro passo — é o que a UI mostra
+  }
+
+  // --- Passo 2: nome (fuzzy, verificado) ---
+  for (const [folderName, cand] of candidatesByName) {
+    if (matched.has(folderName)) continue;
+    if (budget.aborted) break;
+    for (const name of cand.strictNames) {
+      const hits = await fetchForgeByFuzzyFilter("name", name, budget);
+      const hit = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
+      if (hit) {
+        matched.set(folderName, toForgeMatch(hit, "exact"));
+        break;
+      }
+    }
+  }
+
+  // --- Passo 3: candidatos sem prefixo de autor (verificação mais rígida) ---
+  for (const [folderName, cand] of candidatesByName) {
+    if (matched.has(folderName)) continue;
+    if (budget.aborted) break;
+    for (const slug of cand.looseSlugs) {
+      const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
+      const hit = hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
+      if (hit) {
+        matched.set(folderName, toForgeMatch(hit, "derived"));
+        break;
+      }
+    }
+  }
+
+  // --- Passo 4: busca full-text individual, só pro que sobrou ---
+  for (const [folderName, cand] of candidatesByName) {
+    if (budget.aborted) break;
+    if (matched.has(folderName)) continue;
+    const term = cand.looseNames[0] ?? cand.strictNames[0];
+    if (!term) continue;
+    const url = new URL(`${FORGE_API_BASE}/mods`);
+    url.searchParams.set("query", term);
+    url.searchParams.set("per_page", "5");
+    url.searchParams.set("include", "versions");
+    url.searchParams.set("fields", "id,guid,name,slug");
+    url.searchParams.set("filter[include_legacy]", "true");
+    const json = await forgeFetchJson(url.toString(), budget);
+    const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
+    if (hit) matched.set(folderName, toForgeMatch(hit, "derived"));
+  }
+
+  return matched;
+}
+
 async function findForgeModInfo(
   name: string,
   sptVersion?: string
@@ -1215,14 +1503,23 @@ export async function findForgeDownloadForName(
   name: string,
   sptVersion?: string
 ): Promise<{ found: boolean; downloadLink?: string; version?: string; forgeName?: string }> {
-  const info = await findForgeModInfo(name, sptVersion);
-  if (!info || !info.latestVersionLink) return { found: false };
+  // Usa o mesmo matcher multi-estratégia da checagem de atualização, pra que
+  // restaurar uma modlist ache tanto quanto ela acha.
+  const matches = await matchForgeMods([name]);
+  const info = matches.get(name);
+  if (!info || !info.latestVersionLink) {
+    // Fallback: casamento por nome exato com filtro de versão do SPT aplicado.
+    const exact = await findForgeModInfo(name, sptVersion);
+    if (!exact || !exact.latestVersionLink) return { found: false };
+    return { found: true, downloadLink: exact.latestVersionLink, version: exact.latestVersion, forgeName: exact.forgeName };
+  }
   return { found: true, downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
 }
 
 export async function checkForgeUpdates(
   mods: { name: string; originalName: string; version?: string }[],
-  sptVersion: string
+  sptVersion: string,
+  onProgress?: (done: number, total: number) => void
 ): Promise<ForgeUpdateCheckResult> {
   const trimmedVersion = sptVersion.trim();
   if (!trimmedVersion) {
@@ -1234,13 +1531,17 @@ export async function checkForgeUpdates(
   const unmatched: string[] = [];
   const infoOnly: ForgeUpdateItem[] = [];
 
+  // Resolve TODOS os mods de uma vez (poucas requisições em lote), em vez de uma
+  // requisição por mod com pausa entre elas — muito mais rápido e com muito mais
+  // chance de achar, já que agora tenta slug/nome/derivado/full-text.
+  // Busca pelo nome ORIGINAL (da pasta), não pelo apelido que o usuário deu —
+  // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
+  const matches = await matchForgeMods(mods.map((m) => m.originalName), onProgress);
+
   for (const mod of mods) {
-    // Busca pelo nome ORIGINAL (da pasta), não pelo apelido que o usuário deu —
-    // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
-    const info = await findForgeModInfo(mod.originalName);
+    const info = matches.get(mod.originalName);
     if (!info) {
       unmatched.push(mod.name);
-      await delay(200);
       continue;
     }
     if (mod.version) {
@@ -1255,7 +1556,6 @@ export async function checkForgeUpdates(
     } else {
       unmatched.push(mod.name);
     }
-    await delay(200);
   }
 
   const empty: ForgeUpdateCheckResult = {

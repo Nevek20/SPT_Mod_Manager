@@ -119,6 +119,12 @@ export default function App() {
 
   // Checagem de atualização do próprio app — roda uma vez na abertura. Só notifica;
   // baixar/instalar continua sendo decisão (e ação) da pessoa, no navegador.
+  const [forgeProgress, setForgeProgress] = useState<{ done: number; total: number } | null>(null);
+  useEffect(() => {
+    const unsubscribe = window.modManagerAPI.onForgeCheckProgress(setForgeProgress);
+    return unsubscribe;
+  }, []);
+
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   useEffect(() => {
@@ -528,6 +534,7 @@ export default function App() {
     const payload = mods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version }));
     const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
     setCheckingForgeUpdates(false);
+    setForgeProgress(null);
     if (!response.success || !response.result) {
       const message = tMsg(response.message) || t("toast.forgeUpdateCheckFailed");
       setForgeError(message);
@@ -944,7 +951,11 @@ export default function App() {
               disabled={checkingForgeUpdates}
               title={t("filters.forgeCheckTitle")}
             >
-              {checkingForgeUpdates ? t("filters.forgeChecking") : t("filters.forgeCheckButton")}
+              {checkingForgeUpdates
+                ? forgeProgress
+                  ? t("filters.forgeCheckingProgress", { done: forgeProgress.done, total: forgeProgress.total })
+                  : t("filters.forgeChecking")
+                : t("filters.forgeCheckButton")}
             </button>
           </div>
 
