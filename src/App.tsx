@@ -750,12 +750,17 @@ export default function App() {
             })}
           </span>
           <div className="update-banner-actions">
-            {appUpdate.releaseUrl && (
+            {appUpdate.downloadPageUrl && (
               <button
                 className="primary"
-                onClick={() => window.modManagerAPI.openReleasePage(appUpdate.releaseUrl!)}
+                onClick={() => window.modManagerAPI.openReleasePage(appUpdate.downloadPageUrl!)}
               >
-                {t("update.viewRelease")}
+                {t("update.download")}
+              </button>
+            )}
+            {appUpdate.releaseUrl && (
+              <button onClick={() => window.modManagerAPI.openReleasePage(appUpdate.releaseUrl!)}>
+                {t("update.viewChangelog")}
               </button>
             )}
             <button onClick={() => setUpdateDismissed(true)}>{t("update.dismiss")}</button>

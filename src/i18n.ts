@@ -195,7 +195,8 @@ const pt: Dict = {
   "restore.disabledCount": "{count} mod(s) desativado(s).",
 
   "update.available": "Nova versão do Mod Manager disponível: v{latest} (você está na v{current}).",
-  "update.viewRelease": "Ver release",
+  "update.download": "Baixar na Forge",
+  "update.viewChangelog": "Changelog",
   "update.dismiss": "Agora não"
 };
 
@@ -388,7 +389,8 @@ const en: Dict = {
   "restore.disabledCount": "{count} mod(s) disabled.",
 
   "update.available": "New Mod Manager version available: v{latest} (you're on v{current}).",
-  "update.viewRelease": "View release",
+  "update.download": "Download on Forge",
+  "update.viewChangelog": "Changelog",
   "update.dismiss": "Not now"
 };
 

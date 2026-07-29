@@ -187,9 +187,13 @@ ipcMain.handle("get-forge-categories", () => getForgeCategories());
 ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
 
 ipcMain.handle("open-release-page", (_event, url: string) => {
-  // Só abre URLs de release do próprio repo — a URL vem do processo renderer, que
-  // não é totalmente confiável pra mandar abrir qualquer coisa no navegador.
-  if (/^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url)) {
+  // Só abre a página do mod na Forge ou o release no próprio repo — a URL vem do
+  // processo renderer, que não é totalmente confiável pra mandar abrir qualquer
+  // coisa no navegador.
+  const allowed =
+    /^https:\/\/forge\.sp-tarkov\.com\/mod\/2851\//.test(url) ||
+    /^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url);
+  if (allowed) {
     shell.openExternal(url);
     return { success: true };
   }

@@ -1517,11 +1517,16 @@ export async function installForgeModVersion(
 
 const GITHUB_RELEASES_API = "https://api.github.com/repos/Nevek20/SPT_Mod_Manager/releases/latest";
 
+// A versão vem da API de releases do GitHub (é lá que o número é publicado), mas o
+// link que a gente mostra é o da Forge — é de lá que o pessoal do SPT baixa de verdade.
+const FORGE_MOD_PAGE = "https://forge.sp-tarkov.com/mod/2851/spt-mod-manager";
+
 export interface AppUpdateInfo {
   updateAvailable: boolean;
   currentVersion: string;
   latestVersion?: string;
-  releaseUrl?: string;
+  downloadPageUrl?: string; // página da Forge — onde a pessoa efetivamente baixa
+  releaseUrl?: string; // página do release no GitHub (changelog/código), como link secundário
   releaseName?: string;
 }
 
@@ -1560,6 +1565,7 @@ export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateI
       updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
       currentVersion,
       latestVersion: latestVersion.replace(/^v/i, ""),
+      downloadPageUrl: FORGE_MOD_PAGE,
       releaseUrl: json?.html_url,
       releaseName: json?.name || undefined
     };

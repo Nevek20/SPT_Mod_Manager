@@ -104,6 +104,7 @@ export interface AppUpdateInfo {
   updateAvailable: boolean;
   currentVersion: string;
   latestVersion?: string;
+  downloadPageUrl?: string;
   releaseUrl?: string;
   releaseName?: string;
 }
