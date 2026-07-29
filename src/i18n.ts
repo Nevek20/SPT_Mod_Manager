@@ -192,7 +192,11 @@ const pt: Dict = {
   "restore.allInstalled": "{count} mod(s) instalado(s) com sucesso.",
   "restore.partialInstalled": "{installed} instalado(s); não encontrado(s) ou falhou(aram) na Forge: {notFound}",
   "restore.confirmDisable": "{count} mod(s) instalado(s) não estão na lista importada. Desativar esses mods?",
-  "restore.disabledCount": "{count} mod(s) desativado(s)."
+  "restore.disabledCount": "{count} mod(s) desativado(s).",
+
+  "update.available": "Nova versão do Mod Manager disponível: v{latest} (você está na v{current}).",
+  "update.viewRelease": "Ver release",
+  "update.dismiss": "Agora não"
 };
 
 const en: Dict = {
@@ -381,7 +385,11 @@ const en: Dict = {
   "restore.allInstalled": "{count} mod(s) installed successfully.",
   "restore.partialInstalled": "{installed} installed; not found or failed on Forge: {notFound}",
   "restore.confirmDisable": "{count} installed mod(s) aren't in the imported list. Disable those mods?",
-  "restore.disabledCount": "{count} mod(s) disabled."
+  "restore.disabledCount": "{count} mod(s) disabled.",
+
+  "update.available": "New Mod Manager version available: v{latest} (you're on v{current}).",
+  "update.viewRelease": "View release",
+  "update.dismiss": "Not now"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en };

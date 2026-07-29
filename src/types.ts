@@ -12,6 +12,7 @@ export interface ModInfo {
   author?: string;
   installedAt?: string;
   manifestOnly?: boolean;
+  linkedModName?: string;
 }
 
 export interface ModListComparison {
@@ -99,6 +100,14 @@ export interface InstallResult {
   archivePath?: string;
 }
 
+export interface AppUpdateInfo {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  releaseUrl?: string;
+  releaseName?: string;
+}
+
 export interface ModManagerAPI {
   getSptPath: () => Promise<{ path: string; serverRoot: string; split: boolean } | null>;
   selectSptFolder: () => Promise<{ success: boolean; path?: string; serverRoot?: string; split?: boolean; message?: string }>;
@@ -132,6 +141,8 @@ export interface ModManagerAPI {
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
+  checkAppUpdate: () => Promise<AppUpdateInfo>;
+  openReleasePage: (url: string) => Promise<{ success: boolean }>;
   findForgeDownloadForName: (
     name: string,
     sptVersion?: string

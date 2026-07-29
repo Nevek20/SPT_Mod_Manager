@@ -582,6 +582,16 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   const aliases = loadAliases(clientRoot);
   const mods: ModInfo[] = [];
 
+  // Resolve o nome de exibição de um mod "ligado" (ex: arquivo solto do mesmo install) —
+  // usado tanto pra mostrar um indicativo na lista quanto pro diálogo de confirmação antes
+  // de remover avisar que o outro também vai junto.
+  function resolveLinkedName(linkedModId: string | undefined): string | undefined {
+    if (!linkedModId) return undefined;
+    const linkedEntry = registry.find((r) => r.id === linkedModId);
+    if (!linkedEntry) return undefined;
+    return aliases[linkedModId] ?? linkedEntry.displayName;
+  }
+
   function pushMod(id: string, cleanName: string, type: ModType, enabled: boolean, loadOrder: number, modPath?: string) {
     const metadata = modPath ? readModMetadata(modPath) : {};
     const registryEntry = registry.find((r) => r.id === id);
@@ -595,7 +605,8 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       loadOrder,
       version: metadata.version,
       author: metadata.author,
-      installedAt: registryEntry?.installedAt
+      installedAt: registryEntry?.installedAt,
+      linkedModName: resolveLinkedName(registryEntry?.linkedModId)
     });
   }
 
@@ -657,7 +668,8 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       installedManually: false,
       loadOrder: 99,
       installedAt: registryEntry?.installedAt,
-      manifestOnly: true
+      manifestOnly: true,
+      linkedModName: resolveLinkedName(registryEntry?.linkedModId)
     });
   }
 
@@ -866,23 +878,45 @@ function performMerge(
   cleanup(tmpExtractDir);
   const mergedType: ModType = hasUserFolder && hasBepInExFolder ? "hybrid" : hasUserFolder ? "server" : hasBepInExFolder ? "client" : "unknown";
 
+  // Se der pra saber com certeza que o(s) arquivo(s) solto(s) pertencem a um único mod
+  // nomeado desse mesmo install (o caso comum: um .cfg avulso ao lado da pasta real do
+  // plugin), a gente liga os dois — remover um remove o outro, pra nunca sobrar lixo nem
+  // "quebrar" o mod por remover só a metade. Se tiver mais de um mod nomeado no mesmo
+  // install, não dá pra saber a qual pertence, então não liga nenhum.
+  const onlyNamedModId = serverModNames.length + clientModNames.length === 1 ? (serverModNames[0] ?? clientModNames[0]) : undefined;
+  const orphanId = orphanFiles.length > 0 ? "hybrid-manifest-" + Date.now() : undefined;
+
   for (const name of serverModNames) {
-    addToRegistry(clientRoot, { id: name, displayName: name, type: "server", installedAt: new Date().toISOString(), source: "archive-install" });
+    addToRegistry(clientRoot, {
+      id: name,
+      displayName: name,
+      type: "server",
+      installedAt: new Date().toISOString(),
+      source: "archive-install",
+      linkedModId: name === onlyNamedModId ? orphanId : undefined
+    });
   }
   for (const name of clientModNames) {
-    addToRegistry(clientRoot, { id: name, displayName: name, type: "client", installedAt: new Date().toISOString(), source: "archive-install" });
+    addToRegistry(clientRoot, {
+      id: name,
+      displayName: name,
+      type: "client",
+      installedAt: new Date().toISOString(),
+      source: "archive-install",
+      linkedModId: name === onlyNamedModId ? orphanId : undefined
+    });
   }
-  if (orphanFiles.length > 0) {
+  if (orphanId) {
     // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
     // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
-    const orphanId = "hybrid-manifest-" + Date.now();
     addManifestEntry(clientRoot, orphanId, orphanFiles);
     addToRegistry(clientRoot, {
       id: orphanId,
       displayName: preferredDisplayName ?? path.parse(archivePath).name,
       type: mergedType,
       installedAt: new Date().toISOString(),
-      source: "archive-install"
+      source: "archive-install",
+      linkedModId: onlyNamedModId
     });
   }
   return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
@@ -1469,5 +1503,67 @@ export async function installForgeModVersion(
         // best-effort — não trava a instalação por causa da limpeza do tmp
       }
     }
+  }
+}
+/* ==========================================================================
+ * Checagem de atualização do próprio Mod Manager (via releases do GitHub).
+ *
+ * Deliberadamente só NOTIFICA — nunca baixa nem instala nada sozinho. Um app
+ * que se auto-atualiza é uma classe de risco bem diferente (e a comunidade do
+ * SPT, com razão, desconfia de manager que mexe em coisa sozinho). Aqui a
+ * gente só avisa que existe versão nova e abre a página do release no
+ * navegador se a pessoa quiser.
+ * ========================================================================== */
+
+const GITHUB_RELEASES_API = "https://api.github.com/repos/Nevek20/SPT_Mod_Manager/releases/latest";
+
+export interface AppUpdateInfo {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  releaseUrl?: string;
+  releaseName?: string;
+}
+
+// Compara duas versões semver numericamente ("0.10.0" > "0.9.0", que a comparação
+// de string erraria). Ignora um "v" na frente, que é comum em tag do git.
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/i, "")
+      .split(".")
+      .map((n) => parseInt(n, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateInfo> {
+  try {
+    const res = await fetch(GITHUB_RELEASES_API, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "SPT-Mod-Manager" }
+    });
+    // Falha de rede, rate limit (a API pública do GitHub limita por IP) ou repo sem
+    // release ainda: não é erro pro usuário, só não dá pra saber agora. Melhor ficar
+    // quieto do que mostrar alarme falso.
+    if (!res.ok) return { updateAvailable: false, currentVersion };
+    const json: any = await res.json();
+    const latestVersion: string | undefined = json?.tag_name;
+    if (!latestVersion) return { updateAvailable: false, currentVersion };
+
+    return {
+      updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+      currentVersion,
+      latestVersion: latestVersion.replace(/^v/i, ""),
+      releaseUrl: json?.html_url,
+      releaseName: json?.name || undefined
+    };
+  } catch {
+    return { updateAvailable: false, currentVersion };
   }
 }

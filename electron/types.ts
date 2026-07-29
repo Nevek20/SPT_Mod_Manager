@@ -12,6 +12,7 @@ export interface ModInfo {
   author?: string; // extraído do package.json do mod, quando existe
   installedAt?: string; // data ISO de quando foi instalado pelo app (registro local)
   manifestOnly?: boolean; // true = mod "órfão" rastreado por manifesto (sem pasta nomeada própria); não suporta habilitar/desabilitar
+  linkedModName?: string; // nome de exibição de um mod "ligado" (ex: arquivo solto do mesmo install) — remover um remove o outro
 }
 
 export interface InstanceConfig {
@@ -28,6 +29,7 @@ export interface RegistryEntry {
   type: ModType;
   installedAt: string;
   source: "archive-install" | "manual";
+  linkedModId?: string; // id de outro registro "ligado" a esse (ex: um mod nomeado + o arquivo solto que veio junto no mesmo install) — removê-lo remove o outro também
 }
 
 export interface InstallResult {

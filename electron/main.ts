@@ -21,6 +21,7 @@ import {
   getForgeCategories,
   installForgeModVersion,
   findForgeDownloadForName,
+  checkAppUpdate,
   finalizeUnrecognizedInstall,
   discardPendingInstall
 } from "./modManager";
@@ -182,6 +183,18 @@ ipcMain.handle(
 );
 
 ipcMain.handle("get-forge-categories", () => getForgeCategories());
+
+ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
+
+ipcMain.handle("open-release-page", (_event, url: string) => {
+  // Só abre URLs de release do próprio repo — a URL vem do processo renderer, que
+  // não é totalmente confiável pra mandar abrir qualquer coisa no navegador.
+  if (/^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url)) {
+    shell.openExternal(url);
+    return { success: true };
+  }
+  return { success: false };
+});
 
 ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptVersion?: string) => {
   try {

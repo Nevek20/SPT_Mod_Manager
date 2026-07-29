@@ -8,7 +8,8 @@ import {
   ForgeStatusCacheEntry,
   ForgeCatalogMod,
   ForgeCategory,
-  InstallResult
+  InstallResult,
+  AppUpdateInfo
 } from "./types";
 import { Lang, translate, translateBackendMessage } from "./i18n";
 
@@ -115,6 +116,14 @@ export default function App() {
     message?: string;
   }
   const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
+
+  // Checagem de atualização do próprio app — roda uma vez na abertura. Só notifica;
+  // baixar/instalar continua sendo decisão (e ação) da pessoa, no navegador.
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  useEffect(() => {
+    window.modManagerAPI.checkAppUpdate().then(setAppUpdate);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.modManagerAPI.onDownloadProgress(({ jobId, receivedBytes, totalBytes }) => {
@@ -731,6 +740,28 @@ export default function App() {
   return (
     <>
       <ToastStack toasts={toasts} />
+
+      {appUpdate?.updateAvailable && !updateDismissed && (
+        <div className="update-banner">
+          <span>
+            {t("update.available", {
+              latest: appUpdate.latestVersion ?? "",
+              current: appUpdate.currentVersion
+            })}
+          </span>
+          <div className="update-banner-actions">
+            {appUpdate.releaseUrl && (
+              <button
+                className="primary"
+                onClick={() => window.modManagerAPI.openReleasePage(appUpdate.releaseUrl!)}
+              >
+                {t("update.viewRelease")}
+              </button>
+            )}
+            <button onClick={() => setUpdateDismissed(true)}>{t("update.dismiss")}</button>
+          </div>
+        </div>
+      )}
 
       {downloadQueue.length > 0 && (
         <div className="download-queue-panel">
