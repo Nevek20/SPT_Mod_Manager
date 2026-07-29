@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   getForgeCache: () => ipcRenderer.invoke("get-forge-cache"),
   setForgeCache: (statusCache: { name: string; status: string; version?: string }[]) =>
     ipcRenderer.invoke("set-forge-cache", statusCache),
-  checkForgeUpdates: (mods: { name: string; originalName: string; version?: string }[], sptVersion: string) =>
+  checkForgeUpdates: (mods: { name: string; originalName: string; version?: string; guid?: string }[], sptVersion: string) =>
     ipcRenderer.invoke("check-forge-updates", mods, sptVersion),
   searchForgeMods: (params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; sort?: string; page?: number }) =>
     ipcRenderer.invoke("search-forge-mods", params),
@@ -37,8 +37,12 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   openReleasePage: (url: string) => ipcRenderer.invoke("open-release-page", url),
   findForgeDownloadForName: (name: string, sptVersion?: string) =>
     ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),
-  installForgeMod: (jobId: string, downloadLink: string, suggestedName: string) =>
-    ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName),
+  installForgeMod: (
+    jobId: string,
+    downloadLink: string,
+    suggestedName: string,
+    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+  ) => ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName, forgeInfo),
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) =>
     ipcRenderer.invoke("install-mod-confirm", tmpDir, archivePath),
   abortUnrecognizedInstall: (tmpDir: string) => ipcRenderer.invoke("install-mod-abort", tmpDir),

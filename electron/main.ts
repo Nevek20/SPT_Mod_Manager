@@ -158,7 +158,7 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string }[], sptVersion: string) => {
+ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string; guid?: string }[], sptVersion: string) => {
   try {
     const result = await checkForgeUpdates(mods, sptVersion, (done, total) => {
       mainWindow?.webContents.send("forge-check-progress", { done, total });
@@ -212,12 +212,25 @@ ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptV
 
 ipcMain.handle(
   "install-forge-mod",
-  async (_event, jobId: string, downloadLink: string, suggestedName: string) => {
+  async (
+    _event,
+    jobId: string,
+    downloadLink: string,
+    suggestedName: string,
+    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+  ) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
-    return installForgeModVersion(sptPath, getServerRoot()!, downloadLink, suggestedName, (receivedBytes, totalBytes) => {
-      mainWindow?.webContents.send("download-progress", { jobId, receivedBytes, totalBytes });
-    });
+    return installForgeModVersion(
+      sptPath,
+      getServerRoot()!,
+      downloadLink,
+      suggestedName,
+      (receivedBytes, totalBytes) => {
+        mainWindow?.webContents.send("download-progress", { jobId, receivedBytes, totalBytes });
+      },
+      forgeInfo
+    );
   }
 );
 

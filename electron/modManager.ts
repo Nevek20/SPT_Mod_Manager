@@ -113,7 +113,12 @@ function isDangerousEntryPath(entryPath: string): boolean {
 async function validateArchiveEntries(archivePath: string): Promise<void> {
   const ext = path.extname(archivePath).toLowerCase();
 
-  if (ext === ".7z") {
+  // .zip grande é extraído pelo 7za (ver extractArchive), então perde a sanitização
+  // do AdmZip — precisa passar pela mesma validação de entradas do .7z.
+  const zipHandledBySevenZip =
+    ext === ".zip" && fs.existsSync(archivePath) && fs.statSync(archivePath).size >= LARGE_ARCHIVE_THRESHOLD_BYTES;
+
+  if (ext === ".7z" || zipHandledBySevenZip) {
     const entries: string[] = [];
     await new Promise<void>((resolve, reject) => {
       const stream = Seven.list(archivePath, { $bin: resolveUnpackedBinaryPath(path7za) });
@@ -125,7 +130,7 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
     });
     const dangerous = entries.find(isDangerousEntryPath);
     if (dangerous) {
-      throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no .7z ("${dangerous}").`);
+      throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no ${ext} ("${dangerous}").`);
     }
     return;
   }
@@ -145,22 +150,36 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
   // (confirmado na versão instalada) — não precisa de checagem adicional aqui.
 }
 
+// Acima disso o AdmZip não dá conta (limite de 2 GiB de buffer do Node); a margem
+// evita chegar perto do teto por causa de overhead interno.
+const LARGE_ARCHIVE_THRESHOLD_BYTES = 1_500_000_000;
+
+function extractWithSevenZip(archivePath: string, destDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stream = Seven.extractFull(archivePath, destDir, { $bin: resolveUnpackedBinaryPath(path7za) });
+    stream.on("end", () => resolve());
+    stream.on("error", (err: Error) => reject(err));
+  });
+}
+
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   const ext = path.extname(archivePath).toLowerCase();
   await validateArchiveEntries(archivePath);
 
   if (ext === ".zip") {
+    // AdmZip carrega o arquivo inteiro na memória (readFileSync), e o Node recusa
+    // buffer acima de 2 GiB — mods de conteúdo passam disso com folga. Acima do
+    // limite usamos o 7za, que também abre .zip e trabalha em streaming.
+    if (fs.statSync(archivePath).size >= LARGE_ARCHIVE_THRESHOLD_BYTES) {
+      return extractWithSevenZip(archivePath, destDir);
+    }
     const zip = new AdmZip(archivePath);
     zip.extractAllTo(destDir, true);
     return;
   }
 
   if (ext === ".7z") {
-    return new Promise((resolve, reject) => {
-      const stream = Seven.extractFull(archivePath, destDir, { $bin: resolveUnpackedBinaryPath(path7za) });
-      stream.on("end", () => resolve());
-      stream.on("error", (err: Error) => reject(err));
-    });
+    return extractWithSevenZip(archivePath, destDir);
   }
 
   if (ext === ".rar") {
@@ -229,14 +248,214 @@ function ensureDir(dirPath: string) {
  * Lê version/author do package.json do mod, quando existe. É best-effort:
  * client mods (BepInEx) raramente têm isso, então retorna vazio sem erro nesses casos.
  */
-function readModMetadata(modPath: string): { version?: string; author?: string } {
+/* --------------------------------------------------------------------------
+ * Leitura de metadados do mod.
+ *
+ * Mods do SPT 3.x traziam package.json com name/version/author. No SPT 4.0 os
+ * mods viraram assemblies .NET e essa informação passou a morar DENTRO da DLL,
+ * na classe de metadados do mod (ModMetadata / BepInPlugin), gravada como
+ * strings UTF-16 no assembly:
+ *
+ *   "com.toha3673.unbreakablekeys"  <- GUID
+ *   "Unbreakable Keys"              <- nome
+ *   "Toha3673"                      <- autor
+ *   "2.0.0"                         <- versão do mod
+ *   "~4.0.0"                        <- versão do SPT suportada
+ *
+ * Importante: NÃO dá pra usar o AssemblyVersion/FileVersion do PE aqui. Num mod
+ * real conferido, o assembly dizia 0.0.1.0 enquanto a versão publicada era 2.0.0
+ * — o autor simplesmente não versiona o assembly. O valor que vale é o declarado
+ * na classe de metadados.
+ * ------------------------------------------------------------------------ */
+
+export interface ForgeInstallInfo {
+  name?: string;
+  author?: string;
+  version?: string;
+  guid?: string;
+}
+
+export interface DllModMetadata {
+  guid?: string;
+  name?: string;
+  author?: string;
+  version?: string;
+  sptVersion?: string;
+}
+
+const DLL_VERSION_RE = /^\d+\.\d+(\.\d+)?(\.\d+)?$/;
+const DLL_CONSTRAINT_RE = /^[~^>=<]/;
+const DLL_GUID_RE = /^[a-z][a-z0-9_]*(\.[a-z0-9_-]+){1,4}$/i;
+
+// Extrai strings UTF-16LE imprimíveis — é assim que o .NET guarda literais de
+// código no heap #US, e é onde os metadados do mod acabam.
+function extractUtf16Strings(buffer: Buffer, minLen = 3, maxLen = 120): string[] {
+  const out: string[] = [];
+  let current: number[] = [];
+  for (let i = 0; i + 1 < buffer.length; i += 2) {
+    const lo = buffer[i];
+    const printable = buffer[i + 1] === 0 && lo >= 0x20 && lo <= 0x7e;
+    if (printable) {
+      current.push(lo);
+      if (current.length > maxLen) current = [];
+    } else {
+      if (current.length >= minLen) out.push(Buffer.from(current).toString("latin1"));
+      current = [];
+    }
+  }
+  if (current.length >= minLen) out.push(Buffer.from(current).toString("latin1"));
+  return out;
+}
+
+const DLL_LICENSE_RE = /^(MIT|ISC|Apache|GPL|LGPL|AGPL|BSD|MPL|Unlicense|CC0|WTFPL|Zlib|Proprietary)[-\s0-9.]*$/i;
+
+// Extrai strings ASCII/UTF-8 — é onde ficam os argumentos de atributo (heap #Blob),
+// usados pelo BepInPlugin dos client mods.
+function extractAsciiStrings(buffer: Buffer, minLen = 3, maxLen = 120): string[] {
+  const out: string[] = [];
+  let current: number[] = [];
+  for (let i = 0; i < buffer.length; i++) {
+    const byte = buffer[i];
+    if (byte >= 0x20 && byte <= 0x7e) {
+      current.push(byte);
+      if (current.length > maxLen) current = [];
+    } else {
+      if (current.length >= minLen) out.push(Buffer.from(current).toString("latin1"));
+      current = [];
+    }
+  }
+  if (current.length >= minLen) out.push(Buffer.from(current).toString("latin1"));
+  return out;
+}
+
+function looksLikeModGuid(value: string): boolean {
+  if (!DLL_GUID_RE.test(value)) return false;
+  if (/^(system|microsoft|mscorlib|netstandard|newtonsoft|unityengine|bepinex|comfort|eft)\./i.test(value)) return false;
+  if (/\.(dll|exe|json|jsonc|md|txt|cs|pdb|png|cfg)$/i.test(value)) return false;
+  return true;
+}
+
+// Nome plausível de mod — rejeita strings vizinhas que claramente NÃO são nome
+// (mensagem de log, campo do VS_VERSION_INFO, caminho, frase).
+function looksLikeModName(value: string): boolean {
+  if (!value || value.length > 60) return false;
+  if (/[[\]{}<>:;/\\|=]/.test(value)) return false;
+  if (value.trim().split(/\s+/).length > 6) return false;
+  if (/\.(dll|exe|json|jsonc|md|txt|cs|pdb|png|cfg)$/i.test(value)) return false;
+  if (/^(InternalName|ProductName|FileDescription|CompanyName|OriginalFilename|LegalCopyright|FileVersion|ProductVersion|Assembly Version|Translation|VarFileInfo|StringFileInfo|VS_VERSION_INFO|ModMetadata|AllowMultiple)$/i.test(value)) return false;
+  return /[a-zA-Z]/.test(value);
+}
+
+/**
+ * Server mod (SPT 4.0): os valores ficam como literais UTF-16, logo depois do
+ * marcador "ModMetadata". A ORDEM DOS CAMPOS VARIA de mod pra mod, porque depende
+ * de como o autor escreveu o inicializador — conferido em dois mods do mesmo autor:
+ *
+ *   bosseshavelegamedals: ModMetadata, " { ", GUID, nome, autor, versão, ~spt, MIT
+ *   brightlasers:         ModMetadata, " { ", nome, autor, versão, ~spt, MIT, GUID
+ *
+ * Por isso NÃO dá pra ler por posição fixa a partir do GUID (foi o que fez metade
+ * dos mods sair em branco). Ancoramos no marcador "ModMetadata" e classificamos
+ * cada string por FORMATO; o que sobra de texto é nome e autor, nessa ordem
+ * (consistente nos mods conferidos).
+ */
+function parseServerModMetadata(utf16: string[]): DllModMetadata | null {
+  const anchor = utf16.findIndex((v) => v === "ModMetadata");
+  if (anchor === -1) return null;
+  const window = utf16.slice(anchor + 1, anchor + 10);
+
+  const guid = window.find(looksLikeModGuid);
+  const version = window.find((v) => DLL_VERSION_RE.test(v));
+  const sptVersion = window.find((v) => DLL_CONSTRAINT_RE.test(v) && /\d/.test(v));
+  const textual = window.filter(
+    (v) =>
+      // Exclui QUALQUER string com cara de GUID, não só a escolhida — mods com
+      // dependência declarada têm mais de uma, e a segunda virava "autor".
+      !looksLikeModGuid(v) &&
+      !DLL_VERSION_RE.test(v) &&
+      !DLL_CONSTRAINT_RE.test(v) &&
+      !DLL_LICENSE_RE.test(v) &&
+      !/^https?:/i.test(v) &&
+      looksLikeModName(v)
+  );
+  if (!guid && !version) return null;
+  return { guid, name: textual[0], author: textual[1], version, sptVersion };
+}
+
+/**
+ * Client mod (BepInEx): [BepInPlugin(GUID, Nome, Versão)]. Argumentos de atributo
+ * são constantes de compilação e ficam no heap #Blob em UTF-8 — NÃO em UTF-16 —,
+ * por isso ler só UTF-16 não achava nada nesses mods. Os três valores ficam
+ * adjacentes, e o GUID é minúsculo por convenção (o que o distingue dos namespaces
+ * PascalCase do próprio assembly, tipo "DrakiaXYZ.BigBrain").
+ * Esse formato não tem campo de autor — deixamos vazio em vez de inventar.
+ */
+function parseClientModMetadata(ascii: string[]): DllModMetadata | null {
+  for (let i = 0; i < ascii.length - 2; i++) {
+    const value = ascii[i];
+    // GUID de BepInPlugin é reverse-domain com 3+ segmentos ("com.autor.mod",
+    // "xyz.drakia.bigbrain"). Exigir 3 segmentos serve pra dois fins: descarta
+    // namespace do próprio assembly ("DrakiaXYZ.BigBrain") e evita um bloco falso
+    // que aparece antes do verdadeiro em alguns mods (ex: "IcyClawz.ItemAttributeFix"
+    // seguido de "Release" + "1.7.0.0", que não é o BepInPlugin de verdade).
+    // NÃO dá pra exigir minúsculo: existem GUIDs em PascalCase de verdade, como
+    // "com.IcyClawz.ItemAttributeFix" e "com.kmyuhkyuk.KmyTarkovApi".
+    if (value.split(".").length < 3) continue;
+    if (!looksLikeModGuid(value)) continue;
+    const name = ascii[i + 1];
+    const version = ascii[i + 2];
+    if (looksLikeModName(name) && DLL_VERSION_RE.test(version)) {
+      return { guid: value, name, version };
+    }
+  }
+  return null;
+}
+
+export function parseModMetadataFromStrings(utf16: string[], ascii: string[] = []): DllModMetadata {
+  return parseServerModMetadata(utf16) ?? parseClientModMetadata(ascii) ?? {};
+}
+
+export function readDllModMetadata(dllPath: string): DllModMetadata {
   try {
-    if (!fs.existsSync(modPath) || !fs.statSync(modPath).isDirectory()) return {};
+    const buffer = fs.readFileSync(dllPath);
+    if (buffer.length < 2 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) return {}; // não é PE ("MZ")
+    return parseModMetadataFromStrings(extractUtf16Strings(buffer), extractAsciiStrings(buffer));
+  } catch {
+    return {};
+  }
+}
+
+function readModMetadata(modPath: string): { version?: string; author?: string; guid?: string } {
+  try {
+    if (!fs.existsSync(modPath)) return {};
+
+    // Client mod pode ser uma .dll solta, sem pasta própria.
+    if (!fs.statSync(modPath).isDirectory()) {
+      if (modPath.toLowerCase().endsWith(".dll")) {
+        const meta = readDllModMetadata(modPath);
+        return { version: meta.version, author: meta.author, guid: meta.guid };
+      }
+      return {};
+    }
+
+    // SPT 3.x: package.json continua valendo quando existe.
     const pkgPath = path.join(modPath, "package.json");
-    if (!fs.existsSync(pkgPath)) return {};
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
-    return { version: typeof pkg.version === "string" ? pkg.version : undefined, author };
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
+      if (typeof pkg.version === "string") {
+        return { version: pkg.version, author };
+      }
+    }
+
+    // SPT 4.0: metadados dentro da DLL.
+    for (const dll of findFilesRecursive(modPath, ".dll")) {
+      const meta = readDllModMetadata(dll);
+      if (meta.version || meta.guid) {
+        return { version: meta.version, author: meta.author, guid: meta.guid };
+      }
+    }
+    return {};
   } catch {
     return {};
   }
@@ -603,8 +822,12 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       enabled,
       installedManually: !registryIds.has(id),
       loadOrder,
-      version: metadata.version,
-      author: metadata.author,
+      // Prioridade: o que o próprio mod declara localmente; se faltar, o que a
+      // Forge informou quando o mod foi instalado pelo app (fonte confiável —
+      // client mods, por exemplo, não têm campo de autor nenhum na DLL).
+      version: metadata.version ?? registryEntry?.forgeVersion,
+      author: metadata.author ?? registryEntry?.forgeAuthor,
+      guid: metadata.guid ?? registryEntry?.forgeGuid,
       installedAt: registryEntry?.installedAt,
       linkedModName: resolveLinkedName(registryEntry?.linkedModId)
     });
@@ -690,7 +913,8 @@ export async function installModFromArchive(
   clientRoot: string,
   serverRoot: string,
   archivePath: string,
-  preferredDisplayName?: string
+  preferredDisplayName?: string,
+  forgeInfo?: ForgeInstallInfo
 ): Promise<InstallResult> {
   const tmpExtractDir = path.join(clientRoot, ".tmp-mod-extract-" + Date.now());
   try {
@@ -700,7 +924,7 @@ export async function installModFromArchive(
     const mergeRoot = findMergeRoot(tmpExtractDir);
 
     if (mergeRoot) {
-      return performMerge(clientRoot, serverRoot, mergeRoot, archivePath, tmpExtractDir, preferredDisplayName);
+      return performMerge(clientRoot, serverRoot, mergeRoot, archivePath, tmpExtractDir, preferredDisplayName, forgeInfo);
     }
 
     // Caso 2: zip contém DLLs soltas ou uma única pasta -> tentar identificar client vs server
@@ -777,7 +1001,11 @@ export async function installModFromArchive(
       displayName: modId,
       type,
       installedAt: new Date().toISOString(),
-      source: "archive-install"
+      source: "archive-install",
+      forgeName: forgeInfo?.name,
+      forgeAuthor: forgeInfo?.author,
+      forgeVersion: forgeInfo?.version,
+      forgeGuid: forgeInfo?.guid
     });
     return { success: true, message: `Mod "${modId}" instalado e verificado como ${type === "server" ? "server mod" : "client mod"}.` };
   } catch (err) {
@@ -804,7 +1032,8 @@ function performMerge(
   mergeRoot: string,
   archivePath: string,
   tmpExtractDir: string,
-  preferredDisplayName?: string
+  preferredDisplayName?: string,
+  forgeInfo?: ForgeInstallInfo
 ): InstallResult {
   const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
   const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
@@ -1252,18 +1481,55 @@ function buildMatchCandidates(folderName: string): MatchCandidates {
  * gente tirou do nome da pasta, ou o nome publicado contém o que procuramos.
  */
 function isPlausibleMatch(candidate: any, searched: string, authorHint?: string): boolean {
-  const forgeName = normalizeForCompare(String(candidate?.name ?? ""));
-  const forgeSlug = normalizeForCompare(String(candidate?.slug ?? ""));
+  const rawName = String(candidate?.name ?? "");
+  const rawSlug = String(candidate?.slug ?? "");
+  const forgeName = normalizeForCompare(rawName);
+  const forgeSlug = normalizeForCompare(rawSlug);
   const forgeOwner = normalizeForCompare(String(candidate?.owner?.name ?? ""));
   const target = normalizeForCompare(searched);
   if (!target) return false;
 
-  if (authorHint && forgeOwner && forgeOwner === normalizeForCompare(authorHint)) return true;
+  // 1) Igualdade — o caso ideal.
   if (forgeSlug === target || forgeName === target) return true;
-  // Nome publicado costuma ser mais longo ("SAIN - Solarint's AI Modifications..."),
-  // então aceitar "começa com" cobre bastante caso real sem abrir demais.
-  if (target.length >= 5 && (forgeName.startsWith(target) || forgeSlug.startsWith(target))) return true;
+
+  // 2) Autor confere — forte o bastante mesmo com nome diferente.
+  if (authorHint && forgeOwner && forgeOwner === normalizeForCompare(authorHint)) return true;
+
+  // 3) Nome publicado começa com o que procuramos, terminando em limite de palavra.
+  //    Cobre o caso MUITO comum de a Forge usar título longo enquanto a pasta usa o
+  //    nome curto: "SAIN" -> "SAIN - Solarint's AI Modifications - ...".
+  //    O limite de palavra evita casar "keys" com "KeysReworked": exigimos que o que
+  //    vem logo depois no nome ORIGINAL não seja letra/número.
+  if (target.length >= 3 && startsWithAtWordBoundary(rawName, searched)) return true;
+  if (target.length >= 3 && startsWithAtWordBoundary(rawSlug, searched)) return true;
+
   return false;
+}
+
+/**
+ * "SAIN - Solarint's..." começa com "SAIN" seguido de espaço -> true.
+ * "KeysReworked" começa com "Keys" seguido de "R" (letra) -> false.
+ * A comparação ignora maiúsculas e pontuação no trecho comparado, mas exige que o
+ * caractere logo após o trecho seja um separador de verdade.
+ */
+function startsWithAtWordBoundary(fullValue: string, prefix: string): boolean {
+  const normalizedPrefix = normalizeForCompare(prefix);
+  if (!normalizedPrefix) return false;
+  let consumed = 0;
+  let matchedChars = 0;
+  for (const char of fullValue) {
+    const isAlphaNum = /[a-zA-Z0-9]/.test(char);
+    if (isAlphaNum) {
+      if (matchedChars >= normalizedPrefix.length) return false; // ainda em palavra -> não é limite
+      if (char.toLowerCase() !== normalizedPrefix[matchedChars]) return false;
+      matchedChars++;
+    } else if (matchedChars >= normalizedPrefix.length) {
+      return true; // consumiu o prefixo inteiro e chegou num separador
+    }
+    consumed++;
+    if (matchedChars === normalizedPrefix.length && consumed === fullValue.length) return true;
+  }
+  return matchedChars === normalizedPrefix.length;
 }
 
 interface ForgeMatch {
@@ -1392,9 +1658,11 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
  * (full-text) no que sobrar.
  */
 export async function matchForgeMods(
-  folderNames: string[],
+  input: (string | { folderName: string; guid?: string })[],
   onProgress?: (done: number, total: number) => void
 ): Promise<Map<string, ForgeMatch>> {
+  const entries = input.map((v) => (typeof v === "string" ? { folderName: v, guid: undefined } : v));
+  const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
   let progressDone = 0;
@@ -1404,14 +1672,35 @@ export async function matchForgeMods(
     candidatesByName.set(folderName, buildMatchCandidates(folderName));
   }
 
+  // --- Passo 0: GUID (exato e em lote de verdade) ---
+  // De longe o melhor caminho: filter[guid] aceita lista separada por vírgula e não é
+  // fuzzy, então dezenas de mods se resolvem numa requisição só, sem chute por nome.
+  // Só funciona pra mods que declaram GUID (SPT 4.0); o resto cai nos passos seguintes.
+  const guidEntries = entries.filter((e) => e.guid);
+  if (guidEntries.length > 0) {
+    const byGuid = new Map<string, any>();
+    for (const entry of await fetchForgeByGuids(guidEntries.map((e) => e.guid!), budget)) {
+      if (entry?.guid) byGuid.set(String(entry.guid).toLowerCase(), entry);
+    }
+    for (const entry of guidEntries) {
+      const hit = byGuid.get(String(entry.guid).toLowerCase());
+      if (hit) matched.set(entry.folderName, toForgeMatch(hit, "exact"));
+    }
+  }
+
   // --- Passo 1: slug (fuzzy, uma requisição por candidato, resultado verificado) ---
   for (const [folderName, cand] of candidatesByName) {
     if (budget.aborted) break;
+    if (matched.has(folderName)) { reportProgress(); continue; }
     for (const slug of cand.strictSlugs) {
       const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
-      const hit = hits.find((entry) => normalizeForCompare(entry?.slug ?? "") === normalizeForCompare(slug));
+      // A API filtra de forma FUZZY, então o resultado precisa ser verificado.
+      // Igualdade primeiro; se não houver, aceita um casamento plausível (nome
+      // publicado longo começando pelo termo, ou autor batendo).
+      const exact = hits.find((entry) => normalizeForCompare(entry?.slug ?? "") === normalizeForCompare(slug));
+      const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
       if (hit) {
-        matched.set(folderName, toForgeMatch(hit, "exact"));
+        matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
         break;
       }
     }
@@ -1424,9 +1713,10 @@ export async function matchForgeMods(
     if (budget.aborted) break;
     for (const name of cand.strictNames) {
       const hits = await fetchForgeByFuzzyFilter("name", name, budget);
-      const hit = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
+      const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
+      const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, name, cand.authorHint));
       if (hit) {
-        matched.set(folderName, toForgeMatch(hit, "exact"));
+        matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
         break;
       }
     }
@@ -1517,7 +1807,7 @@ export async function findForgeDownloadForName(
 }
 
 export async function checkForgeUpdates(
-  mods: { name: string; originalName: string; version?: string }[],
+  mods: { name: string; originalName: string; version?: string; guid?: string }[],
   sptVersion: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<ForgeUpdateCheckResult> {
@@ -1536,7 +1826,10 @@ export async function checkForgeUpdates(
   // chance de achar, já que agora tenta slug/nome/derivado/full-text.
   // Busca pelo nome ORIGINAL (da pasta), não pelo apelido que o usuário deu —
   // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
-  const matches = await matchForgeMods(mods.map((m) => m.originalName), onProgress);
+  const matches = await matchForgeMods(
+    mods.map((m) => ({ folderName: m.originalName, guid: m.guid })),
+    onProgress
+  );
 
   for (const mod of mods) {
     const info = matches.get(mod.originalName);
@@ -1742,7 +2035,8 @@ export async function installForgeModVersion(
   serverRoot: string,
   downloadLink: string,
   suggestedName: string,
-  onProgress?: (receivedBytes: number, totalBytes: number) => void
+  onProgress?: (receivedBytes: number, totalBytes: number) => void,
+  forgeInfo?: ForgeInstallInfo
 ): Promise<InstallResult> {
   let tmpFilePath: string | undefined;
   try {
@@ -1764,35 +2058,38 @@ export async function installForgeModVersion(
     const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "forge-mod";
     tmpFilePath = path.join(clientRoot, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
 
-    // Lê em streaming (em vez de esperar o arquivo inteiro de uma vez) pra poder reportar
-    // progresso — importante pra mods grandes, onde "Instalando..." sem mais nada deixa a
-    // pessoa sem saber se travou ou só tá demorando.
+    // Grava em streaming DIRETO NO DISCO, pedaço a pedaço. Nunca segura o arquivo
+    // inteiro na memória: mods de conteúdo passam facilmente de 1 GB, e tanto
+    // juntar os pedaços no fim quanto usar arrayBuffer() precisariam do arquivo
+    // todo (ou o dobro dele) na RAM — que é o que fazia mod grande falhar.
     const totalBytes = Number(res.headers.get("content-length") || 0);
     const reader = res.body?.getReader();
-    const chunks: Uint8Array[] = [];
+    if (!reader) {
+      return { success: false, message: "Falha ao baixar/instalar da Forge: resposta sem conteúdo." };
+    }
+    const fileHandle = fs.createWriteStream(tmpFilePath);
     let receivedBytes = 0;
-    if (reader) {
+    try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (value) {
-          chunks.push(value);
-          receivedBytes += value.byteLength;
-          onProgress?.(receivedBytes, totalBytes);
+        if (!value) continue;
+        // Respeita a contrapressão do disco: se o buffer encheu, espera drenar
+        // antes de pedir mais dados da rede.
+        if (!fileHandle.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => fileHandle.once("drain", () => resolve()));
         }
+        receivedBytes += value.byteLength;
+        onProgress?.(receivedBytes, totalBytes);
       }
-    } else {
-      // Sem body em stream (não deveria acontecer com fetch normal, mas por segurança
-      // cai pra leitura de uma vez só, sem progresso incremental).
-      const arrayBuffer = await res.arrayBuffer();
-      chunks.push(new Uint8Array(arrayBuffer));
-      receivedBytes = arrayBuffer.byteLength;
-      onProgress?.(receivedBytes, totalBytes || receivedBytes);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        fileHandle.end((err?: Error | null) => (err ? reject(err) : resolve()));
+      });
     }
-    fs.writeFileSync(tmpFilePath, Buffer.concat(chunks.map((c) => Buffer.from(c))));
 
-    return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName);
+    return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName, forgeInfo);
   } catch (err: any) {
     return { success: false, message: `Falha ao baixar/instalar da Forge: ${err.message || err}` };
   } finally {

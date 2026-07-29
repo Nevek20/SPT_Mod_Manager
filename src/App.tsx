@@ -475,7 +475,10 @@ export default function App() {
           const queueId = pushQueueItem(lookup.forgeName ?? name);
           markQueueActive(queueId);
           const installResult = await installArchiveWithConfirmFlow(
-            window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name)
+            window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
+              name: lookup.forgeName,
+              version: lookup.version
+            })
           );
           markQueueDone(queueId, installResult.success, tMsg(installResult.message));
           if (installResult.success) installedCount++;
@@ -531,7 +534,7 @@ export default function App() {
     }
     setCheckingForgeUpdates(true);
     setForgeError(null);
-    const payload = mods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version }));
+    const payload = mods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version, guid: m.guid }));
     const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
     setCheckingForgeUpdates(false);
     setForgeProgress(null);
@@ -572,7 +575,7 @@ export default function App() {
     const newMods = updatedMods.filter((m) => !previousKeys.has(selectionKey(m)));
     if (newMods.length === 0) return;
 
-    const payload = newMods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version }));
+    const payload = newMods.map((m) => ({ name: m.name, originalName: m.originalName, version: m.version, guid: m.guid }));
     const response = await window.modManagerAPI.checkForgeUpdates(payload, sptVersionInput.trim());
     if (!response.success || !response.result) return;
 
@@ -633,7 +636,14 @@ export default function App() {
     const previousKeys = new Set(mods.map(selectionKey));
     const queueId = pushQueueItem(mod.name);
     markQueueActive(queueId);
-    const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installForgeMod(queueId, version.link, mod.name));
+    const result = await installArchiveWithConfirmFlow(
+      window.modManagerAPI.installForgeMod(queueId, version.link, mod.name, {
+        name: mod.name,
+        author: mod.author,
+        version: version.version,
+        guid: mod.guid
+      })
+    );
     markQueueDone(queueId, result.success, tMsg(result.message));
     setInstallingModId(null);
     pushToast(tMsg(result.message), result.success);

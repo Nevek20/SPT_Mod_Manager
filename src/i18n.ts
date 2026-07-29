@@ -494,7 +494,7 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   { pattern: /^Não foi possível consultar o Forge: (.+)$/, en: (m) => `Couldn't reach Forge: ${m[1]}` },
   { pattern: /^Forge respondeu (\d+)$/, en: (m) => `Forge responded ${m[1]}` },
   {
-    pattern: /^Arquivo rejeitado por segurança: entrada suspeita no \.(7z|rar) \("(.+)"\)\.$/,
+    pattern: /^Arquivo rejeitado por segurança: entrada suspeita no \.(7z|rar|zip) \("(.+)"\)\.$/,
     en: (m) => `File rejected for security reasons: suspicious entry in the .${m[1]} ("${m[2]}").`
   }
 ];

@@ -12,6 +12,7 @@ export interface ModInfo {
   author?: string;
   installedAt?: string;
   manifestOnly?: boolean;
+  guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge
   linkedModName?: string;
 }
 
@@ -131,7 +132,7 @@ export interface ModManagerAPI {
   getForgeCache: () => Promise<{ statusCache: ForgeStatusCacheEntry[] | null; checkedAt: string | null }>;
   setForgeCache: (statusCache: ForgeStatusCacheEntry[]) => Promise<void>;
   checkForgeUpdates: (
-    mods: { name: string; originalName: string; version?: string }[],
+    mods: { name: string; originalName: string; version?: string; guid?: string }[],
     sptVersion: string
   ) => Promise<{ success: boolean; result?: ForgeUpdateCheckResult; message?: string }>;
   searchForgeMods: (params: {
@@ -149,7 +150,12 @@ export interface ModManagerAPI {
     name: string,
     sptVersion?: string
   ) => Promise<{ found: boolean; downloadLink?: string; version?: string; forgeName?: string }>;
-  installForgeMod: (jobId: string, downloadLink: string, suggestedName: string) => Promise<InstallResult>;
+  installForgeMod: (
+    jobId: string,
+    downloadLink: string,
+    suggestedName: string,
+    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+  ) => Promise<InstallResult>;
   onDownloadProgress: (callback: (data: { jobId: string; receivedBytes: number; totalBytes: number }) => void) => () => void;
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) => Promise<InstallResult>;
   abortUnrecognizedInstall: (tmpDir: string) => Promise<{ success: boolean; message: string }>;
