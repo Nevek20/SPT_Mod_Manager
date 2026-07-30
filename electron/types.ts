@@ -31,6 +31,7 @@ export interface RegistryEntry {
   installedAt: string;
   source: "archive-install" | "manual";
   linkedModId?: string;
+  linkedModIds?: string[]; // no registro do órfão: todos os mods que vieram no mesmo arquivo
   // Dados vindos da Forge no momento da instalação — fonte confiável, usada quando
   // o mod não expõe esses campos localmente (ex: client mod, que não tem autor).
   forgeName?: string;

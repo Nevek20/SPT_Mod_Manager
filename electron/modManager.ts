@@ -891,8 +891,8 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
     // e a remoção do mod leva esses arquivos junto (ver uninstallMod).
     // Se o mod ligado não existir mais, o órfão VOLTA a aparecer — senão viraria
     // arquivo invisível e impossível de remover pelo app.
-    const linkedTo = registryEntry?.linkedModId;
-    if (linkedTo && namedModIds.has(linkedTo)) continue;
+    const linkedTo = registryEntry?.linkedModIds ?? (registryEntry?.linkedModId ? [registryEntry.linkedModId] : []);
+    if (linkedTo.length > 0 && linkedTo.some((id) => namedModIds.has(id))) continue;
 
     mods.push({
       id: manifestId,
@@ -1172,8 +1172,12 @@ function performMerge(
   // plugin), a gente liga os dois — remover um remove o outro, pra nunca sobrar lixo nem
   // "quebrar" o mod por remover só a metade. Se tiver mais de um mod nomeado no mesmo
   // install, não dá pra saber a qual pertence, então não liga nenhum.
-  const onlyNamedModId = serverModNames.length + clientModNames.length === 1 ? (serverModNames[0] ?? clientModNames[0]) : undefined;
   const orphanId = orphanFiles.length > 0 ? "hybrid-manifest-" + Date.now() : undefined;
+  // Os arquivos soltos pertencem ao PACOTE, não a um mod específico — um arquivo pode
+  // instalar a parte de servidor e a de cliente ao mesmo tempo (ex: mpstark-dynamicmaps
+  // + DynamicMaps) e o config solto é dos dois. Por isso todo mod nomeado desse mesmo
+  // arquivo aponta pros arquivos soltos, e eles só somem quando o ÚLTIMO deles sai.
+  const allNamedModIds = [...serverModNames, ...clientModNames];
 
   for (const name of serverModNames) {
     addToRegistry(clientRoot, {
@@ -1182,7 +1186,7 @@ function performMerge(
       type: "server",
       installedAt: new Date().toISOString(),
       source: "archive-install",
-      linkedModId: name === onlyNamedModId ? orphanId : undefined
+      linkedModId: orphanId
     });
   }
   for (const name of clientModNames) {
@@ -1192,7 +1196,7 @@ function performMerge(
       type: "client",
       installedAt: new Date().toISOString(),
       source: "archive-install",
-      linkedModId: name === onlyNamedModId ? orphanId : undefined
+      linkedModId: orphanId
     });
   }
   if (orphanId) {
@@ -1205,7 +1209,7 @@ function performMerge(
       type: mergedType,
       installedAt: new Date().toISOString(),
       source: "archive-install",
-      linkedModId: onlyNamedModId
+      linkedModIds: allNamedModIds
     });
   }
   return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
@@ -1318,9 +1322,23 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
   // Remove também os arquivos soltos que vieram no mesmo arquivo desse mod. Eles
   // não aparecem como item separado na lista (ver scanMods), então precisam sair
   // junto — do contrário ficariam órfãos de verdade, sem dono e sem como remover.
-  const registryEntry = loadRegistry(clientRoot).find((r) => r.id === mod.id);
+  const registryAfter = loadRegistry(clientRoot);
+  const registryEntry = registryAfter.find((r) => r.id === mod.id);
   let linkedFilesRemoved = 0;
-  if (registryEntry?.linkedModId) {
+  // Só remove os arquivos do pacote quando nenhum outro mod do mesmo arquivo continua
+  // instalado — senão apagaria o config de um mod que ainda está lá.
+  const orphanEntry = registryEntry?.linkedModId
+    ? registryAfter.find((r) => r.id === registryEntry.linkedModId)
+    : undefined;
+  // Um "irmão" pode ser de outro tipo (o pacote instala server e client), e pode estar
+  // habilitado ou desabilitado — por isso checamos as quatro combinações.
+  const siblingsStillInstalled = (orphanEntry?.linkedModIds ?? []).some((id) => {
+    if (id === mod.id) return false;
+    return (["server", "client"] as const).some((type) =>
+      [true, false].some((enabled) => fs.existsSync(resolveModPath(clientRoot, serverRoot, { id, type, enabled })))
+    );
+  });
+  if (registryEntry?.linkedModId && !siblingsStillInstalled) {
     const manifest = loadManifest(clientRoot);
     for (const relPath of manifest[registryEntry.linkedModId] ?? []) {
       const linkedTarget = resolveManifestFilePath(clientRoot, serverRoot, relPath);
