@@ -44,15 +44,48 @@
   "build": {
     "appId": "com.emir.sptmodmanager",
     "productName": "SPT Mod Manager",
+    "copyright": "Copyright © 2026 TioEmir",
     "files": [
       "dist/**/*",
       "dist-electron/**/*"
     ],
-    "win": {
-      "target": "nsis"
-    },
     "asarUnpack": [
       "node_modules/7zip-bin/**/*"
-    ]
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "SPT-Mod-Manager-${version}-${os}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SPT Mod Manager",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "license": "LICENSE",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
