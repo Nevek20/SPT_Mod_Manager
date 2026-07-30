@@ -1818,12 +1818,6 @@ export async function matchForgeMods(
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
-  let progressDone = 0;
-  // O progresso conta cada tentativa (mod x estratégia), não só o primeiro passo — antes
-  // o contador chegava ao total já no passo 1 e depois ficava parado durante os outros
-  // três, que é onde a maior parte do tempo passa numa lista grande.
-  // O total é o teto (4 estratégias por mod); se tudo resolver antes, a operação
-  // simplesmente termina mais cedo.
   // O progresso conta MODS RESOLVIDOS, não tentativas. Contar tentativas dava um total
   // de "mods x 4 estratégias" (552 pra 136 mods), que na tela parecia uma quantidade
   // absurda de mods — e escondia o fato de que, com GUID, a maioria resolve de primeira,
@@ -1854,15 +1848,20 @@ export async function matchForgeMods(
     reportProgress(); // com GUID, a maioria já fica pronta aqui
   }
 
-  // --- Passo 1: slug (fuzzy, uma requisição por candidato, resultado verificado) ---
+  // --- Passos 1 a 4: por MOD, tentando as estratégias até uma acertar ---
+  //
+  // Antes isso era organizado por estratégia ("todos os mods por slug, depois todos por
+  // nome, ..."). Além de não ajudar em nada (esses filtros da Forge são fuzzy e de valor
+  // único, então cada consulta é individual de qualquer jeito), fazia o progresso ficar
+  // parado: um mod só contava quando casava, e nos passos do meio nada casava por vários
+  // minutos. Indo mod a mod, cada um termina — casando ou esgotando — e o contador anda.
   for (const [folderName, cand] of candidatesByName) {
+    if (matched.has(folderName)) continue; // já resolvido pelo lote de GUID
     if (budget.aborted) break;
-    if (matched.has(folderName)) { reportProgress(); continue; }
+
+    // 1) slug exato (derivado do nome da pasta)
     for (const slug of cand.strictSlugs) {
       const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
-      // A API filtra de forma FUZZY, então o resultado precisa ser verificado.
-      // Igualdade primeiro; se não houver, aceita um casamento plausível (nome
-      // publicado longo começando pelo termo, ou autor batendo).
       const exact = hits.find((entry) => normalizeForCompare(entry?.slug ?? "") === normalizeForCompare(slug));
       const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
       if (hit) {
@@ -1870,57 +1869,49 @@ export async function matchForgeMods(
         break;
       }
     }
-    reportProgress(); // progresso é por mod, no primeiro passo — é o que a UI mostra
-  }
 
-  // --- Passo 2: nome (fuzzy, verificado) ---
-  for (const [folderName, cand] of candidatesByName) {
-    if (matched.has(folderName)) continue;
-    if (budget.aborted) break;
-    reportProgress();
-    for (const name of cand.strictNames) {
-      const hits = await fetchForgeByFuzzyFilter("name", name, budget);
-      const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
-      const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, name, cand.authorHint));
-      if (hit) {
-        matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
-        break;
+    // 2) nome exato
+    if (!matched.has(folderName)) {
+      for (const name of cand.strictNames) {
+        const hits = await fetchForgeByFuzzyFilter("name", name, budget);
+        const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
+        const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, name, cand.authorHint));
+        if (hit) {
+          matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
+          break;
+        }
       }
     }
-  }
 
-  // --- Passo 3: candidatos sem prefixo de autor (verificação mais rígida) ---
-  for (const [folderName, cand] of candidatesByName) {
-    if (matched.has(folderName)) continue;
-    if (budget.aborted) break;
-    reportProgress();
-    for (const slug of cand.looseSlugs) {
-      const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
-      const hit = hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
-      if (hit) {
-        matched.set(folderName, toForgeMatch(hit, "derived"));
-        break;
+    // 3) sem o prefixo de autor (verificação mais rígida)
+    if (!matched.has(folderName)) {
+      for (const slug of cand.looseSlugs) {
+        const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
+        const hit = hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
+        if (hit) {
+          matched.set(folderName, toForgeMatch(hit, "derived"));
+          break;
+        }
       }
     }
-  }
 
-  // --- Passo 4: busca full-text individual, só pro que sobrou ---
-  for (const [folderName, cand] of candidatesByName) {
-    if (budget.aborted) break;
-    if (matched.has(folderName)) continue;
-    const term = cand.looseNames[0] ?? cand.strictNames[0];
-    if (!term) continue;
-    reportProgress();
-    const url = new URL(`${FORGE_API_BASE}/mods`);
-    url.searchParams.set("query", term);
-    url.searchParams.set("per_page", "5");
-    url.searchParams.set("include", "versions");
-    url.searchParams.set("fields", "id,guid,name,slug");
-    url.searchParams.set("filter[include_legacy]", "true");
-    const json = await forgeFetchJson(url.toString(), budget);
-    const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
-    if (hit) matched.set(folderName, toForgeMatch(hit, "derived"));
-    else exhausted++; // última estratégia: esse mod não será mais tentado
+    // 4) busca textual, último recurso
+    if (!matched.has(folderName)) {
+      const term = cand.looseNames[0] ?? cand.strictNames[0];
+      if (term) {
+        const url = new URL(`${FORGE_API_BASE}/mods`);
+        url.searchParams.set("query", term);
+        url.searchParams.set("per_page", "5");
+        url.searchParams.set("include", "versions");
+        url.searchParams.set("fields", "id,guid,name,slug");
+        url.searchParams.set("filter[include_legacy]", "true");
+        const json = await forgeFetchJson(url.toString(), budget);
+        const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
+        if (hit) matched.set(folderName, toForgeMatch(hit, "derived"));
+      }
+    }
+
+    if (!matched.has(folderName)) exhausted++;
     reportProgress();
   }
 
