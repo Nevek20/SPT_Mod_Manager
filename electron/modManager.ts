@@ -878,10 +878,22 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   // Mods "órfãos" rastreados por manifesto (arquivos sem pasta nomeada própria) — não suportam
   // habilitar/desabilitar, mas aparecem na lista e podem ser removidos de forma limpa.
   const manifest = loadManifest(clientRoot);
+  // Ids dos mods "de verdade" (com pasta própria) já listados acima.
+  const namedModIds = new Set(mods.map((m) => m.id));
   for (const [manifestId, files] of Object.entries(manifest)) {
     const stillExists = files.some((relPath) => fs.existsSync(resolveManifestFilePath(clientRoot, serverRoot, relPath)));
     if (!stillExists) continue; // arquivos já não existem mais (removidos por fora) — não mostra fantasma
     const registryEntry = registry.find((r) => r.id === manifestId);
+
+    // Quando esses arquivos soltos vieram do mesmo arquivo de um único mod nomeado,
+    // não são um item separado do ponto de vista de quem usa — são parte daquele mod.
+    // Some da lista (evita a linha duplicada tipo "DynamicMaps" + "DynamicMaps-1.1.3")
+    // e a remoção do mod leva esses arquivos junto (ver uninstallMod).
+    // Se o mod ligado não existir mais, o órfão VOLTA a aparecer — senão viraria
+    // arquivo invisível e impossível de remover pelo app.
+    const linkedTo = registryEntry?.linkedModId;
+    if (linkedTo && namedModIds.has(linkedTo)) continue;
+
     mods.push({
       id: manifestId,
       name: aliases[manifestId] ?? registryEntry?.displayName ?? manifestId,
@@ -1026,6 +1038,53 @@ export async function installModFromArchive(
  * arquivo solto na raiz do mod) vai pro clientRoot. Em instâncias normais (a grande
  * maioria) clientRoot e serverRoot são a mesma pasta, então isso não muda nada na prática.
  */
+/**
+ * Alguns mods empacotam a parte de servidor dentro de uma pasta-embrulho (quase sempre
+ * chamada "SPT"), lado a lado com o BepInEx solto na raiz:
+ *
+ *   BepInEx/plugins/FooClient/     <- direto na raiz
+ *   SPT/user/mods/Foo/             <- embrulhado
+ *
+ * Como existe "BepInEx" na raiz, findMergeRoot para ali e nunca entra no embrulho —
+ * então a parte de servidor não era reconhecida (ficava sem registro, aparecendo como
+ * "instalado manualmente") e, numa instalação não-dividida, ainda era copiada pro lugar
+ * errado (<raiz>/SPT/user/mods em vez de <raiz>/user/mods).
+ *
+ * Aqui a gente achata esses embrulhos ANTES da mesclagem, movendo "user"/"BepInEx" de
+ * dentro deles pra raiz da extração. Assim o resto da lógica funciona sem saber que o
+ * embrulho existiu. É tudo dentro da pasta temporária, então mover é barato.
+ */
+function flattenWrapperDirs(mergeRoot: string): void {
+  for (const entry of fs.readdirSync(mergeRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const lower = entry.name.toLowerCase();
+    if (lower === "user" || lower === "bepinex") continue; // já está no lugar certo
+
+    const wrapperPath = path.join(mergeRoot, entry.name);
+    const inner = fs.readdirSync(wrapperPath, { withFileTypes: true });
+    const relevant = inner.filter(
+      (e) => e.isDirectory() && (e.name.toLowerCase() === "user" || e.name.toLowerCase() === "bepinex")
+    );
+    if (relevant.length === 0) continue; // não é embrulho, é conteúdo do mod mesmo
+
+    for (const folder of relevant) {
+      const from = path.join(wrapperPath, folder.name);
+      const to = path.join(mergeRoot, folder.name);
+      if (fs.existsSync(to)) {
+        // Já existe na raiz (ex: BepInEx nos dois lugares) — funde em vez de sobrescrever.
+        copyRecursive(from, to);
+        fs.rmSync(from, { recursive: true, force: true });
+      } else {
+        fs.renameSync(from, to);
+      }
+    }
+    // Remove o embrulho se não sobrou nada dentro dele.
+    if (fs.readdirSync(wrapperPath).length === 0) {
+      fs.rmSync(wrapperPath, { recursive: true, force: true });
+    }
+  }
+}
+
 function performMerge(
   clientRoot: string,
   serverRoot: string,
@@ -1035,6 +1094,7 @@ function performMerge(
   preferredDisplayName?: string,
   forgeInfo?: ForgeInstallInfo
 ): InstallResult {
+  flattenWrapperDirs(mergeRoot);
   const mergeEntries = fs.readdirSync(mergeRoot, { withFileTypes: true });
   const hasUserFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "user");
   const hasBepInExFolder = mergeEntries.some((e) => e.isDirectory() && e.name.toLowerCase() === "bepinex");
@@ -1254,8 +1314,33 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
     return { success: false, message: "Mod não encontrado: " + target };
   }
   fs.rmSync(target, { recursive: true, force: true });
+
+  // Remove também os arquivos soltos que vieram no mesmo arquivo desse mod. Eles
+  // não aparecem como item separado na lista (ver scanMods), então precisam sair
+  // junto — do contrário ficariam órfãos de verdade, sem dono e sem como remover.
+  const registryEntry = loadRegistry(clientRoot).find((r) => r.id === mod.id);
+  let linkedFilesRemoved = 0;
+  if (registryEntry?.linkedModId) {
+    const manifest = loadManifest(clientRoot);
+    for (const relPath of manifest[registryEntry.linkedModId] ?? []) {
+      const linkedTarget = resolveManifestFilePath(clientRoot, serverRoot, relPath);
+      if (fs.existsSync(linkedTarget)) {
+        fs.rmSync(linkedTarget, { force: true });
+        linkedFilesRemoved++;
+      }
+    }
+    removeManifestEntry(clientRoot, registryEntry.linkedModId);
+    removeFromRegistry(clientRoot, registryEntry.linkedModId);
+  }
+
   removeFromRegistry(clientRoot, mod.id);
-  return { success: true, message: "Mod removido." };
+  return {
+    success: true,
+    message:
+      linkedFilesRemoved > 0
+        ? `Mod removido (e ${linkedFilesRemoved} arquivo(s) que vieram junto).`
+        : "Mod removido."
+  };
 }
 
 // --- Helpers de sistema de arquivos ---

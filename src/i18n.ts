@@ -452,6 +452,10 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   { pattern: /^Mod habilitado\.$/, en: () => "Mod enabled." },
   { pattern: /^Entrada removida da lista \(nenhum arquivo rastreado\)\.$/, en: () => "Entry removed from the list (no tracked files)." },
   { pattern: /^Mod removido\.$/, en: () => "Mod removed." },
+  {
+    pattern: /^Mod removido \(e (\d+) arquivo\(s\) que vieram junto\)\.$/,
+    en: (m) => `Mod removed (along with ${m[1]} file(s) that came with it).`
+  },
   { pattern: /^Pasta de server mods não existe\.$/, en: () => "Server mods folder doesn't exist." },
   { pattern: /^Ordem de carregamento atualizada\.$/, en: () => "Load order updated." },
   { pattern: /^Falha ao verificar atualizações\.$/, en: () => "Failed to check for updates." },
