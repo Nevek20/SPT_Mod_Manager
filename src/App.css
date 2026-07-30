@@ -161,7 +161,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .app {
-  padding: 22px 30px 40px;
+  /* O respiro extra embaixo garante que o último mod da lista não fique escondido
+     atrás da barra de seleção, que flutua fixa no rodapé. */
+  padding: 22px 30px 90px;
   position: relative;
   min-height: 100vh;
 }
@@ -299,17 +301,39 @@ header h1 {
   font-size: 12.5px;
 }
 
+/* Barra de seleção em massa: FIXA no rodapé, centralizada.
+   Antes era um elemento no fluxo normal, então aparecer/sumir empurrava a lista
+   inteira pra baixo e pra cima — mexia no layout bem no momento em que a pessoa
+   está mirando um checkbox. Sendo fixa, ela flutua sobre o conteúdo e nada se move.
+   z-index abaixo das modais (1000) e do banner de atualização (950), acima da lista. */
 .bulk-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 880;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  background: var(--accent-wash);
+  gap: 18px;
+  max-width: calc(100vw - 380px); /* deixa espaço pro painel de downloads, à direita */
+  background: #6B4E36;
   border: 1px solid var(--accent);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 9px 14px;
-  margin-bottom: 16px;
+  border-radius: var(--radius-lg);
+  padding: 10px 16px;
   font-size: 13px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: bulk-bar-in 0.14s ease-out;
+}
+
+@keyframes bulk-bar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 .bulk-actions {
@@ -985,7 +1009,7 @@ h2 {
 }
 
 /* ==========================================================================
-   Banner de atualização do app - eu odeio CSS|I hate CSS
+   Banner de atualização do app
    ========================================================================== */
 
 .update-banner {
