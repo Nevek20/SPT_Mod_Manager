@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     return () => ipcRenderer.removeListener("forge-check-progress", handler);
   },
   openReleasePage: (url: string) => ipcRenderer.invoke("open-release-page", url),
+  findForgeDownloadsForNames: (names: string[]) => ipcRenderer.invoke("find-forge-downloads-for-names", names),
   findForgeDownloadForName: (name: string, sptVersion?: string) =>
     ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),
   installForgeMod: (

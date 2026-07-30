@@ -24,7 +24,7 @@ interface Toast {
 type TypeFilter = "all" | ModType;
 type StatusFilter = "all" | "enabled" | "disabled";
 type OriginFilter = "all" | "manual" | "manager";
-type SortField = "name" | "type" | "status" | "origin" | "installedAt";
+type SortField = "name" | "status" | "origin" | "installedAt" | "forge";
 type SortDirection = "asc" | "desc";
 
 function selectionKey(mod: ModInfo): string {
@@ -120,6 +120,7 @@ export default function App() {
   // Checagem de atualização do próprio app — roda uma vez na abertura. Só notifica;
   // baixar/instalar continua sendo decisão (e ação) da pessoa, no navegador.
   const [forgeProgress, setForgeProgress] = useState<{ done: number; total: number } | null>(null);
+  const [lookupInProgress, setLookupInProgress] = useState(false);
   useEffect(() => {
     const unsubscribe = window.modManagerAPI.onForgeCheckProgress(setForgeProgress);
     return unsubscribe;
@@ -208,30 +209,53 @@ export default function App() {
       return true;
     });
 
+    // Comparação natural: "Mod 10" depois de "Mod 2" (e não antes, como daria a
+    // comparação de texto pura), e sem diferenciar maiúscula de minúscula — senão
+    // "Zebra" vinha antes de "apple".
+    const byName = (a: ModInfo, b: ModInfo) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+
+    // Quem precisa de ação primeiro: atualização disponível > bloqueada >
+    // incompatível > só informativo > sem status conhecido.
+    const forgeRank = (mod: ModInfo) => {
+      const status = forgeStatusByName.get(mod.name)?.status;
+      return status === "update" ? 0 : status === "blocked" ? 1 : status === "incompatible" ? 2 : status === "info" ? 3 : 4;
+    };
+
     const sorted = [...filtered].sort((a, b) => {
+      // Mods sem data de instalação (os instalados por fora do app) não têm onde
+      // se encaixar numa ordem cronológica — vão sempre pro fim, nos dois sentidos,
+      // em vez de fingir que são os "mais antigos".
+      if (sortField === "installedAt") {
+        const da = a.installedAt ?? "";
+        const db = b.installedAt ?? "";
+        if (!da !== !db) return da ? -1 : 1;
+        if (!da && !db) return byName(a, b);
+      }
+
       let cmp = 0;
       switch (sortField) {
         case "name":
-          cmp = a.name.localeCompare(b.name);
-          break;
-        case "type":
-          cmp = a.type.localeCompare(b.type) || a.name.localeCompare(b.name);
+          cmp = byName(a, b);
           break;
         case "status":
-          cmp = Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name);
+          cmp = Number(b.enabled) - Number(a.enabled) || byName(a, b);
           break;
         case "origin":
-          cmp = Number(a.installedManually) - Number(b.installedManually) || a.name.localeCompare(b.name);
+          cmp = Number(a.installedManually) - Number(b.installedManually) || byName(a, b);
           break;
         case "installedAt":
-          cmp = (a.installedAt ?? "").localeCompare(b.installedAt ?? "") || a.name.localeCompare(b.name);
+          cmp = (a.installedAt ?? "").localeCompare(b.installedAt ?? "") || byName(a, b);
+          break;
+        case "forge":
+          cmp = forgeRank(a) - forgeRank(b) || byName(a, b);
           break;
       }
       return sortDirection === "asc" ? cmp : -cmp;
     });
 
     return sorted;
-  }, [mods, searchQuery, typeFilter, statusFilter, originFilter, sortField, sortDirection]);
+  }, [mods, searchQuery, typeFilter, statusFilter, originFilter, sortField, sortDirection, forgeStatusByName]);
 
   const filtersActive = searchQuery.trim() !== "" || typeFilter !== "all" || statusFilter !== "all" || originFilter !== "all";
 
@@ -464,15 +488,30 @@ export default function App() {
       const wantsDownload = window.confirm(t("restore.confirmDownload", { count: missing.length }));
       if (wantsDownload) {
         const previousKeys = new Set(mods.map(selectionKey));
+
+        // A fila inteira aparece ANTES de qualquer requisição. Sem isso, restaurar uma
+        // lista grande ficava minutos sem sinal nenhum na tela (os itens só entravam na
+        // fila depois que a busca daquele mod tinha dado certo), e parecia travado.
+        const queueIdByName = new Map<string, string>();
+        for (const name of missing) queueIdByName.set(name, pushQueueItem(name));
+
+        // Uma busca em lote pra todos os mods, em vez de uma por mod: divide o mesmo
+        // orçamento de requisições e desiste junto se a Forge começar a limitar.
+        setLookupInProgress(true);
+        const found = await window.modManagerAPI.findForgeDownloadsForNames(missing);
+        setLookupInProgress(false);
+        setForgeProgress(null);
+
         let installedCount = 0;
         const problems: string[] = [];
         for (const name of missing) {
-          const lookup = await window.modManagerAPI.findForgeDownloadForName(name, sptVersionInput.trim() || undefined);
-          if (!lookup.found || !lookup.downloadLink) {
+          const queueId = queueIdByName.get(name)!;
+          const lookup = found[name];
+          if (!lookup) {
+            markQueueDone(queueId, false, t("restore.notFoundOnForge"));
             problems.push(name);
             continue;
           }
-          const queueId = pushQueueItem(lookup.forgeName ?? name);
           markQueueActive(queueId);
           const installResult = await installArchiveWithConfirmFlow(
             window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
@@ -487,7 +526,11 @@ export default function App() {
         pushToast(
           problems.length === 0
             ? t("restore.allInstalled", { count: installedCount })
-            : t("restore.partialInstalled", { installed: installedCount, notFound: problems.join(", ") }),
+            : t("restore.partialInstalled", {
+                installed: installedCount,
+                // Numa lista grande, despejar 100+ nomes num toast não ajuda ninguém.
+                notFound: problems.slice(0, 5).join(", ") + (problems.length > 5 ? t("restore.andMore", { count: problems.length - 5 }) : "")
+              }),
           problems.length === 0
         );
         if (installedCount > 0) {
@@ -787,6 +830,13 @@ export default function App() {
 
       {downloadQueue.length > 0 && (
         <div className="download-queue-panel">
+          {lookupInProgress && (
+            <div className="download-queue-item queue-lookup-line">
+              {forgeProgress
+                ? t("restore.lookingUpProgress", { done: forgeProgress.done, total: forgeProgress.total })
+                : t("restore.lookingUp")}
+            </div>
+          )}
           {downloadQueue.map((item) => {
             const hasProgress = (item.totalBytes ?? 0) > 0;
             const pct = hasProgress ? Math.min(100, Math.round(((item.receivedBytes ?? 0) / item.totalBytes!) * 100)) : null;
@@ -915,13 +965,25 @@ export default function App() {
 
             <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)} title={t("filters.sortFieldTitle")}>
               <option value="name">{t("filters.sortByName")}</option>
-              <option value="type">{t("filters.sortByType")}</option>
               <option value="status">{t("filters.sortByStatus")}</option>
               <option value="origin">{t("filters.sortByOrigin")}</option>
               <option value="installedAt">{t("filters.sortByInstalledAt")}</option>
+              <option value="forge">{t("filters.sortByForge")}</option>
             </select>
             <button onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))} title={t("filters.sortDirectionTitle")}>
-              {sortDirection === "asc" ? t("filters.sortAsc") : t("filters.sortDesc")}
+              {t(
+                sortField === "installedAt"
+                  ? sortDirection === "asc"
+                    ? "filters.sortOldestFirst"
+                    : "filters.sortNewestFirst"
+                  : sortField === "name"
+                    ? sortDirection === "asc"
+                      ? "filters.sortAZ"
+                      : "filters.sortZA"
+                    : sortDirection === "asc"
+                      ? "filters.sortAsc"
+                      : "filters.sortDesc"
+              )}
             </button>
 
             <span className="filter-separator" />
@@ -975,9 +1037,6 @@ export default function App() {
             </p>
           )}
 
-          {sortField !== "name" && (
-            <p className="sort-hint">{t("hint.sortOrderNote")}</p>
-          )}
 
           {compareResult && (
             <div className="compare-panel">

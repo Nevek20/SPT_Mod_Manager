@@ -21,6 +21,7 @@ import {
   getForgeCategories,
   installForgeModVersion,
   findForgeDownloadForName,
+  findForgeDownloadsForNames,
   checkAppUpdate,
   finalizeUnrecognizedInstall,
   discardPendingInstall
@@ -200,6 +201,16 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
     return { success: true };
   }
   return { success: false };
+});
+
+ipcMain.handle("find-forge-downloads-for-names", async (_event, names: string[]) => {
+  try {
+    return await findForgeDownloadsForNames(names, (done, total) => {
+      mainWindow?.webContents.send("forge-check-progress", { done, total });
+    });
+  } catch {
+    return {};
+  }
 });
 
 ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptVersion?: string) => {

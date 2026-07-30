@@ -146,6 +146,9 @@ export interface ModManagerAPI {
   checkAppUpdate: () => Promise<AppUpdateInfo>;
   onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
+  findForgeDownloadsForNames: (
+    names: string[]
+  ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>>;
   findForgeDownloadForName: (
     name: string,
     sptVersion?: string

@@ -1679,9 +1679,10 @@ interface ForgeBudget {
 }
 
 function newForgeBudget(modCount: number): ForgeBudget {
-  // ~4 tentativas por mod, com piso e teto — o suficiente pras estratégias, sem
-  // deixar uma instância gigante rodar por muitos minutos.
-  return { remaining: Math.min(Math.max(modCount * 4, 20), 160), rateLimitHits: 0, aborted: false };
+  // ~4 tentativas por mod (uma por estratégia), com piso e teto. O teto antigo de 160
+  // truncava em silêncio quem tem instalação grande: com 118 mods, a busca parava na
+  // metade e o resto era reportado como "não encontrado" sem nunca ter sido consultado.
+  return { remaining: Math.min(Math.max(modCount * 4, 20), 700), rateLimitHits: 0, aborted: false };
 }
 
 /**
@@ -1769,7 +1770,13 @@ export async function matchForgeMods(
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
   let progressDone = 0;
-  const reportProgress = () => onProgress?.(Math.min(++progressDone, folderNames.length), folderNames.length);
+  // O progresso conta cada tentativa (mod x estratégia), não só o primeiro passo — antes
+  // o contador chegava ao total já no passo 1 e depois ficava parado durante os outros
+  // três, que é onde a maior parte do tempo passa numa lista grande.
+  // O total é o teto (4 estratégias por mod); se tudo resolver antes, a operação
+  // simplesmente termina mais cedo.
+  const progressTotal = folderNames.length * 4;
+  const reportProgress = () => onProgress?.(Math.min(++progressDone, progressTotal), progressTotal);
   const candidatesByName = new Map<string, MatchCandidates>();
   for (const folderName of folderNames) {
     candidatesByName.set(folderName, buildMatchCandidates(folderName));
@@ -1814,6 +1821,7 @@ export async function matchForgeMods(
   for (const [folderName, cand] of candidatesByName) {
     if (matched.has(folderName)) continue;
     if (budget.aborted) break;
+    reportProgress();
     for (const name of cand.strictNames) {
       const hits = await fetchForgeByFuzzyFilter("name", name, budget);
       const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
@@ -1829,6 +1837,7 @@ export async function matchForgeMods(
   for (const [folderName, cand] of candidatesByName) {
     if (matched.has(folderName)) continue;
     if (budget.aborted) break;
+    reportProgress();
     for (const slug of cand.looseSlugs) {
       const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
       const hit = hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
@@ -1845,6 +1854,7 @@ export async function matchForgeMods(
     if (matched.has(folderName)) continue;
     const term = cand.looseNames[0] ?? cand.strictNames[0];
     if (!term) continue;
+    reportProgress();
     const url = new URL(`${FORGE_API_BASE}/mods`);
     url.searchParams.set("query", term);
     url.searchParams.set("per_page", "5");
@@ -1892,6 +1902,30 @@ async function findForgeModInfo(
 // Acha, pelo nome (o mesmo casamento exato usado na checagem de atualização), o link de
 // download da versão mais recente de um mod na Forge — usado pra "restaurar" uma modlist
 // importada baixando automaticamente o que estiver faltando.
+/**
+ * Versão em LOTE da busca por link de download, usada pra restaurar uma modlist.
+ *
+ * Antes o restaurador chamava findForgeDownloadForName uma vez por mod. Cada chamada
+ * criava um orçamento NOVO, então a proteção de "desistir depois de 3 respostas 429"
+ * reiniciava a cada mod: bastava a API começar a limitar pra que cada um dos 118 mods
+ * esperasse o Retry-After (até 35s) por conta própria. Compartilhando um orçamento só,
+ * a operação inteira desiste junto e termina em tempo previsível.
+ */
+export async function findForgeDownloadsForNames(
+  names: string[],
+  onProgress?: (done: number, total: number) => void
+): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>> {
+  const matches = await matchForgeMods(names, onProgress);
+  const out: Record<string, { downloadLink: string; version?: string; forgeName?: string }> = {};
+  for (const name of names) {
+    const info = matches.get(name);
+    if (info?.latestVersionLink) {
+      out[name] = { downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
+    }
+  }
+  return out;
+}
+
 export async function findForgeDownloadForName(
   name: string,
   sptVersion?: string
