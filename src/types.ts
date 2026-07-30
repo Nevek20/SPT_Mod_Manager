@@ -122,7 +122,12 @@ export interface ModManagerAPI {
   renameMod: (modId: string, alias: string) => Promise<{ success: boolean; message: string }>;
   openModFolder: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   exportModList: () => Promise<{ success: boolean; message: string }>;
-  importModList: () => Promise<{ success: boolean; message: string; comparison?: ModListComparison }>;
+  importModList: () => Promise<{
+    success: boolean;
+    message: string;
+    comparison?: ModListComparison;
+    guidByName?: Record<string, string>;
+  }>;
   getSptVersion: () => Promise<string | undefined>;
   detectConflicts: () => Promise<ConflictReport>;
   getSptSemver: () => Promise<string | undefined>;
@@ -147,7 +152,7 @@ export interface ModManagerAPI {
   onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   findForgeDownloadsForNames: (
-    names: string[]
+    entries: { name: string; guid?: string }[]
   ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>>;
   findForgeDownloadForName: (
     name: string,

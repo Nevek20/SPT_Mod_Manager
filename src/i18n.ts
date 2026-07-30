@@ -197,8 +197,7 @@ const pt: Dict = {
   "restore.confirmDisable": "{count} mod(s) instalado(s) não estão na lista importada. Desativar esses mods?",
   "restore.disabledCount": "{count} mod(s) desativado(s).",
   "restore.lookingUp": "Procurando os mods na Forge...",
-  "restore.lookingUpProgress": "Procurando na Forge... ({done}/{total})",
-  "restore.notFoundOnForge": "Não encontrado na Forge",
+  "restore.installingProgress": "Instalando mods... ({done}/{total})",
   "restore.andMore": " e mais {count}",
 
   "update.available": "Nova versão do Mod Manager disponível: v{latest} (você está na v{current}).",
@@ -398,8 +397,7 @@ const en: Dict = {
   "restore.confirmDisable": "{count} installed mod(s) aren't in the imported list. Disable those mods?",
   "restore.disabledCount": "{count} mod(s) disabled.",
   "restore.lookingUp": "Looking the mods up on Forge...",
-  "restore.lookingUpProgress": "Looking up on Forge... ({done}/{total})",
-  "restore.notFoundOnForge": "Not found on Forge",
+  "restore.installingProgress": "Installing mods... ({done}/{total})",
   "restore.andMore": " and {count} more",
 
   "update.available": "New Mod Manager version available: v{latest} (you're on v{current}).",

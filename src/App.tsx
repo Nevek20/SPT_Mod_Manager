@@ -121,6 +121,7 @@ export default function App() {
   // baixar/instalar continua sendo decisão (e ação) da pessoa, no navegador.
   const [forgeProgress, setForgeProgress] = useState<{ done: number; total: number } | null>(null);
   const [lookupInProgress, setLookupInProgress] = useState(false);
+  const [installProgress, setInstallProgress] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     const unsubscribe = window.modManagerAPI.onForgeCheckProgress(setForgeProgress);
     return unsubscribe;
@@ -489,29 +490,33 @@ export default function App() {
       if (wantsDownload) {
         const previousKeys = new Set(mods.map(selectionKey));
 
-        // A fila inteira aparece ANTES de qualquer requisição. Sem isso, restaurar uma
-        // lista grande ficava minutos sem sinal nenhum na tela (os itens só entravam na
-        // fila depois que a busca daquele mod tinha dado certo), e parecia travado.
-        const queueIdByName = new Map<string, string>();
-        for (const name of missing) queueIdByName.set(name, pushQueueItem(name));
+        // A lista exportada guarda o nome da pasta, e nomes podem repetir entre um mod
+        // de servidor e um de cliente (ex: "Wedge" nos dois lados). Sem remover as
+        // repetições, o mesmo mod era baixado duas vezes.
+        const targets = [...new Set(missing)];
 
-        // Uma busca em lote pra todos os mods, em vez de uma por mod: divide o mesmo
-        // orçamento de requisições e desiste junto se a Forge começar a limitar.
+        // Fase 1: uma busca em lote pra todos, com um cartão de resumo só. Encher a fila
+        // com um item por mod parecia informativo, mas com 118 mods empurrava justamente
+        // a linha de progresso pra fora da área visível do painel.
         setLookupInProgress(true);
-        const found = await window.modManagerAPI.findForgeDownloadsForNames(missing);
+        const guidByName = result.guidByName ?? {};
+        const found = await window.modManagerAPI.findForgeDownloadsForNames(
+          targets.map((name) => ({ name, guid: guidByName[name] }))
+        );
         setLookupInProgress(false);
         setForgeProgress(null);
 
+        // Fase 2: instala só o que foi encontrado, um de cada vez, com contagem visível.
+        const installable = targets.filter((name) => found[name]);
+        const notFound = targets.filter((name) => !found[name]);
         let installedCount = 0;
-        const problems: string[] = [];
-        for (const name of missing) {
-          const queueId = queueIdByName.get(name)!;
-          const lookup = found[name];
-          if (!lookup) {
-            markQueueDone(queueId, false, t("restore.notFoundOnForge"));
-            problems.push(name);
-            continue;
-          }
+        const failed: string[] = [];
+
+        for (let i = 0; i < installable.length; i++) {
+          const name = installable[i];
+          const lookup = found[name]!;
+          setInstallProgress({ done: i + 1, total: installable.length });
+          const queueId = pushQueueItem(lookup.forgeName ?? name);
           markQueueActive(queueId);
           const installResult = await installArchiveWithConfirmFlow(
             window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
@@ -521,15 +526,20 @@ export default function App() {
           );
           markQueueDone(queueId, installResult.success, tMsg(installResult.message));
           if (installResult.success) installedCount++;
-          else problems.push(name);
+          else failed.push(name);
         }
+        setInstallProgress(null);
+
+        const problems = [...notFound, ...failed];
         pushToast(
           problems.length === 0
             ? t("restore.allInstalled", { count: installedCount })
             : t("restore.partialInstalled", {
                 installed: installedCount,
                 // Numa lista grande, despejar 100+ nomes num toast não ajuda ninguém.
-                notFound: problems.slice(0, 5).join(", ") + (problems.length > 5 ? t("restore.andMore", { count: problems.length - 5 }) : "")
+                notFound:
+                  problems.slice(0, 5).join(", ") +
+                  (problems.length > 5 ? t("restore.andMore", { count: problems.length - 5 }) : "")
               }),
           problems.length === 0
         );
@@ -831,10 +841,34 @@ export default function App() {
       {downloadQueue.length > 0 && (
         <div className="download-queue-panel">
           {lookupInProgress && (
-            <div className="download-queue-item queue-lookup-line">
-              {forgeProgress
-                ? t("restore.lookingUpProgress", { done: forgeProgress.done, total: forgeProgress.total })
-                : t("restore.lookingUp")}
+            <div className="download-queue-item queue-summary-card">
+              <div className="queue-item-name">{t("restore.lookingUp")}</div>
+              {forgeProgress && forgeProgress.total > 0 && (
+                <>
+                  <div className="queue-progress-track">
+                    <div
+                      className="queue-progress-fill"
+                      style={{ width: `${Math.round((forgeProgress.done / forgeProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="queue-item-status">
+                    {Math.round((forgeProgress.done / forgeProgress.total) * 100)}%
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {installProgress && (
+            <div className="download-queue-item queue-summary-card">
+              <div className="queue-item-name">
+                {t("restore.installingProgress", { done: installProgress.done, total: installProgress.total })}
+              </div>
+              <div className="queue-progress-track">
+                <div
+                  className="queue-progress-fill"
+                  style={{ width: `${Math.round((installProgress.done / installProgress.total) * 100)}%` }}
+                />
+              </div>
             </div>
           )}
           {downloadQueue.map((item) => {

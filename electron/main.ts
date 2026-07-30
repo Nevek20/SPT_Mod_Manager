@@ -203,9 +203,9 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   return { success: false };
 });
 
-ipcMain.handle("find-forge-downloads-for-names", async (_event, names: string[]) => {
+ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string }[]) => {
   try {
-    return await findForgeDownloadsForNames(names, (done, total) => {
+    return await findForgeDownloadsForNames(entries, (done, total) => {
       mainWindow?.webContents.send("forge-check-progress", { done, total });
     });
   } catch {
@@ -350,11 +350,20 @@ ipcMain.handle("import-mod-list", async () => {
     if (names.length === 0) {
       return { success: false, message: "Esse arquivo não parece uma lista de mods exportada por este app." };
     }
+    // Repassa os GUIDs da lista (quando existirem) pra que a restauração case por
+    // identificador exato em vez de tentar adivinhar pelo nome da pasta.
+    const guidByName: Record<string, string> = {};
+    for (const entry of parsed.mods as { name?: string; guid?: string }[]) {
+      if (typeof entry?.name === "string" && typeof entry?.guid === "string") {
+        guidByName[entry.name] = entry.guid;
+      }
+    }
     const comparison = compareModList(sptPath, getServerRoot()!, names);
     return {
       success: true,
       message: `Comparado com ${names.length} mod(s) da lista importada.`,
-      comparison
+      comparison,
+      guidByName
     };
   } catch (err) {
     return { success: false, message: "Erro ao ler o arquivo: " + (err as Error).message };

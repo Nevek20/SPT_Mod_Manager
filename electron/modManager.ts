@@ -230,6 +230,23 @@ const CLIENT_PLUGINS_DISABLED_DIR = ["BepInEx", "plugins.disabled"];
  */
 const PROTECTED_CLIENT_PLUGIN_NAMES = new Set(["spt", "spt-core.dll"]);
 
+/**
+ * Muitos client mods se instalam como "plugins/Mod.dll" + "plugins/Mod/" (a pasta com
+ * config, assets, etc). A pasta não é um mod — é dado do plugin. Sem isso, ela aparecia
+ * como uma segunda entrada com o mesmo nome e sem metadado nenhum, poluindo a lista e
+ * a modlist exportada.
+ */
+function listCompanionFolderNames(dir: string): Set<string> {
+  if (!fs.existsSync(dir)) return new Set();
+  const looseDllBases = new Set<string>();
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".dll")) {
+      looseDllBases.add(entry.name.slice(0, -4).toLowerCase());
+    }
+  }
+  return looseDllBases;
+}
+
 function isProtectedClientEntry(name: string): boolean {
   return PROTECTED_CLIENT_PLUGIN_NAMES.has(name.toLowerCase());
 }
@@ -391,24 +408,26 @@ function parseServerModMetadata(utf16: string[]): DllModMetadata | null {
  * Esse formato não tem campo de autor — deixamos vazio em vez de inventar.
  */
 function parseClientModMetadata(ascii: string[]): DllModMetadata | null {
+  // Coleta TODOS os blocos (guid, nome, versão) plausíveis e fica com o de GUID mais
+  // "qualificado" (mais segmentos de domínio invertido).
+  //
+  // Exigir 3+ segmentos, como antes, servia pra pular um bloco falso que alguns
+  // assemblies carregam antes do verdadeiro — mas descartava GUID legítimo de 2
+  // segmentos ("Kat.BetterAmmoLoadingList", "Tosox.DynamicItemWeights"), e esses mods
+  // ficavam sem versão nenhuma na lista. Escolher o mais qualificado resolve os dois:
+  // no IcyClawz, o falso tem 2 segmentos e o real tem 3, então o real ganha.
+  const candidates: { meta: DllModMetadata; segments: number }[] = [];
   for (let i = 0; i < ascii.length - 2; i++) {
     const value = ascii[i];
-    // GUID de BepInPlugin é reverse-domain com 3+ segmentos ("com.autor.mod",
-    // "xyz.drakia.bigbrain"). Exigir 3 segmentos serve pra dois fins: descarta
-    // namespace do próprio assembly ("DrakiaXYZ.BigBrain") e evita um bloco falso
-    // que aparece antes do verdadeiro em alguns mods (ex: "IcyClawz.ItemAttributeFix"
-    // seguido de "Release" + "1.7.0.0", que não é o BepInPlugin de verdade).
-    // NÃO dá pra exigir minúsculo: existem GUIDs em PascalCase de verdade, como
-    // "com.IcyClawz.ItemAttributeFix" e "com.kmyuhkyuk.KmyTarkovApi".
-    if (value.split(".").length < 3) continue;
     if (!looksLikeModGuid(value)) continue;
     const name = ascii[i + 1];
     const version = ascii[i + 2];
-    if (looksLikeModName(name) && DLL_VERSION_RE.test(version)) {
-      return { guid: value, name, version };
-    }
+    if (!looksLikeModName(name) || !DLL_VERSION_RE.test(version)) continue;
+    candidates.push({ meta: { guid: value, name, version }, segments: value.split(".").length });
   }
-  return null;
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.segments - a.segments);
+  return candidates[0].meta;
 }
 
 export function parseModMetadataFromStrings(utf16: string[], ascii: string[] = []): DllModMetadata {
@@ -696,7 +715,10 @@ export function exportModListData(clientRoot: string, serverRoot: string) {
       type: m.type,
       enabled: m.enabled,
       version: m.version,
-      author: m.author
+      author: m.author,
+      // O GUID é o que permite restaurar a lista por identificador exato depois, em vez
+      // de tentar adivinhar pelo nome da pasta (que quase nunca é igual ao nome na Forge).
+      guid: m.guid
     }))
   };
 }
@@ -856,8 +878,11 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   // Client mods (ativos) — plugins soltos (.dll) ou em subpastas
   const clientDir = p(clientRoot, CLIENT_PLUGINS_DIR);
   if (fs.existsSync(clientDir)) {
+    const companions = listCompanionFolderNames(clientDir);
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
       if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
+      // pasta de dados de um .dll solto de mesmo nome: pertence a ele, não é mod à parte
+      if (entry.isDirectory() && companions.has(entry.name.toLowerCase())) continue;
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
         pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", true, 0, path.join(clientDir, entry.name));
       }
@@ -867,8 +892,11 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   // Client mods (desabilitados)
   const clientDisabledDir = p(clientRoot, CLIENT_PLUGINS_DISABLED_DIR);
   if (fs.existsSync(clientDisabledDir)) {
+    const companions = listCompanionFolderNames(clientDisabledDir);
     for (const entry of fs.readdirSync(clientDisabledDir, { withFileTypes: true })) {
       if (isProtectedClientEntry(entry.name)) continue; // core da própria SPT — nunca é um mod
+      // pasta de dados de um .dll solto de mesmo nome: pertence a ele, não é mod à parte
+      if (entry.isDirectory() && companions.has(entry.name.toLowerCase())) continue;
       if (entry.name.endsWith(".dll") || entry.isDirectory()) {
         pushMod(entry.name, entry.name.replace(/\.dll$/i, ""), "client", false, 0, path.join(clientDisabledDir, entry.name));
       }
@@ -1275,6 +1303,18 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
     return { success: false, message: "Arquivo/pasta do mod não encontrado: " + from };
   }
   fs.renameSync(from, to);
+
+  // A pasta de dados que acompanha um .dll solto precisa acompanhar o habilitar/
+  // desabilitar também — senão o plugin é movido e os dados dele ficam pra trás.
+  if (!isServer && mod.id.toLowerCase().endsWith(".dll")) {
+    const baseName = mod.id.slice(0, -4);
+    const companionFrom = path.join(mod.enabled ? activeDir : disabledDir, baseName);
+    const companionTo = path.join(mod.enabled ? disabledDir : activeDir, baseName);
+    if (fs.existsSync(companionFrom) && fs.statSync(companionFrom).isDirectory() && !fs.existsSync(companionTo)) {
+      fs.renameSync(companionFrom, companionTo);
+    }
+  }
+
   return { success: true, message: mod.enabled ? "Mod desabilitado." : "Mod habilitado." };
 }
 
@@ -1318,6 +1358,15 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
     return { success: false, message: "Mod não encontrado: " + target };
   }
   fs.rmSync(target, { recursive: true, force: true });
+
+  // Client mod solto (.dll) costuma ter uma pasta de dados de mesmo nome ao lado —
+  // ela não é listada como mod (é dado dele), então precisa sair junto.
+  if (!isServer && mod.id.toLowerCase().endsWith(".dll")) {
+    const companion = path.join(dir, mod.id.slice(0, -4));
+    if (fs.existsSync(companion) && fs.statSync(companion).isDirectory()) {
+      fs.rmSync(companion, { recursive: true, force: true });
+    }
+  }
 
   // Remove também os arquivos soltos que vieram no mesmo arquivo desse mod. Eles
   // não aparecem como item separado na lista (ver scanMods), então precisam sair
@@ -1912,12 +1961,17 @@ async function findForgeModInfo(
  * a operação inteira desiste junto e termina em tempo previsível.
  */
 export async function findForgeDownloadsForNames(
-  names: string[],
+  entries: { name: string; guid?: string }[],
   onProgress?: (done: number, total: number) => void
 ): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>> {
-  const matches = await matchForgeMods(names, onProgress);
+  // Quando a lista exportada traz o GUID, o casamento é exato e resolvido em lote —
+  // sem adivinhação por nome. Listas antigas (sem GUID) continuam funcionando pelo nome.
+  const matches = await matchForgeMods(
+    entries.map((e) => ({ folderName: e.name, guid: e.guid })),
+    onProgress
+  );
   const out: Record<string, { downloadLink: string; version?: string; forgeName?: string }> = {};
-  for (const name of names) {
+  for (const { name } of entries) {
     const info = matches.get(name);
     if (info?.latestVersionLink) {
       out[name] = { downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
