@@ -1824,8 +1824,14 @@ export async function matchForgeMods(
   // três, que é onde a maior parte do tempo passa numa lista grande.
   // O total é o teto (4 estratégias por mod); se tudo resolver antes, a operação
   // simplesmente termina mais cedo.
-  const progressTotal = folderNames.length * 4;
-  const reportProgress = () => onProgress?.(Math.min(++progressDone, progressTotal), progressTotal);
+  // O progresso conta MODS RESOLVIDOS, não tentativas. Contar tentativas dava um total
+  // de "mods x 4 estratégias" (552 pra 136 mods), que na tela parecia uma quantidade
+  // absurda de mods — e escondia o fato de que, com GUID, a maioria resolve de primeira,
+  // numa requisição em lote só. Um mod conta como pronto quando casa, ou quando esgota
+  // todas as estratégias.
+  let exhausted = 0;
+  const reportProgress = () =>
+    onProgress?.(Math.min(matched.size + exhausted, folderNames.length), folderNames.length);
   const candidatesByName = new Map<string, MatchCandidates>();
   for (const folderName of folderNames) {
     candidatesByName.set(folderName, buildMatchCandidates(folderName));
@@ -1845,6 +1851,7 @@ export async function matchForgeMods(
       const hit = byGuid.get(String(entry.guid).toLowerCase());
       if (hit) matched.set(entry.folderName, toForgeMatch(hit, "exact"));
     }
+    reportProgress(); // com GUID, a maioria já fica pronta aqui
   }
 
   // --- Passo 1: slug (fuzzy, uma requisição por candidato, resultado verificado) ---
@@ -1913,7 +1920,14 @@ export async function matchForgeMods(
     const json = await forgeFetchJson(url.toString(), budget);
     const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
     if (hit) matched.set(folderName, toForgeMatch(hit, "derived"));
+    else exhausted++; // última estratégia: esse mod não será mais tentado
+    reportProgress();
   }
+
+  // Fecha o progresso: se o orçamento foi interrompido, sobram mods que não foram nem
+  // casados nem esgotados — a operação acabou de qualquer forma.
+  exhausted = folderNames.length - matched.size;
+  reportProgress();
 
   return matched;
 }
@@ -2070,13 +2084,22 @@ export async function checkForgeUpdates(
 
   return {
     sptVersionUsed: data.spt_version || trimmedVersion,
-    updates: (data.updates || []).map((u: any) => ({
-      name: nameFor(u.current_version?.guid, u.current_version?.name),
-      currentVersion: u.current_version?.version,
-      recommendedVersion: u.recommended_version?.version,
-      downloadLink: u.recommended_version?.link,
-      reason: u.update_reason
-    })),
+    updates: (data.updates || [])
+      .map((u: any) => ({
+        name: nameFor(u.current_version?.guid, u.current_version?.name),
+        currentVersion: u.current_version?.version,
+        recommendedVersion: u.recommended_version?.version,
+        downloadLink: u.recommended_version?.link,
+        reason: u.update_reason
+      }))
+      // A Forge às vezes devolve como "atualização" uma versão igual à instalada (por
+      // exemplo, o mesmo número publicado para outra versão do SPT). Anunciar
+      // "v1.2.6 disponível" pra quem já está na v1.2.6 é ruído: se o número é o mesmo,
+      // não há o que atualizar.
+      .filter((u: { currentVersion?: string; recommendedVersion?: string }) => {
+        const norm = (v?: string) => (v ?? "").trim().replace(/^v/i, "");
+        return !norm(u.recommendedVersion) || norm(u.recommendedVersion) !== norm(u.currentVersion);
+      }),
     blocked: (data.blocked_updates || []).map((b: any) => ({
       name: nameFor(b.current_version?.guid, b.current_version?.name),
       currentVersion: b.current_version?.version,

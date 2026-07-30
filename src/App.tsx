@@ -678,6 +678,28 @@ export default function App() {
     setSelectedVersionByModId((prev) => new Map(prev).set(modId, versionId));
   }
 
+  const [updatingModName, setUpdatingModName] = useState<string | null>(null);
+
+  // Atualiza sem sair do app: o link do resultado é o download direto da versão
+  // recomendada, então dá pra passar pelo mesmo instalador usado na busca da Forge —
+  // em vez de abrir o navegador e deixar o .zip no Downloads pra instalar na mão.
+  async function handleInstallUpdate(modName: string, downloadLink: string, version?: string) {
+    setUpdatingModName(modName);
+    const previousKeys = new Set(mods.map(selectionKey));
+    const queueId = pushQueueItem(modName);
+    markQueueActive(queueId);
+    const result = await installArchiveWithConfirmFlow(
+      window.modManagerAPI.installForgeMod(queueId, downloadLink, modName, { name: modName, version })
+    );
+    markQueueDone(queueId, result.success, tMsg(result.message));
+    setUpdatingModName(null);
+    pushToast(tMsg(result.message), result.success);
+    if (result.success) {
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+    }
+  }
+
   async function handleInstallFromForge(mod: ForgeCatalogMod) {
     const versionId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
     const version = mod.versions.find((v) => v.id === versionId) ?? mod.versions[0];
@@ -842,7 +864,11 @@ export default function App() {
         <div className="download-queue-panel">
           {lookupInProgress && (
             <div className="download-queue-item queue-summary-card">
-              <div className="queue-item-name">{t("restore.lookingUp")}</div>
+              <div className="queue-item-name">
+                {forgeProgress && forgeProgress.total > 0
+                  ? t("restore.lookingUpCount", { done: forgeProgress.done, total: forgeProgress.total })
+                  : t("restore.lookingUp")}
+              </div>
               {forgeProgress && forgeProgress.total > 0 && (
                 <>
                   <div className="queue-progress-track">
@@ -850,9 +876,6 @@ export default function App() {
                       className="queue-progress-fill"
                       style={{ width: `${Math.round((forgeProgress.done / forgeProgress.total) * 100)}%` }}
                     />
-                  </div>
-                  <div className="queue-item-status">
-                    {Math.round((forgeProgress.done / forgeProgress.total) * 100)}%
                   </div>
                 </>
               )}
@@ -1058,7 +1081,7 @@ export default function App() {
               title={t("filters.forgeCheckTitle")}
             >
               {checkingForgeUpdates
-                ? forgeProgress
+                ? forgeProgress && forgeProgress.total > 0
                   ? t("filters.forgeCheckingProgress", { done: forgeProgress.done, total: forgeProgress.total })
                   : t("filters.forgeChecking")
                 : t("filters.forgeCheckButton")}
@@ -1149,7 +1172,13 @@ export default function App() {
                       {u.downloadLink && (
                         <>
                           {" "}
-                          (<a href={u.downloadLink} target="_blank" rel="noreferrer">{t("common.link")}</a>)
+                          <button
+                            className="primary inline-update-button"
+                            disabled={updatingModName === u.name}
+                            onClick={() => handleInstallUpdate(u.name, u.downloadLink!, u.recommendedVersion)}
+                          >
+                            {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
+                          </button>
                         </>
                       )}
                     </p>

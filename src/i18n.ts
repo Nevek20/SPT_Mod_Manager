@@ -106,6 +106,8 @@ const pt: Dict = {
 
   "forge.checkTitle": "Verificação de atualizações (Forge)",
   "forge.updatesAvailable": "Atualizações disponíveis:",
+  "forge.updateNow": "Atualizar",
+  "forge.updating": "Atualizando...",
   "forge.blockedTitle": "Atualizações bloqueadas (quebrariam dependência):",
   "forge.incompatibleTitle": "Incompatíveis com essa versão do SPT:",
   "forge.infoOnlyTitle": "Sem versão local pra comparar (mostrando o que a Forge tem):",
@@ -125,7 +127,6 @@ const pt: Dict = {
   "noResults.clearFilters": "Limpar filtros",
 
   "common.close": "Fechar",
-  "common.link": "link",
 
   "browse.title": "Buscar mods no Forge",
   "browse.searchPlaceholder": "Pesquisar por nome, slug ou descrição...",
@@ -197,6 +198,7 @@ const pt: Dict = {
   "restore.confirmDisable": "{count} mod(s) instalado(s) não estão na lista importada. Desativar esses mods?",
   "restore.disabledCount": "{count} mod(s) desativado(s).",
   "restore.lookingUp": "Procurando os mods na Forge...",
+  "restore.lookingUpCount": "Procurando na Forge... ({done}/{total})",
   "restore.installingProgress": "Instalando mods... ({done}/{total})",
   "restore.andMore": " e mais {count}",
 
@@ -306,6 +308,8 @@ const en: Dict = {
 
   "forge.checkTitle": "Update check (Forge)",
   "forge.updatesAvailable": "Updates available:",
+  "forge.updateNow": "Update",
+  "forge.updating": "Updating...",
   "forge.blockedTitle": "Blocked updates (would break a dependency):",
   "forge.incompatibleTitle": "Incompatible with this SPT version:",
   "forge.infoOnlyTitle": "No local version to compare (showing what Forge has):",
@@ -325,7 +329,6 @@ const en: Dict = {
   "noResults.clearFilters": "Clear filters",
 
   "common.close": "Close",
-  "common.link": "link",
 
   "browse.title": "Search Forge mods",
   "browse.searchPlaceholder": "Search by name, slug, or description...",
@@ -397,6 +400,7 @@ const en: Dict = {
   "restore.confirmDisable": "{count} installed mod(s) aren't in the imported list. Disable those mods?",
   "restore.disabledCount": "{count} mod(s) disabled.",
   "restore.lookingUp": "Looking the mods up on Forge...",
+  "restore.lookingUpCount": "Looking up on Forge... ({done}/{total})",
   "restore.installingProgress": "Installing mods... ({done}/{total})",
   "restore.andMore": " and {count} more",
 
