@@ -942,6 +942,12 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
     const linkedTo = registryEntry?.linkedModIds ?? (registryEntry?.linkedModId ? [registryEntry.linkedModId] : []);
     if (linkedTo.length > 0 && linkedTo.some((id) => namedModIds.has(id))) continue;
 
+    // Vínculo implícito: órfão com o mesmo nome de exibição de um mod que existe é,
+    // na prática, sobra daquele mod. Cobre instalações feitas antes do vínculo
+    // explícito existir — sem isso, elas ficam duplicando a linha do mod pra sempre.
+    const displayName = registryEntry?.displayName;
+    if (displayName && namedModIds.has(displayName)) continue;
+
     mods.push({
       id: manifestId,
       name: aliases[manifestId] ?? registryEntry?.displayName ?? manifestId,
@@ -1256,6 +1262,19 @@ function performMerge(
     });
   }
   if (orphanId) {
+    // Reinstalar o mesmo mod não pode empilhar entradas: o id do órfão é baseado em
+    // timestamp, então cada instalação criava mais uma. Remove as anteriores do mesmo
+    // pacote antes de registrar a nova.
+    const orphanDisplayName = preferredDisplayName ?? path.parse(archivePath).name;
+    for (const previous of loadRegistry(clientRoot)) {
+      const isSamePackageOrphan =
+        previous.id.startsWith("hybrid-manifest-") && previous.displayName === orphanDisplayName;
+      if (isSamePackageOrphan) {
+        removeManifestEntry(clientRoot, previous.id);
+        removeFromRegistry(clientRoot, previous.id);
+      }
+    }
+
     // Registra como um mod "órfão" rastreado por manifesto — não tem pasta própria pra
     // habilitar/desabilitar, mas pelo menos aparece na lista e pode ser removido de forma limpa.
     addManifestEntry(clientRoot, orphanId, orphanFiles);
@@ -1410,9 +1429,10 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
   let linkedFilesRemoved = 0;
   // Só remove os arquivos do pacote quando nenhum outro mod do mesmo arquivo continua
   // instalado — senão apagaria o config de um mod que ainda está lá.
-  const orphanEntry = registryEntry?.linkedModId
-    ? registryAfter.find((r) => r.id === registryEntry.linkedModId)
-    : undefined;
+  const orphanEntry =
+    (registryEntry?.linkedModId ? registryAfter.find((r) => r.id === registryEntry.linkedModId) : undefined) ??
+    // Vínculo implícito (ver scanMods): órfão com o mesmo nome de exibição desse mod.
+    registryAfter.find((r) => r.id.startsWith("hybrid-manifest-") && r.displayName === mod.id);
   // Um "irmão" pode ser de outro tipo (o pacote instala server e client), e pode estar
   // habilitado ou desabilitado — por isso checamos as quatro combinações.
   const siblingsStillInstalled = (orphanEntry?.linkedModIds ?? []).some((id) => {
@@ -1421,17 +1441,17 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
       [true, false].some((enabled) => fs.existsSync(resolveModPath(clientRoot, serverRoot, { id, type, enabled })))
     );
   });
-  if (registryEntry?.linkedModId && !siblingsStillInstalled) {
+  if (orphanEntry && !siblingsStillInstalled) {
     const manifest = loadManifest(clientRoot);
-    for (const relPath of manifest[registryEntry.linkedModId] ?? []) {
+    for (const relPath of manifest[orphanEntry.id] ?? []) {
       const linkedTarget = resolveManifestFilePath(clientRoot, serverRoot, relPath);
       if (fs.existsSync(linkedTarget)) {
         fs.rmSync(linkedTarget, { force: true });
         linkedFilesRemoved++;
       }
     }
-    removeManifestEntry(clientRoot, registryEntry.linkedModId);
-    removeFromRegistry(clientRoot, registryEntry.linkedModId);
+    removeManifestEntry(clientRoot, orphanEntry.id);
+    removeFromRegistry(clientRoot, orphanEntry.id);
   }
 
   removeFromRegistry(clientRoot, mod.id);
@@ -1850,7 +1870,9 @@ async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string
   url.searchParams.set(`filter[${filterKey}]`, value);
   url.searchParams.set("per_page", "10");
   url.searchParams.set("include", "versions");
-  url.searchParams.set("fields", "id,guid,name,slug");
+  // Sem restringir "fields": a restauração de modlist precisa do LINK de download de
+  // cada versão, e a resposta reduzida não garante trazer esse campo. Pedir o objeto
+  // completo custa alguns KB a mais e evita "não baixa nada" silencioso.
   url.searchParams.set("filter[include_legacy]", "true");
   const json = await forgeFetchJson(url.toString(), budget);
   return Array.isArray(json?.data) ? json.data : [];
@@ -1867,7 +1889,6 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
     url.searchParams.set("filter[guid]", guids.slice(i, i + CHUNK).join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
-    url.searchParams.set("fields", "id,guid,name,slug");
     url.searchParams.set("filter[include_legacy]", "true");
     const json = await forgeFetchJson(url.toString(), budget);
     if (Array.isArray(json?.data)) results.push(...json.data);
@@ -2008,7 +2029,6 @@ export async function matchForgeMods(
         url.searchParams.set("query", term);
         url.searchParams.set("per_page", "5");
         url.searchParams.set("include", "versions");
-        url.searchParams.set("fields", "id,guid,name,slug");
         url.searchParams.set("filter[include_legacy]", "true");
         const json = await forgeFetchJson(url.toString(), budget);
         const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
@@ -2093,10 +2113,29 @@ export async function findForgeDownloadsForNames(
     cacheRoot
   );
   const out: Record<string, { downloadLink: string; version?: string; forgeName?: string }> = {};
+  const budget = newForgeBudget(entries.length);
   for (const { name } of entries) {
     const info = matches.get(name);
-    if (info?.latestVersionLink) {
+    if (!info) continue;
+
+    if (info.latestVersionLink) {
       out[name] = { downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
+      continue;
+    }
+
+    // Casou com o mod na Forge, mas a resposta não trouxe o link de download. Em vez de
+    // desistir em silêncio (o sintoma era "importa, mostra a diferença e não baixa
+    // nada"), busca as versões desse mod diretamente pelo identificador.
+    const url = new URL(`${FORGE_API_BASE}/mods`);
+    url.searchParams.set("filter[guid]", info.identifier);
+    url.searchParams.set("per_page", "1");
+    url.searchParams.set("include", "versions");
+    url.searchParams.set("filter[include_legacy]", "true");
+    const json = await forgeFetchJson(url.toString(), budget);
+    const versions = json?.data?.[0]?.versions;
+    const latest = Array.isArray(versions) ? versions[0] : undefined;
+    if (latest?.link) {
+      out[name] = { downloadLink: latest.link, version: latest.version, forgeName: info.forgeName };
     }
   }
   return out;
