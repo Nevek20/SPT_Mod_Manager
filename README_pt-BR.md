@@ -129,18 +129,24 @@ spt-mod-manager/
 Isso era uma coisa manual (setas pra cima/baixo renomeando pastas com prefixo numérico, `01_nomedomod`, `02_outromod`, ...) pros server mods da era SPT 3.11, que carregam em ordem alfabética. A partir do SPT 4.0, os mods parecem cuidar da própria ordem de carregamento sozinhos — forçar um prefixo numérico manualmente causou problema de verdade, então as setas e a lógica de renomear por trás delas foram removidas. O app ainda lê um prefixo numérico existente se a pasta já tiver um (pra exibição e ordenação), só não escreve mais nenhum.
 
 ### Arquivos de controle (na raiz da instância)
-- `.spt-mod-manager-registry.json` — quais mods foram instalados pelo app (pra diferenciar de "instalado manualmente")
+- `.spt-mod-manager-registry.json` — quais mods foram instalados pelo app (pra diferenciar de "instalado manualmente"), junto com o que a Forge informou na hora da instalação
 - `.spt-mod-manager-aliases.json` — nomes de exibição customizados (renomear não mexe em arquivo real)
+- `.spt-mod-manager-manifest.json` — arquivos soltos que vieram com um mod mas ficam fora da pasta dele, pra poderem ser removidos junto
+- `.spt-mod-manager-forge-match.json` — identificadores da Forge já resolvidos, pra checagem de atualização não redescobrir tudo toda vez (ver abaixo)
 
 ### Instalação "inteligente"
 Ao instalar um `.zip`/`.7z`/`.rar`, o app procura recursivamente (não só na raiz do arquivo) por uma pasta que contenha `user/` e/ou `BepInEx/` — isso cobre tanto mods "prontos pra copiar" quanto mods embrulhados numa pasta extra. Se não achar essa estrutura, tenta identificar se é um server mod (por `package.json`) ou client mod (por `.dll`) e instala na pasta certa.
 
 ### Integração com a Forge
-O app conversa com a API pública da [Forge](https://forge.sp-tarkov.com) (`forge.sp-tarkov.com/api/v0`) — a plataforma oficial de mods do próprio time do SPT. É só leitura, não precisa de chave de API, e tem limite de uso generoso (40 requisições/10s em rajada, 200/60s sustentado); o app respeita isso com um pequeno intervalo entre requisições quando checa vários mods de uma vez.
+O app conversa com a API pública da [Forge](https://forge.sp-tarkov.com) (`forge.sp-tarkov.com/api/v0`) — a plataforma oficial de mods do próprio time do SPT. É só leitura e não precisa de chave de API.
 
-Como o app só rastreia o *nome* do mod localmente (não um ID da Forge), o casamento com o catálogo é feito por nome — usando o nome verdadeiro derivado da pasta, não um apelido de exibição, então renomear um mod pra sua própria organização nunca quebra a busca. É uma heurística, e pode ocasionalmente não achar um mod com nome muito genérico ou que não está listado na Forge.
+**Como um mod instalado é ligado ao registro dele na Forge.** Mods de SPT 4.0 declaram um GUID (`com.autor.mod`) dentro da DLL compilada, e o app lê de lá. Esse é o caminho bom: o GUID é exato, e a API da Forge aceita vários de uma vez, então a maioria dos mods resolve numa requisição só. Quem não declara GUID cai num plano B que deriva candidatos do nome da pasta — slug, nome, nome sem o prefixo do autor, e por fim busca textual —, verificando cada resultado antes de aceitar, porque casar errado é pior que não casar. O casamento sempre usa o nome real derivado da pasta, nunca o apelido de exibição, então renomear um mod pra sua própria organização não quebra nada.
 
-Vale saber: a partir do SPT 4.0, mods server pararam de declarar a versão no `package.json` (essa convenção migrou pra uma classe de metadados dentro do próprio código do mod) — então boa parte dos mods instalados simplesmente não tem versão legível localmente pra comparar. Pra esses, o app ainda busca na Forge e mostra a versão mais recente conhecida como informação, sem alegar que uma atualização está "disponível" (já que não tem nada local pra comparar).
+**Limite de requisições, e o que isso significa na prática.** A Forge limita por IP: 40 requisições a cada 10 segundos (rajada) e 200 a cada 60 segundos (sustentado). O app trabalha logo abaixo do limite sustentado e respeita o cabeçalho `Retry-After` caso seja barrado. Na prática o limite sustentado é o que manda, então um mod que precisa passar pelas quatro estratégias por nome custa pouco mais de um segundo — uma primeira checagem numa instalação grande pode levar perto de um minuto. Mods com GUID pulam tudo isso.
+
+Por causa desse custo, os identificadores resolvidos ficam em cache por instância (`.spt-mod-manager-forge-match.json`), pra que as checagens seguintes resolvam tudo na requisição em lote. Numa instalação de ~140 mods, isso é cerca de um minuto na primeira vez e uns poucos segundos depois.
+
+**Versões.** A partir do SPT 4.0, mods de servidor pararam de declarar a versão no `package.json` — isso migrou pra uma classe de metadados dentro do próprio código do mod, que o app lê da DLL. Um mod sem versão legível localmente ainda é consultado, e a versão mais recente conhecida na Forge aparece como informação, não como atualização disponível, já que não há nada local pra comparar.
 
 ---
 
@@ -178,7 +184,7 @@ Ainda na fila:
 
 ---
 
-## 🤝 Contribuindo
+## Contribuindo
 
 Projeto pessoal, mas issues e PRs são bem-vindos. Se for mexer em algo grande, abre uma issue antes pra alinhar.
 
