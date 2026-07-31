@@ -161,9 +161,14 @@ ipcMain.handle(
 
 ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; originalName: string; version?: string; guid?: string }[], sptVersion: string) => {
   try {
-    const result = await checkForgeUpdates(mods, sptVersion, (done, total) => {
-      mainWindow?.webContents.send("forge-check-progress", { done, total });
-    });
+    const result = await checkForgeUpdates(
+      mods,
+      sptVersion,
+      (done, total) => {
+        mainWindow?.webContents.send("forge-check-progress", { done, total });
+      },
+      store.get("sptPath") ?? undefined
+    );
     return { success: true, result };
   } catch (err: any) {
     return { success: false, message: err?.message || "Falha ao verificar atualizações." };
@@ -205,9 +210,13 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
 
 ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string }[]) => {
   try {
-    return await findForgeDownloadsForNames(entries, (done, total) => {
-      mainWindow?.webContents.send("forge-check-progress", { done, total });
-    });
+    return await findForgeDownloadsForNames(
+      entries,
+      (done, total) => {
+        mainWindow?.webContents.send("forge-check-progress", { done, total });
+      },
+      store.get("sptPath") ?? undefined
+    );
   } catch {
     return {};
   }

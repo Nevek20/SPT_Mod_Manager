@@ -467,6 +467,10 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   { pattern: /^Entrada removida da lista \(nenhum arquivo rastreado\)\.$/, en: () => "Entry removed from the list (no tracked files)." },
   { pattern: /^Mod removido\.$/, en: () => "Mod removed." },
   {
+    pattern: /^Mod instalado\. (\d+) arquivo\(s\) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação\.$/,
+    en: (m) => `Mod installed. ${m[1]} SPT core file(s) shipped inside the package were skipped, to avoid breaking the installation.`
+  },
+  {
     pattern: /^Mod removido \(e (\d+) arquivo\(s\) que vieram junto\)\.$/,
     en: (m) => `Mod removed (along with ${m[1]} file(s) that came with it).`
   },

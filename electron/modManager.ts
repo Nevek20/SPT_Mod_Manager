@@ -251,6 +251,26 @@ function isProtectedClientEntry(name: string): boolean {
   return PROTECTED_CLIENT_PLUGIN_NAMES.has(name.toLowerCase());
 }
 
+/**
+ * Um caminho relativo (dentro do arquivo do mod) que cairia em cima do núcleo do client
+ * da SPT — "BepInEx/plugins/spt/..." ou "BepInEx/plugins/spt-core.dll".
+ *
+ * Alguns mods empacotam a árvore inteira da SPT junto, incluindo uma cópia (geralmente
+ * mais antiga) desses arquivos. Sem essa checagem, instalar um mod desses sobrescrevia o
+ * core do usuário e o jogo passava a acusar
+ * "spt-core.dll file version doesn't match what was expected".
+ *
+ * Isso é diferente da proteção que já existia: aquela impede LISTAR e REMOVER o core;
+ * esta impede SOBRESCREVER durante a instalação.
+ */
+function isProtectedInstancePath(relPath: string): boolean {
+  const parts = relPath.replace(/\\/g, "/").toLowerCase().split("/").filter(Boolean);
+  const pluginsAt = parts.findIndex((seg, i) => seg === "plugins" && parts[i - 1] === "bepinex");
+  if (pluginsAt === -1) return false;
+  const next = parts[pluginsAt + 1];
+  return next !== undefined && PROTECTED_CLIENT_PLUGIN_NAMES.has(next);
+}
+
 function p(sptPath: string, parts: string[]): string {
   return path.join(sptPath, ...parts);
 }
@@ -1160,7 +1180,12 @@ function performMerge(
   ];
   const attributedExactFiles = new Set(clientModNames.map((name) => `BepInEx/plugins/${name}`));
   const orphanFiles = allCopiedFiles.filter(
-    (f) => !attributedExactFiles.has(f) && !attributedPrefixes.some((prefix) => f.startsWith(prefix))
+    (f) =>
+      !attributedExactFiles.has(f) &&
+      !attributedPrefixes.some((prefix) => f.startsWith(prefix)) &&
+      // Nunca rastrear o core da SPT: além de não ser copiado, se entrasse no manifesto
+      // remover o mod apagaria o núcleo do client.
+      !isProtectedInstancePath(f)
   );
 
   // Cópia dividida: "user/" vai pro serverRoot, o resto (BepInEx/ e qualquer arquivo
@@ -1175,20 +1200,23 @@ function performMerge(
       return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
     }
   }
+  const skippedCoreFiles: string[] = [];
   for (const entry of mergeEntries) {
     if (entry.name.toLowerCase() === "user") continue; // já tratado acima
     const srcPath = path.join(mergeRoot, entry.name);
     const destPath = path.join(clientRoot, entry.name);
     if (entry.isDirectory()) {
-      copyRecursive(srcPath, destPath);
-      const verification = verifyCopyRecursive(srcPath, destPath);
+      copyRecursiveProtected(srcPath, destPath, entry.name, skippedCoreFiles);
+      const verification = verifyCopyRecursive(srcPath, destPath, skippedCoreFiles, entry.name);
       if (!verification.ok) {
         cleanup(tmpExtractDir);
         return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
       }
-    } else {
+    } else if (!isProtectedInstancePath(entry.name)) {
       ensureDir(clientRoot);
       fs.copyFileSync(srcPath, destPath);
+    } else {
+      skippedCoreFiles.push(entry.name);
     }
   }
 
@@ -1239,6 +1267,12 @@ function performMerge(
       source: "archive-install",
       linkedModIds: allNamedModIds
     });
+  }
+  if (skippedCoreFiles.length > 0) {
+    return {
+      success: true,
+      message: `Mod instalado. ${skippedCoreFiles.length} arquivo(s) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação.`
+    };
   }
   return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
 }
@@ -1424,6 +1458,31 @@ function copyRecursive(src: string, dest: string) {
   }
 }
 
+/**
+ * Como copyRecursive, mas nunca escreve por cima do núcleo do client da SPT. `relPrefix`
+ * é o caminho já percorrido a partir da raiz da instância, pra decidir a proteção pelo
+ * caminho completo (e não só pelo nome do arquivo). Devolve o que foi pulado, pra poder
+ * avisar quem instalou.
+ */
+function copyRecursiveProtected(src: string, dest: string, relPrefix = "", skipped: string[] = []): string[] {
+  ensureDir(dest);
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    if (isProtectedInstancePath(rel)) {
+      skipped.push(rel);
+      continue;
+    }
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyRecursiveProtected(srcPath, destPath, rel, skipped);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+  return skipped;
+}
+
 function findFilesRecursive(dir: string, extOrName: string): string[] {
   let results: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1471,12 +1530,23 @@ function findMergeRoot(dir: string, depth = 0): string | null {
  * (mesmo tamanho). Usado pra confirmar que uma instalação realmente terminou com sucesso,
  * em vez de assumir que copyRecursive não falhou silenciosamente.
  */
-function verifyCopyRecursive(src: string, dest: string): { ok: boolean; missing?: string } {
+function verifyCopyRecursive(
+  src: string,
+  dest: string,
+  // Arquivos deliberadamente não copiados (núcleo da SPT que veio junto no pacote) —
+  // sem isso a verificação acusaria "instalação incompleta" por algo que a gente
+  // decidiu pular de propósito.
+  intentionallySkipped: string[] = [],
+  relPrefix = ""
+): { ok: boolean; missing?: string } {
+  const skippedSet = new Set(intentionallySkipped);
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    if (skippedSet.has(rel) || isProtectedInstancePath(rel)) continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      const result = verifyCopyRecursive(srcPath, destPath);
+      const result = verifyCopyRecursive(srcPath, destPath, intentionallySkipped, rel);
       if (!result.ok) return result;
     } else {
       if (!fs.existsSync(destPath)) return { ok: false, missing: destPath };
@@ -1810,11 +1880,46 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
  * Faz o grosso em poucas requisições em lote e só cai pra busca individual
  * (full-text) no que sobrar.
  */
+/**
+ * Cache de casamento: nome-da-pasta -> GUID resolvido na Forge.
+ *
+ * Achar um mod que NÃO declara GUID custa até 4 consultas (slug, nome, sem prefixo,
+ * busca textual), e o ritmo é limitado pela API — ~1,2s por mod. Guardando o GUID
+ * descoberto, a checagem seguinte resolve esse mod junto com os outros na consulta em
+ * lote por GUID, que é uma requisição pra cada 25 mods. Na prática: a primeira checagem
+ * é lenta, as próximas são quase instantâneas.
+ */
+const FORGE_MATCH_CACHE_FILE = ".spt-mod-manager-forge-match.json";
+
+function loadForgeMatchCache(root: string): Record<string, string> {
+  try {
+    const file = path.join(root, FORGE_MATCH_CACHE_FILE);
+    if (!fs.existsSync(file)) return {};
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return typeof parsed === "object" && parsed ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveForgeMatchCache(root: string, cache: Record<string, string>): void {
+  try {
+    fs.writeFileSync(path.join(root, FORGE_MATCH_CACHE_FILE), JSON.stringify(cache, null, 2), "utf-8");
+  } catch {
+    // cache é otimização, não pode derrubar a checagem se falhar ao gravar
+  }
+}
+
 export async function matchForgeMods(
   input: (string | { folderName: string; guid?: string })[],
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  cacheRoot?: string
 ): Promise<Map<string, ForgeMatch>> {
-  const entries = input.map((v) => (typeof v === "string" ? { folderName: v, guid: undefined } : v));
+  const cache = cacheRoot ? loadForgeMatchCache(cacheRoot) : {};
+  const entries = input
+    .map((v) => (typeof v === "string" ? { folderName: v, guid: undefined as string | undefined } : { ...v }))
+    // Mod sem GUID local, mas já resolvido numa checagem anterior: entra no lote.
+    .map((e) => (e.guid ? e : { ...e, guid: cache[e.folderName] }));
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
@@ -1920,6 +2025,16 @@ export async function matchForgeMods(
   exhausted = folderNames.length - matched.size;
   reportProgress();
 
+  if (cacheRoot) {
+    // Guarda o identificador de quem foi resolvido pelas estratégias lentas, pra que a
+    // próxima checagem já encontre esses mods na consulta em lote.
+    const updated = { ...cache };
+    for (const [folderName, match] of matched) {
+      if (match.identifier) updated[folderName] = match.identifier;
+    }
+    saveForgeMatchCache(cacheRoot, updated);
+  }
+
   return matched;
 }
 
@@ -1967,13 +2082,15 @@ async function findForgeModInfo(
  */
 export async function findForgeDownloadsForNames(
   entries: { name: string; guid?: string }[],
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  cacheRoot?: string
 ): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>> {
   // Quando a lista exportada traz o GUID, o casamento é exato e resolvido em lote —
   // sem adivinhação por nome. Listas antigas (sem GUID) continuam funcionando pelo nome.
   const matches = await matchForgeMods(
     entries.map((e) => ({ folderName: e.name, guid: e.guid })),
-    onProgress
+    onProgress,
+    cacheRoot
   );
   const out: Record<string, { downloadLink: string; version?: string; forgeName?: string }> = {};
   for (const { name } of entries) {
@@ -2005,7 +2122,8 @@ export async function findForgeDownloadForName(
 export async function checkForgeUpdates(
   mods: { name: string; originalName: string; version?: string; guid?: string }[],
   sptVersion: string,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  cacheRoot?: string
 ): Promise<ForgeUpdateCheckResult> {
   const trimmedVersion = sptVersion.trim();
   if (!trimmedVersion) {
@@ -2024,7 +2142,8 @@ export async function checkForgeUpdates(
   // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
   const matches = await matchForgeMods(
     mods.map((m) => ({ folderName: m.originalName, guid: m.guid })),
-    onProgress
+    onProgress,
+    cacheRoot
   );
 
   for (const mod of mods) {
