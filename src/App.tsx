@@ -521,7 +521,10 @@ export default function App() {
           const installResult = await installArchiveWithConfirmFlow(
             window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
               name: lookup.forgeName,
-              version: lookup.version
+              version: lookup.version,
+              // Grava o identificador da Forge: a partir daqui esse mod é reconhecido
+              // por ID exato, sem depender de casamento por nome.
+              guid: lookup.guid
             })
           );
           markQueueDone(queueId, installResult.success, tMsg(installResult.message));
@@ -683,13 +686,13 @@ export default function App() {
   // Atualiza sem sair do app: o link do resultado é o download direto da versão
   // recomendada, então dá pra passar pelo mesmo instalador usado na busca da Forge —
   // em vez de abrir o navegador e deixar o .zip no Downloads pra instalar na mão.
-  async function handleInstallUpdate(modName: string, downloadLink: string, version?: string) {
+  async function handleInstallUpdate(modName: string, downloadLink: string, version?: string, guid?: string) {
     setUpdatingModName(modName);
     const previousKeys = new Set(mods.map(selectionKey));
     const queueId = pushQueueItem(modName);
     markQueueActive(queueId);
     const result = await installArchiveWithConfirmFlow(
-      window.modManagerAPI.installForgeMod(queueId, downloadLink, modName, { name: modName, version })
+      window.modManagerAPI.installForgeMod(queueId, downloadLink, modName, { name: modName, version, guid })
     );
     markQueueDone(queueId, result.success, tMsg(result.message));
     setUpdatingModName(null);
@@ -801,6 +804,18 @@ export default function App() {
     setSelectedKeys((prev) => new Set([...prev, ...keys]));
   }
 
+  // Quantas partes cada pacote tem instaladas. Serve pra avisar na linha do mod que ele
+  // faz parte de um conjunto — sem isso, ver a outra metade desabilitar junto parece bug.
+  const packagePartsById = useMemo(() => {
+    const counts = new Map<string, ModInfo[]>();
+    for (const m of mods) {
+      if (!m.packageId) continue;
+      if (!counts.has(m.packageId)) counts.set(m.packageId, []);
+      counts.get(m.packageId)!.push(m);
+    }
+    return counts;
+  }, [mods]);
+
   const listProps = {
     onToggle: handleToggle,
     onUninstall: handleUninstall,
@@ -819,6 +834,7 @@ export default function App() {
     onSetOpenMenuKey: setOpenMenuKey,
     disabled: mutating,
     forgeStatusByName,
+    packagePartsById,
     t
   };
 
@@ -1127,13 +1143,20 @@ export default function App() {
                 <strong>{t("conflicts.title")}</strong>
                 <button onClick={() => setConflictReport(null)}>{t("common.close")}</button>
               </div>
-              {conflictReport.clientFileConflicts.length === 0 && conflictReport.duplicateServerNames.length === 0 ? (
+              {conflictReport.clientFileConflicts.length === 0 &&
+              conflictReport.duplicateServerNames.length === 0 &&
+              (conflictReport.duplicateClientMods?.length ?? 0) === 0 ? (
                 <p>{t("toast.noConflictsFound")}</p>
               ) : (
                 <>
                   {conflictReport.clientFileConflicts.map((c) => (
                     <p key={`dll-${c.fileName}`}>
                       <strong>DLL "{c.fileName}"</strong> {t("conflicts.appearsIn")} {c.mods.join(", ")}
+                    </p>
+                  ))}
+                  {(conflictReport.duplicateClientMods ?? []).map((d) => (
+                    <p key={`client-dup-${d.declaredName}`}>
+                      <strong>{t("conflicts.sameModTwice")}</strong> {d.mods.join(", ")}
                     </p>
                   ))}
                   {conflictReport.duplicateServerNames.map((d) => (
@@ -1175,7 +1198,7 @@ export default function App() {
                           <button
                             className="primary inline-update-button"
                             disabled={updatingModName === u.name}
-                            onClick={() => handleInstallUpdate(u.name, u.downloadLink!, u.recommendedVersion)}
+                            onClick={() => handleInstallUpdate(u.name, u.downloadLink!, u.recommendedVersion, u.guid)}
                           >
                             {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
                           </button>
@@ -1216,6 +1239,11 @@ export default function App() {
                 forgeResult.incompatible.length === 0 &&
                 forgeResult.infoOnly.length === 0 && (
                 <p>{t("forge.allUpToDateDetailed")}</p>
+              )}
+              {(forgeResult.skippedByBudget?.length ?? 0) > 0 && (
+                <p className="compare-note">
+                  {t("forge.skippedByBudget", { count: forgeResult.skippedByBudget!.length })}
+                </p>
               )}
               {forgeResult.unmatched.length > 0 && (
                 <p className="compare-note">
@@ -1427,6 +1455,7 @@ function ModList({
   onSetOpenMenuKey,
   disabled = false,
   forgeStatusByName,
+  packagePartsById,
   t
 }: {
   mods: ModInfo[];
@@ -1447,6 +1476,7 @@ function ModList({
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
   forgeStatusByName?: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>;
+  packagePartsById?: Map<string, ModInfo[]>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
@@ -1530,6 +1560,19 @@ function ModList({
                     {t("modlist.forgeInfo", { version: forgeStatus.version ?? "" })}
                   </span>
                 )}
+                {(() => {
+                  const parts = mod.packageId ? packagePartsById?.get(mod.packageId) : undefined;
+                  if (!parts || parts.length < 2) return null;
+                  const others = parts.filter((x) => selectionKey(x) !== key).map((x) => `${x.name} (${x.type})`);
+                  return (
+                    <span
+                      className="meta-chip package-chip"
+                      title={t("modlist.packageTooltip", { others: others.join(", ") })}
+                    >
+                      {t("modlist.packagePart", { count: parts.length })}
+                    </span>
+                  );
+                })()}
                 {mod.manifestOnly && (
                   <span className="meta-chip" title={t("modlist.orphanTitle")}>
                     {t("modlist.orphan")}

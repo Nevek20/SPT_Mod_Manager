@@ -101,6 +101,7 @@ const pt: Dict = {
   "conflicts.title": "Verificação de conflitos",
   "conflicts.appearsIn": "aparece em:",
   "conflicts.nameLabel": "Nome",
+  "conflicts.sameModTwice": "O mesmo mod está instalado em duas pastas:",
   "conflicts.declaredInMultiple": "declarado em mais de uma pasta:",
   "conflicts.note": "Checagem no nível de arquivo — sinaliza sobreposição, não garante incompatibilidade de verdade.",
 
@@ -114,6 +115,7 @@ const pt: Dict = {
   "forge.infoHasVersion": "Forge tem v{version}",
   "forge.allUpToDateDetailed": "Todos os mods identificados no Forge estão atualizados.",
   "forge.unmatchedPrefix": "Não encontrados no Forge (busca por nome):",
+  "forge.skippedByBudget": "{count} mod(s) não foram consultados: o limite de requisições da Forge foi atingido. Rode a verificação de novo pra completar — o que já foi resolvido fica em cache e não é consultado outra vez.",
   "forge.matchNote":
     "Casamento com o catálogo da Forge é por nome — pode não achar mods com nome muito genérico ou que não estão listados lá.",
 
@@ -181,6 +183,8 @@ const pt: Dict = {
   "modlist.forgeInfo": "Forge: v{version}",
   "modlist.orphanTitle": "Arquivos soltos rastreados por manifesto (sem pasta própria) — só dá pra remover",
   "modlist.orphan": "Órfão",
+  "modlist.packagePart": "Pacote de {count} partes",
+  "modlist.packageTooltip": "Este mod vem em partes que funcionam juntas. Habilitar ou desabilitar uma alterna todas. Outras partes: {others}",
   "modlist.actionsTitle": "Ações",
   "modlist.openFolder": "Abrir pasta",
   "modlist.rename": "Renomear",
@@ -303,6 +307,7 @@ const en: Dict = {
   "conflicts.title": "Conflict check",
   "conflicts.appearsIn": "appears in:",
   "conflicts.nameLabel": "Name",
+  "conflicts.sameModTwice": "The same mod is installed in two folders:",
   "conflicts.declaredInMultiple": "declared in more than one folder:",
   "conflicts.note": "File-level check — it flags overlap, it doesn't guarantee an actual incompatibility.",
 
@@ -316,6 +321,7 @@ const en: Dict = {
   "forge.infoHasVersion": "Forge has v{version}",
   "forge.allUpToDateDetailed": "Every mod identified on Forge is up to date.",
   "forge.unmatchedPrefix": "Not found on Forge (matched by name):",
+  "forge.skippedByBudget": "{count} mod(s) weren't checked: Forge's request limit was reached. Run the check again to finish — whatever was already resolved is cached and won't be looked up again.",
   "forge.matchNote":
     "Matching against Forge's catalogue is done by name — it may not find mods with a very generic name, or ones not listed there.",
 
@@ -383,6 +389,8 @@ const en: Dict = {
   "modlist.forgeInfo": "Forge: v{version}",
   "modlist.orphanTitle": "Loose files tracked by manifest (no folder of its own) — can only be removed",
   "modlist.orphan": "Orphan",
+  "modlist.packagePart": "{count}-part package",
+  "modlist.packageTooltip": "This mod comes in parts that work together. Enabling or disabling one switches them all. Other parts: {others}",
   "modlist.actionsTitle": "Actions",
   "modlist.openFolder": "Open folder",
   "modlist.rename": "Rename",
@@ -463,6 +471,22 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
     en: () => "This item is one of SPT's own files (not a mod) and can't be removed by the Manager."
   },
   { pattern: /^Mod desabilitado\.$/, en: () => "Mod disabled." },
+  {
+    pattern: /^Mod desabilitado \((\d+) partes do pacote\)\.$/,
+    en: (m) => `Mod disabled (${m[1]} package parts).`
+  },
+  {
+    pattern: /^Mod habilitado \((\d+) partes do pacote\)\.$/,
+    en: (m) => `Mod enabled (${m[1]} package parts).`
+  },
+  {
+    pattern: /^Mod desabilitado \(e (\d+) patcher\(s\) junto\)\.$/,
+    en: (m) => `Mod disabled (along with ${m[1]} patcher(s)).`
+  },
+  {
+    pattern: /^Mod habilitado \(e (\d+) patcher\(s\) junto\)\.$/,
+    en: (m) => `Mod enabled (along with ${m[1]} patcher(s)).`
+  },
   { pattern: /^Mod habilitado\.$/, en: () => "Mod enabled." },
   { pattern: /^Entrada removida da lista \(nenhum arquivo rastreado\)\.$/, en: () => "Entry removed from the list (no tracked files)." },
   { pattern: /^Mod removido\.$/, en: () => "Mod removed." },

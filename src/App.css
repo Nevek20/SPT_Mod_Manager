@@ -1053,3 +1053,10 @@ h2 {
   font-size: 11px;
   vertical-align: middle;
 }
+
+/* Chip que marca um mod como parte de um pacote de várias partes */
+.package-chip {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  cursor: help;
+}

@@ -12,6 +12,8 @@ export interface ModInfo {
   author?: string;
   installedAt?: string;
   manifestOnly?: boolean;
+  sptVersion?: string; // restrição de versão do SPT declarada pelo mod (lida da DLL)
+  packageId?: string; // partes instaladas do mesmo arquivo compartilham esse id
   guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge
   linkedModName?: string;
 }
@@ -24,6 +26,7 @@ export interface ModListComparison {
 export interface ConflictReport {
   clientFileConflicts: { fileName: string; mods: string[] }[];
   duplicateServerNames: { declaredName: string; mods: string[] }[];
+  duplicateClientMods?: { declaredName: string; mods: string[] }[];
 }
 
 export interface ForgeUpdateItem {
@@ -31,6 +34,7 @@ export interface ForgeUpdateItem {
   currentVersion?: string;
   recommendedVersion?: string;
   downloadLink?: string;
+  guid?: string; // identificador da Forge, gravado ao atualizar pelo app
   reason?: string;
 }
 
@@ -42,6 +46,7 @@ export interface ForgeUpdateCheckResult {
   incompatible: ForgeUpdateItem[];
   infoOnly: ForgeUpdateItem[];
   unmatched: string[];
+  skippedByBudget?: string[];
 }
 
 export interface ForgeSptVersion {
@@ -153,7 +158,7 @@ export interface ModManagerAPI {
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string }[]
-  ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>>;
+  ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>>;
   findForgeDownloadForName: (
     name: string,
     sptVersion?: string
