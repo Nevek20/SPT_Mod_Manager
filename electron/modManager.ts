@@ -219,6 +219,12 @@ const SERVER_MODS_DIR = ["user", "mods"];
 const SERVER_MODS_DISABLED_DIR = ["user", "mods.disabled"];
 const CLIENT_PLUGINS_DIR = ["BepInEx", "plugins"];
 const CLIENT_PLUGINS_DISABLED_DIR = ["BepInEx", "plugins.disabled"];
+// Prepatchers rodam ANTES do jogo carregar e ficam fora de plugins/. Um mod pode ter as
+// duas partes (ex: Wedge traz Wedge.Client.dll em plugins/ e Wedge.Prepatch.dll em
+// patchers/), e desabilitar só o plugin deixava o patcher ativo — pior que não desabilitar,
+// porque o mod fica meio ligado.
+const CLIENT_PATCHERS_DIR = ["BepInEx", "patchers"];
+const CLIENT_PATCHERS_DISABLED_DIR = ["BepInEx", "patchers.disabled"];
 
 /**
  * Arquivos/pastas que pertencem ao próprio SPT (não são mods) mas moram dentro de
@@ -245,6 +251,42 @@ function listCompanionFolderNames(dir: string): Set<string> {
     }
   }
   return looseDllBases;
+}
+
+/**
+ * Arquivos em BepInEx/patchers que pertencem a um mod client.
+ *
+ * Duas fontes, nessa ordem:
+ *  1. o manifesto — quando o mod foi instalado pelo app, sabemos exatamente quais
+ *     arquivos vieram com ele;
+ *  2. o nome — pra mods instalados por fora, um patcher costuma se chamar
+ *     "<NomeDoMod>.Prepatch.dll", "<NomeDoMod>.Patcher.dll" ou só "<NomeDoMod>.dll".
+ *
+ * A regra por nome exige limite de palavra: "Wedge" casa com "Wedge.Prepatch.dll", mas
+ * NÃO com "WedgeExtras.dll" — mover o patcher de outro mod quebraria esse outro mod.
+ */
+function findRelatedPatcherFiles(dir: string, modId: string, manifestFiles: string[] = []): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const modBase = modId.replace(/\.dll$/i, "").toLowerCase();
+  if (!modBase) return [];
+
+  const fromManifest = new Set(
+    manifestFiles
+      .filter((f) => f.toLowerCase().includes("bepinex/patchers/"))
+      .map((f) => path.basename(f).toLowerCase())
+  );
+
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => {
+      const lower = entry.name.toLowerCase();
+      if (fromManifest.has(lower)) return true;
+      const base = lower.replace(/\.dll$/i, "");
+      if (base === modBase) return true;
+      // limite de palavra: o caractere logo após o nome do mod não pode ser letra/número
+      return base.startsWith(modBase) && !/[a-z0-9]/.test(base.charAt(modBase.length));
+    })
+    .map((entry) => path.join(dir, entry.name));
 }
 
 function isProtectedClientEntry(name: string): boolean {
@@ -464,7 +506,13 @@ export function readDllModMetadata(dllPath: string): DllModMetadata {
   }
 }
 
-function readModMetadata(modPath: string): { version?: string; author?: string; guid?: string } {
+function readModMetadata(modPath: string): {
+  version?: string;
+  author?: string;
+  guid?: string;
+  declaredName?: string;
+  sptVersion?: string;
+} {
   try {
     if (!fs.existsSync(modPath)) return {};
 
@@ -472,7 +520,7 @@ function readModMetadata(modPath: string): { version?: string; author?: string; 
     if (!fs.statSync(modPath).isDirectory()) {
       if (modPath.toLowerCase().endsWith(".dll")) {
         const meta = readDllModMetadata(modPath);
-        return { version: meta.version, author: meta.author, guid: meta.guid };
+        return { version: meta.version, author: meta.author, guid: meta.guid, declaredName: meta.name, sptVersion: meta.sptVersion };
       }
       return {};
     }
@@ -483,7 +531,7 @@ function readModMetadata(modPath: string): { version?: string; author?: string; 
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
       const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
       if (typeof pkg.version === "string") {
-        return { version: pkg.version, author };
+        return { version: pkg.version, author, declaredName: typeof pkg.name === "string" ? pkg.name : undefined };
       }
     }
 
@@ -491,7 +539,7 @@ function readModMetadata(modPath: string): { version?: string; author?: string; 
     for (const dll of findFilesRecursive(modPath, ".dll")) {
       const meta = readDllModMetadata(dll);
       if (meta.version || meta.guid) {
-        return { version: meta.version, author: meta.author, guid: meta.guid };
+        return { version: meta.version, author: meta.author, guid: meta.guid, declaredName: meta.name, sptVersion: meta.sptVersion };
       }
     }
     return {};
@@ -762,6 +810,7 @@ export function compareModList(clientRoot: string, serverRoot: string, importedN
 export interface ConflictReport {
   clientFileConflicts: { fileName: string; mods: string[] }[];
   duplicateServerNames: { declaredName: string; mods: string[] }[];
+  duplicateClientMods?: { declaredName: string; mods: string[] }[];
 }
 
 /**
@@ -776,6 +825,60 @@ export interface ConflictReport {
  *    clássico de "instalei o mesmo mod duas vezes sem perceber" (ex: atualizaram e a pasta antiga
  *    não foi removida).
  */
+/**
+ * Compara a restrição de versão do SPT declarada pelo mod com a versão da instância.
+ *
+ * Isso é 100% LOCAL: a informação vem da DLL do próprio mod ("~4.0.0", "4.0.13", "~4.0"),
+ * então funciona sem consultar API nenhuma — o que importa muito agora que a Forge vai
+ * sair do ar. É a parte mais útil do que a checagem online entregava.
+ *
+ * Retorna "unknown" quando o mod não declara nada (mods 3.x, ou 4.0 que omitem o campo):
+ * nesse caso não dá pra afirmar nada, e afirmar seria pior que ficar calado.
+ */
+export function checkSptCompatibility(
+  modConstraint: string | undefined,
+  instanceVersion: string | undefined
+): "compatible" | "incompatible" | "unknown" {
+  if (!modConstraint?.trim() || !instanceVersion?.trim()) return "unknown";
+
+  const parse = (v: string) =>
+    v
+      .trim()
+      .replace(/^[~^>=<\s]+/, "")
+      .replace(/^v/i, "")
+      .split(".")
+      .map((n) => parseInt(n, 10))
+      .filter((n) => !Number.isNaN(n));
+
+  const wanted = parse(modConstraint);
+  const actual = parse(instanceVersion);
+  if (wanted.length === 0 || actual.length === 0) return "unknown";
+
+  const operator = modConstraint.trim().startsWith("~")
+    ? "tilde"
+    : modConstraint.trim().startsWith("^")
+      ? "caret"
+      : modConstraint.trim().startsWith(">")
+        ? "atLeast"
+        : "exact";
+
+  // "^4.0" aceita qualquer 4.x; "~4.0.0" aceita qualquer 4.0.x; ">=4.0" aceita daí pra cima.
+  if (operator === "atLeast") {
+    for (let i = 0; i < Math.max(wanted.length, actual.length); i++) {
+      const a = actual[i] ?? 0;
+      const w = wanted[i] ?? 0;
+      if (a !== w) return a > w ? "compatible" : "incompatible";
+    }
+    return "compatible";
+  }
+
+  const precision = operator === "caret" ? 1 : Math.min(wanted.length, operator === "tilde" ? 2 : wanted.length);
+  for (let i = 0; i < precision; i++) {
+    if ((actual[i] ?? 0) !== (wanted[i] ?? 0)) return "incompatible";
+  }
+  return "compatible";
+}
+
 export function detectConflicts(clientRoot: string, serverRoot: string): ConflictReport {
   const clientFileConflicts: { fileName: string; mods: string[] }[] = [];
   const dllOwners = new Map<string, Set<string>>();
@@ -806,25 +909,42 @@ export function detectConflicts(clientRoot: string, serverRoot: string): Conflic
   if (fs.existsSync(serverDir)) {
     for (const entry of fs.readdirSync(serverDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      try {
-        const pkgPath = path.join(serverDir, entry.name, "package.json");
-        if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-          if (typeof pkg.name === "string") {
-            if (!nameOwners.has(pkg.name)) nameOwners.set(pkg.name, new Set());
-            nameOwners.get(pkg.name)!.add(entry.name);
-          }
-        }
-      } catch {
-        // package.json malformado — ignora silenciosamente, não é fatal pra detecção de conflito
-      }
+      // Identifica o mod pelo GUID declarado (lido da DLL no SPT 4.0) e, na falta dele,
+      // pelo "name" do package.json (mods 3.x).
+      //
+      // Antes isso olhava só o package.json — que mods 4.0 não trazem mais, já que os
+      // metadados migraram pra dentro do assembly. Ou seja, a checagem não detectava
+      // duplicata nenhuma numa instalação 4.0.
+      const metadata = readModMetadata(path.join(serverDir, entry.name));
+      const identity = metadata.guid ?? metadata.declaredName;
+      if (!identity) continue;
+      if (!nameOwners.has(identity)) nameOwners.set(identity, new Set());
+      nameOwners.get(identity)!.add(entry.name);
     }
   }
   for (const [declaredName, owners] of nameOwners) {
     if (owners.size > 1) duplicateServerNames.push({ declaredName, mods: [...owners] });
   }
 
-  return { clientFileConflicts, duplicateServerNames };
+  // Duplicata de CLIENT mod: o mesmo mod instalado em duas pastas diferentes.
+  // Detectado pelo GUID do BepInPlugin — nome de pasta não serve, já que a graça é
+  // justamente serem nomes diferentes ("SAIN" e "SAIN.4.4.3", por exemplo).
+  const duplicateClientMods: { declaredName: string; mods: string[] }[] = [];
+  const clientGuidOwners = new Map<string, Set<string>>();
+  if (fs.existsSync(clientDir)) {
+    for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
+      if (isProtectedClientEntry(entry.name)) continue;
+      const meta = readModMetadata(path.join(clientDir, entry.name));
+      if (!meta.guid) continue;
+      if (!clientGuidOwners.has(meta.guid)) clientGuidOwners.set(meta.guid, new Set());
+      clientGuidOwners.get(meta.guid)!.add(entry.name);
+    }
+  }
+  for (const [guid, owners] of clientGuidOwners) {
+    if (owners.size > 1) duplicateClientMods.push({ declaredName: guid, mods: [...owners] });
+  }
+
+  return { clientFileConflicts, duplicateServerNames, duplicateClientMods };
 }
 
 // Resolve o caminho real de um arquivo rastreado por manifesto: tudo que começa com
@@ -869,7 +989,13 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       // client mods, por exemplo, não têm campo de autor nenhum na DLL).
       version: metadata.version ?? registryEntry?.forgeVersion,
       author: metadata.author ?? registryEntry?.forgeAuthor,
-      guid: metadata.guid ?? registryEntry?.forgeGuid,
+      // O GUID que a PRÓPRIA Forge nos deu na instalação vem primeiro: é o identificador
+      // dela, e é o que os filtros da API entendem. O GUID lido da DLL (BepInPlugin) é
+      // do runtime do mod e nem sempre é o mesmo — serve de plano B pra quem foi
+      // instalado por fora do app.
+      guid: registryEntry?.forgeGuid ?? metadata.guid,
+      sptVersion: metadata.sptVersion,
+      packageId: registryEntry?.packageId,
       installedAt: registryEntry?.installedAt,
       linkedModName: resolveLinkedName(registryEntry?.linkedModId)
     });
@@ -1337,6 +1463,31 @@ export function discardPendingInstall(clientRoot: string, tmpDir: string): { suc
 }
 
 // --- Habilitar/desabilitar (move entre pasta ativa e .disabled) ---
+/**
+ * Move a pasta de um mod entre a pasta ativa e a .disabled. Devolve false quando não há
+ * o que mover (não existe na origem, ou o destino já está ocupado).
+ */
+function moveModEntry(clientRoot: string, serverRoot: string, id: string, type: ModType, enable: boolean): boolean {
+  const isServer = type === "server";
+  const base = isServer ? serverRoot : clientRoot;
+  const activeDir = p(base, isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR);
+  const disabledDir = p(base, isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
+  const from = enable ? path.join(disabledDir, id) : path.join(activeDir, id);
+  const to = enable ? path.join(activeDir, id) : path.join(disabledDir, id);
+  if (!fs.existsSync(from) || fs.existsSync(to)) return false;
+  ensureDir(enable ? activeDir : disabledDir);
+  fs.renameSync(from, to);
+  return true;
+}
+
+/** As outras partes do mesmo pacote (ex: a metade servidor de um mod client+server). */
+function findPackageSiblings(clientRoot: string, modId: string): RegistryEntry[] {
+  const registry = loadRegistry(clientRoot);
+  const own = registry.find((r) => r.id === modId);
+  if (!own?.packageId) return [];
+  return registry.filter((r) => r.packageId === own.packageId && r.id !== modId && !r.id.startsWith("hybrid-manifest-"));
+}
+
 export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
     return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser alternado." };
@@ -1368,6 +1519,57 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
     }
   }
 
+  // Prepatchers do mesmo mod acompanham o habilitar/desabilitar. Sem isso, desabilitar
+  // o Wedge (por exemplo) movia Wedge.Client.dll mas deixava Wedge.Prepatch.dll rodando.
+  let movedPatchers = 0;
+  if (!isServer) {
+    const patchersActive = p(clientRoot, CLIENT_PATCHERS_DIR);
+    const patchersDisabled = p(clientRoot, CLIENT_PATCHERS_DISABLED_DIR);
+    const patchersFrom = mod.enabled ? patchersActive : patchersDisabled;
+    const patchersTo = mod.enabled ? patchersDisabled : patchersActive;
+
+    const registryEntry = loadRegistry(clientRoot).find((r) => r.id === mod.id);
+    const manifestFiles = registryEntry?.linkedModId
+      ? (loadManifest(clientRoot)[registryEntry.linkedModId] ?? [])
+      : [];
+
+    const related = findRelatedPatcherFiles(patchersFrom, mod.id, manifestFiles);
+    if (related.length > 0) {
+      ensureDir(patchersTo);
+      for (const filePath of related) {
+        const target = path.join(patchersTo, path.basename(filePath));
+        if (!fs.existsSync(target)) {
+          fs.renameSync(filePath, target);
+          movedPatchers++;
+        }
+      }
+    }
+  }
+
+  // As outras partes do mesmo pacote acompanham: um mod com metade servidor e metade
+  // cliente meio desabilitado normalmente não funciona, e o usuário quase nunca quer isso.
+  let movedSiblings = 0;
+  for (const sibling of findPackageSiblings(clientRoot, mod.id)) {
+    if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
+  }
+
+  if (movedSiblings > 0) {
+    return {
+      success: true,
+      message: mod.enabled
+        ? `Mod desabilitado (${movedSiblings + 1} partes do pacote).`
+        : `Mod habilitado (${movedSiblings + 1} partes do pacote).`
+    };
+  }
+
+  if (movedPatchers > 0) {
+    return {
+      success: true,
+      message: mod.enabled
+        ? `Mod desabilitado (e ${movedPatchers} patcher(s) junto).`
+        : `Mod habilitado (e ${movedPatchers} patcher(s) junto).`
+    };
+  }
   return { success: true, message: mod.enabled ? "Mod desabilitado." : "Mod habilitado." };
 }
 
@@ -1411,6 +1613,16 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
     return { success: false, message: "Mod não encontrado: " + target };
   }
   fs.rmSync(target, { recursive: true, force: true });
+
+  // Prepatchers do mod saem junto na remoção — nas duas pastas, já que o mod pode estar
+  // desabilitado no momento em que é removido.
+  if (!isServer) {
+    for (const patchersDir of [p(clientRoot, CLIENT_PATCHERS_DIR), p(clientRoot, CLIENT_PATCHERS_DISABLED_DIR)]) {
+      for (const filePath of findRelatedPatcherFiles(patchersDir, mod.id)) {
+        fs.rmSync(filePath, { force: true });
+      }
+    }
+  }
 
   // Client mod solto (.dll) costuma ter uma pasta de dados de mesmo nome ao lado —
   // ela não é listada como mod (é dado dele), então precisa sair junto.
@@ -1593,6 +1805,7 @@ export interface ForgeUpdateItem {
   currentVersion?: string;
   recommendedVersion?: string;
   downloadLink?: string;
+  guid?: string; // identificador da Forge, gravado ao atualizar pelo app
   reason?: string;
 }
 
@@ -1604,6 +1817,7 @@ export interface ForgeUpdateCheckResult {
   incompatible: ForgeUpdateItem[];
   infoOnly: ForgeUpdateItem[];
   unmatched: string[];
+  skippedByBudget?: string[]; // não consultados: o orçamento de requisições acabou antes
 }
 
 export interface ForgeSptVersion {
@@ -1689,9 +1903,27 @@ function normalizeForCompare(value: string): string {
 }
 
 function splitAuthorPrefix(name: string): { author?: string; rest: string } {
-  const match = /^([A-Za-z0-9]+)[-_](.+)$/.exec(name);
-  if (match && match[2].length >= 3) return { author: match[1], rest: match[2] };
+  // O ponto é tão comum quanto o hífen como separador de autor: numa instalação real,
+  // 16 mods não casavam só por isso (Tyfon.UIFixes, IcyClawz.ItemAttributeFix,
+  // Kat.BetterAmmoLoadingList, Tosox.DynamicItemWeights, ...).
+  const match = /^([A-Za-z0-9]+)[-_.](.+)$/.exec(name);
+  // O resto precisa ter letra: senão "SAIN.4.4.3" viraria autor "SAIN" + nome "4.4.3",
+  // e o sufixo de versão seria tratado como se fosse o nome do mod.
+  if (match && match[2].length >= 3 && /[a-zA-Z]/.test(match[2])) {
+    return { author: match[1], rest: match[2] };
+  }
   return { rest: name };
+}
+
+/**
+ * Pasta nomeada com o GUID do mod ("com.swiftxp.spt.showmethemoney"). O último segmento
+ * costuma ser o nome, e o segundo, o autor — que serve de verificação.
+ */
+function splitGuidLikeFolder(name: string): { author?: string; rest?: string } {
+  const parts = name.split(".");
+  if (parts.length < 3) return {};
+  if (!/^(com|org|net|me|xyz|io|dev)$/i.test(parts[0])) return {};
+  return { author: parts[1], rest: parts[parts.length - 1] };
 }
 
 interface MatchCandidates {
@@ -1702,19 +1934,80 @@ interface MatchCandidates {
   authorHint?: string;
 }
 
+/**
+ * Tira do nome da pasta o que não faz parte do nome do mod na Forge. Padrões vistos numa
+ * instalação real de 136 mods, todos falhando o casamento antes disso:
+ *
+ *   "WTT-PackNStrap-2.0.4"  -> "WTT-PackNStrap"    (versão anexada na pasta)
+ *   "SAIN.4.4.3"            -> "SAIN"
+ *   "MedicalAttention-Client" -> "MedicalAttention" (metade cliente de um pacote)
+ *   "MergeConsumablesServer"  -> "MergeConsumables"
+ *   "[SVM] Server Value Modifier" -> "Server Value Modifier"
+ */
+function stripFolderNameNoise(name: string): string[] {
+  const variants = new Set<string>([name]);
+  let current = name;
+
+  // "[SVM] Nome" -> "Nome"
+  const withoutTag = current.replace(/^\[[^\]]+\]\s*/, "").trim();
+  if (withoutTag && withoutTag !== current) {
+    variants.add(withoutTag);
+    current = withoutTag;
+  }
+
+  // sufixo de versão: "-2.0.4", ".4.4.3", "_1.2"
+  const withoutVersion = current.replace(/[-._]v?\d+(\.\d+){1,3}$/i, "").trim();
+  if (withoutVersion && withoutVersion !== current) {
+    variants.add(withoutVersion);
+    current = withoutVersion;
+  }
+
+  // sufixo de parte do pacote: "-Client", "Server", ".Net"
+  const withoutPart = current.replace(/[-._]?(client|server|\.net)$/i, "").trim();
+  if (withoutPart && withoutPart.length >= 3 && withoutPart !== current) {
+    variants.add(withoutPart);
+  }
+
+  return [...variants].filter(Boolean);
+}
+
 function buildMatchCandidates(folderName: string): MatchCandidates {
   const { cleanName } = stripLoadOrderPrefix(folderName); // ignora "01_" de pastas legadas
   const { author, rest } = splitAuthorPrefix(cleanName);
   const spaced = (v: string) =>
-    v.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ").trim();
+    v
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase -> camel Case
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2") // "UIFixes" -> "UI Fixes"
+      .replace(/[-_.]+/g, " ")
+      .trim();
 
-  const strictSlugs = [...new Set([slugifyName(cleanName)])].filter(Boolean);
-  const strictNames = [...new Set([cleanName, spaced(cleanName)])].filter(Boolean);
+  const guidLike = splitGuidLikeFolder(cleanName);
+  const cleanVariants = [...new Set([...stripFolderNameNoise(cleanName), ...(guidLike.rest ? [guidLike.rest] : [])])];
+  const strictSlugs = [...new Set(cleanVariants.map(slugifyName))].filter(Boolean);
+  // No máximo 2 tentativas de nome por mod: a mais limpa primeiro (mais chance de bater
+  // com o nome publicado) e a crua como reserva. Mais que isso multiplica requisições
+  // sem ganho proporcional, e o orçamento é curto.
+  const orderedVariants = [...cleanVariants].sort((a, b) => a.length - b.length);
+  const strictNames = [...new Set(orderedVariants.flatMap((v) => [v, spaced(v)]))]
+    // Variante sem letra nenhuma ("4 4 3") nunca vai casar com nome de mod — só gastaria
+    // uma requisição do orçamento.
+    .filter((v) => v && /[a-zA-Z]/.test(v))
+    .slice(0, 3);
   const looseSlugs =
     rest !== cleanName ? [...new Set([slugifyName(rest)])].filter(Boolean) : [];
-  const looseNames = rest !== cleanName ? [...new Set([rest, spaced(rest)])].filter(Boolean) : [];
+  // Ordena pela forma com espaços primeiro: o nome publicado quase sempre tem espaços
+  // ("UI Fixes", "Dynamic Item Weights"), não camelCase.
+  // O nome sem o autor também precisa passar pela limpeza: "Tyfon.UIFixes.Server"
+  // deixa "UIFixes.Server", e o que interessa é "UI Fixes".
+  const looseRaw = guidLike.rest ?? (rest !== cleanName ? rest : undefined);
+  const looseBase = looseRaw ? (stripFolderNameNoise(looseRaw).sort((a, b) => a.length - b.length)[0] ?? looseRaw) : undefined;
+  const looseNames = looseBase
+    ? [...new Set([spaced(looseBase), looseBase])].filter((v) => v && /[a-zA-Z]/.test(v))
+    : [];
 
-  return { strictSlugs, strictNames, looseSlugs, looseNames, authorHint: author };
+  // Na pasta-GUID ("com.swiftxp.spt.showmethemoney"), o split simples pegaria "com"
+  // como autor — o autor de verdade é o segundo segmento.
+  return { strictSlugs, strictNames, looseSlugs, looseNames, authorHint: guidLike.author ?? author };
 }
 
 /**
@@ -1724,6 +2017,9 @@ function buildMatchCandidates(folderName: string): MatchCandidates {
  */
 function isPlausibleMatch(candidate: any, searched: string, authorHint?: string): boolean {
   const rawName = String(candidate?.name ?? "");
+  // O nome PUBLICADO também pode ter prefixo em colchetes ("[SAIN] Twitch Players"),
+  // então a comparação precisa considerar as duas formas dos dois lados.
+  const rawNameNoTag = rawName.replace(/^\[[^\]]+\]\s*/, "").trim();
   const rawSlug = String(candidate?.slug ?? "");
   const forgeName = normalizeForCompare(rawName);
   const forgeSlug = normalizeForCompare(rawSlug);
@@ -1742,7 +2038,9 @@ function isPlausibleMatch(candidate: any, searched: string, authorHint?: string)
   //    nome curto: "SAIN" -> "SAIN - Solarint's AI Modifications - ...".
   //    O limite de palavra evita casar "keys" com "KeysReworked": exigimos que o que
   //    vem logo depois no nome ORIGINAL não seja letra/número.
+  if (normalizeForCompare(rawNameNoTag) === target) return true;
   if (target.length >= 3 && startsWithAtWordBoundary(rawName, searched)) return true;
+  if (target.length >= 3 && rawNameNoTag !== rawName && startsWithAtWordBoundary(rawNameNoTag, searched)) return true;
   if (target.length >= 3 && startsWithAtWordBoundary(rawSlug, searched)) return true;
 
   return false;
@@ -1776,6 +2074,7 @@ function startsWithAtWordBoundary(fullValue: string, prefix: string): boolean {
 
 interface ForgeMatch {
   identifier: string;
+  modId: number; // id numérico da Forge — sempre existe, mesmo quando guid é null
   latestVersion?: string;
   latestVersionLink?: string;
   forgeName?: string;
@@ -1787,6 +2086,7 @@ function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
   const latest = versions[0];
   return {
     identifier: typeof entry.guid === "string" ? entry.guid : String(entry.id),
+    modId: Number(entry.id),
     latestVersion: latest?.version,
     latestVersionLink: latest?.link,
     forgeName: typeof entry.name === "string" ? entry.name : undefined,
@@ -1821,7 +2121,11 @@ function newForgeBudget(modCount: number): ForgeBudget {
   // ~4 tentativas por mod (uma por estratégia), com piso e teto. O teto antigo de 160
   // truncava em silêncio quem tem instalação grande: com 118 mods, a busca parava na
   // metade e o resto era reportado como "não encontrado" sem nunca ter sido consultado.
-  return { remaining: Math.min(Math.max(modCount * 4, 20), 700), rateLimitHits: 0, aborted: false };
+  // Até 5 requisições por mod (3 nomes + nome sem autor + busca textual). A folga
+  // importa: com o orçamento exatamente no limite, um mod que usa todas as tentativas
+  // empurra outro pra fora, e o que fica de fora aparece como "não encontrado" sem
+  // nunca ter sido consultado.
+  return { remaining: Math.min(Math.max(modCount * 7, 30), 1400), rateLimitHits: 0, aborted: false };
 }
 
 /**
@@ -1880,6 +2184,22 @@ async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string
 
 // GUID SIM aceita lote de verdade — é o único caminho realmente confiável e barato.
 // Uma requisição resolve dezenas de mods, sem fuzzy e sem ambiguidade.
+async function fetchForgeByIds(ids: string[], budget: ForgeBudget): Promise<any[]> {
+  if (ids.length === 0) return [];
+  const results: any[] = [];
+  const CHUNK = 25;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const url = new URL(`${FORGE_API_BASE}/mods`);
+    url.searchParams.set("filter[id]", ids.slice(i, i + CHUNK).join(","));
+    url.searchParams.set("per_page", "50");
+    url.searchParams.set("include", "versions");
+    url.searchParams.set("filter[include_legacy]", "true");
+    const json = await forgeFetchJson(url.toString(), budget);
+    if (Array.isArray(json?.data)) results.push(...json.data);
+  }
+  return results;
+}
+
 async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<any[]> {
   if (guids.length === 0) return [];
   const results: any[] = [];
@@ -1912,6 +2232,14 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
  */
 const FORGE_MATCH_CACHE_FILE = ".spt-mod-manager-forge-match.json";
 
+/**
+ * IMPORTANTE: o cache guarda o ID NUMÉRICO da Forge, não o guid.
+ *
+ * Conferido numa resposta real da API: de 11 mods retornados numa busca, 8 tinham
+ * "guid": null — só o autor que registra um GUID na plataforma tem esse campo. O id
+ * numérico existe sempre. Guardar guid aqui deixava o cache inútil justamente pros mods
+ * que mais precisam dele (os que não têm guid e caem nas estratégias lentas por nome).
+ */
 function loadForgeMatchCache(root: string): Record<string, string> {
   try {
     const file = path.join(root, FORGE_MATCH_CACHE_FILE);
@@ -1935,15 +2263,18 @@ export async function matchForgeMods(
   input: (string | { folderName: string; guid?: string })[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
-): Promise<Map<string, ForgeMatch>> {
+): Promise<Map<string, ForgeMatch> & { notChecked?: Set<string> }> {
   const cache = cacheRoot ? loadForgeMatchCache(cacheRoot) : {};
   const entries = input
     .map((v) => (typeof v === "string" ? { folderName: v, guid: undefined as string | undefined } : { ...v }))
-    // Mod sem GUID local, mas já resolvido numa checagem anterior: entra no lote.
-    .map((e) => (e.guid ? e : { ...e, guid: cache[e.folderName] }));
+    // Mod já resolvido numa checagem anterior: o cache guarda o id numérico da Forge.
+    .map((e) => ({ ...e, cachedId: cache[e.folderName] }));
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
+  // Mods que o orçamento de requisições não alcançou — diferente de "procurado e não
+  // achado", e a UI precisa dizer isso com honestidade.
+  const notChecked = new Set<string>();
   // O progresso conta MODS RESOLVIDOS, não tentativas. Contar tentativas dava um total
   // de "mods x 4 estratégias" (552 pra 136 mods), que na tela parecia uma quantidade
   // absurda de mods — e escondia o fato de que, com GUID, a maioria resolve de primeira,
@@ -1961,7 +2292,21 @@ export async function matchForgeMods(
   // De longe o melhor caminho: filter[guid] aceita lista separada por vírgula e não é
   // fuzzy, então dezenas de mods se resolvem numa requisição só, sem chute por nome.
   // Só funciona pra mods que declaram GUID (SPT 4.0); o resto cai nos passos seguintes.
-  const guidEntries = entries.filter((e) => e.guid);
+  // Lote por ID numérico: cobre tudo que já foi resolvido antes, inclusive mods sem guid.
+  const cachedEntries = entries.filter((e) => e.cachedId);
+  if (cachedEntries.length > 0) {
+    const byId = new Map<string, any>();
+    for (const entry of await fetchForgeByIds(cachedEntries.map((e) => e.cachedId!), budget)) {
+      if (entry?.id !== undefined) byId.set(String(entry.id), entry);
+    }
+    for (const entry of cachedEntries) {
+      const hit = byId.get(String(entry.cachedId));
+      if (hit) matched.set(entry.folderName, toForgeMatch(hit, "exact"));
+    }
+    reportProgress();
+  }
+
+  const guidEntries = entries.filter((e) => e.guid && !matched.has(e.folderName));
   if (guidEntries.length > 0) {
     const byGuid = new Map<string, any>();
     for (const entry of await fetchForgeByGuids(guidEntries.map((e) => e.guid!), budget)) {
@@ -1974,55 +2319,61 @@ export async function matchForgeMods(
     reportProgress(); // com GUID, a maioria já fica pronta aqui
   }
 
-  // --- Passos 1 a 4: por MOD, tentando as estratégias até uma acertar ---
+  // --- Busca por nome, mod a mod ---
   //
-  // Antes isso era organizado por estratégia ("todos os mods por slug, depois todos por
-  // nome, ..."). Além de não ajudar em nada (esses filtros da Forge são fuzzy e de valor
-  // único, então cada consulta é individual de qualquer jeito), fazia o progresso ficar
-  // parado: um mod só contava quando casava, e nos passos do meio nada casava por vários
-  // minutos. Indo mod a mod, cada um termina — casando ou esgotando — e o contador anda.
+  // São no MÁXIMO 2 requisições por mod: o filtro por nome e, se falhar, a busca textual.
+  //
+  // A estratégia por slug foi removida: o slug da Forge é derivado do nome PUBLICADO, que
+  // é justamente o que a gente não sabe. Conferido na API real — o slug do SAIN é
+  // "sain-solarints-ai-modifications-full-ai-combat-system-replacement", enquanto o do
+  // Wedge é só "wedge". Ou seja, o slug só acerta quando é igual ao nome, e nesse caso a
+  // busca por nome já acha. Em compensação ela custava até 2 requisições por mod.
+  //
+  // Isso importa porque o orçamento é limitado pelo rate limit da Forge: com 6 requisições
+  // por mod, uma instalação de 136 mods estourava o orçamento na metade da lista, e os
+  // mods restantes eram reportados como "não encontrado" sem nunca terem sido consultados.
   for (const [folderName, cand] of candidatesByName) {
-    if (matched.has(folderName)) continue; // já resolvido pelo lote de GUID
+    if (matched.has(folderName)) continue; // já resolvido pelos lotes de id/guid
     if (budget.aborted) break;
 
-    // 1) slug exato (derivado do nome da pasta)
-    for (const slug of cand.strictSlugs) {
-      const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
-      const exact = hits.find((entry) => normalizeForCompare(entry?.slug ?? "") === normalizeForCompare(slug));
-      const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
+    // 1) filtro por nome (fuzzy — o resultado SEMPRE passa por verificação)
+    for (const name of cand.strictNames) {
+      const hits = await fetchForgeByFuzzyFilter("name", name, budget);
+      const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
+      const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, name, cand.authorHint));
       if (hit) {
         matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
         break;
       }
+      if (budget.aborted) break;
     }
 
-    // 2) nome exato
-    if (!matched.has(folderName)) {
-      for (const name of cand.strictNames) {
+    // 2) nome sem o prefixo do autor ("Tyfon.UIFixes" -> "UI Fixes")
+    //
+    // Aqui a verificação é mais rígida: sem o autor, o nome vira genérico ("Pause",
+    // "Skipper") e um prefixo qualquer casaria com o mod errado. Só aceita se o nome
+    // publicado for igual, ou se o autor na Forge confirmar.
+    if (!matched.has(folderName) && !budget.aborted) {
+      for (const name of cand.looseNames.slice(0, 1)) {
         const hits = await fetchForgeByFuzzyFilter("name", name, budget);
-        const exact = hits.find((entry) => normalizeForCompare(entry?.name ?? "") === normalizeForCompare(name));
-        const hit = exact ?? hits.find((entry) => isPlausibleMatch(entry, name, cand.authorHint));
-        if (hit) {
-          matched.set(folderName, toForgeMatch(hit, exact ? "exact" : "derived"));
-          break;
-        }
-      }
-    }
-
-    // 3) sem o prefixo de autor (verificação mais rígida)
-    if (!matched.has(folderName)) {
-      for (const slug of cand.looseSlugs) {
-        const hits = await fetchForgeByFuzzyFilter("slug", slug, budget);
-        const hit = hits.find((entry) => isPlausibleMatch(entry, slug, cand.authorHint));
+        const hit = hits.find((entry) => {
+          const target = normalizeForCompare(name);
+          const forgeName = normalizeForCompare(String(entry?.name ?? ""));
+          const forgeNameNoTag = normalizeForCompare(String(entry?.name ?? "").replace(/^\[[^\]]+\]\s*/, ""));
+          if (forgeName === target || forgeNameNoTag === target) return true;
+          const owner = normalizeForCompare(String(entry?.owner?.name ?? ""));
+          return !!cand.authorHint && !!owner && owner === normalizeForCompare(cand.authorHint);
+        });
         if (hit) {
           matched.set(folderName, toForgeMatch(hit, "derived"));
           break;
         }
+        if (budget.aborted) break;
       }
     }
 
-    // 4) busca textual, último recurso
-    if (!matched.has(folderName)) {
+    // 3) busca textual, último recurso
+    if (!matched.has(folderName) && !budget.aborted) {
       const term = cand.looseNames[0] ?? cand.strictNames[0];
       if (term) {
         const url = new URL(`${FORGE_API_BASE}/mods`);
@@ -2036,8 +2387,21 @@ export async function matchForgeMods(
       }
     }
 
-    if (!matched.has(folderName)) exhausted++;
+    if (!matched.has(folderName)) {
+      // Só conta como "procurado e não achado" se realmente deu pra procurar. Se o
+      // orçamento acabou, esse mod não foi consultado — e dizer "não encontrado" nesse
+      // caso é mentira.
+      if (budget.aborted || budget.remaining <= 0) notChecked.add(folderName);
+      else exhausted++;
+    }
     reportProgress();
+  }
+
+  // Mods que sobraram sem ser consultados (orçamento acabou antes de chegar neles).
+  for (const [folderName] of candidatesByName) {
+    if (!matched.has(folderName) && !notChecked.has(folderName) && (budget.aborted || budget.remaining <= 0)) {
+      notChecked.add(folderName);
+    }
   }
 
   // Fecha o progresso: se o orçamento foi interrompido, sobram mods que não foram nem
@@ -2050,11 +2414,12 @@ export async function matchForgeMods(
     // próxima checagem já encontre esses mods na consulta em lote.
     const updated = { ...cache };
     for (const [folderName, match] of matched) {
-      if (match.identifier) updated[folderName] = match.identifier;
+      if (match.modId) updated[folderName] = String(match.modId);
     }
     saveForgeMatchCache(cacheRoot, updated);
   }
 
+  (matched as Map<string, ForgeMatch> & { notChecked?: Set<string> }).notChecked = notChecked;
   return matched;
 }
 
@@ -2104,7 +2469,7 @@ export async function findForgeDownloadsForNames(
   entries: { name: string; guid?: string }[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
-): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string }>> {
+): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>> {
   // Quando a lista exportada traz o GUID, o casamento é exato e resolvido em lote —
   // sem adivinhação por nome. Listas antigas (sem GUID) continuam funcionando pelo nome.
   const matches = await matchForgeMods(
@@ -2112,14 +2477,19 @@ export async function findForgeDownloadsForNames(
     onProgress,
     cacheRoot
   );
-  const out: Record<string, { downloadLink: string; version?: string; forgeName?: string }> = {};
+  const out: Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }> = {};
   const budget = newForgeBudget(entries.length);
   for (const { name } of entries) {
     const info = matches.get(name);
     if (!info) continue;
 
     if (info.latestVersionLink) {
-      out[name] = { downloadLink: info.latestVersionLink, version: info.latestVersion, forgeName: info.forgeName };
+      out[name] = {
+        downloadLink: info.latestVersionLink,
+        version: info.latestVersion,
+        forgeName: info.forgeName,
+        guid: info.identifier
+      };
       continue;
     }
 
@@ -2135,7 +2505,7 @@ export async function findForgeDownloadsForNames(
     const versions = json?.data?.[0]?.versions;
     const latest = Array.isArray(versions) ? versions[0] : undefined;
     if (latest?.link) {
-      out[name] = { downloadLink: latest.link, version: latest.version, forgeName: info.forgeName };
+      out[name] = { downloadLink: latest.link, version: latest.version, forgeName: info.forgeName, guid: info.identifier };
     }
   }
   return out;
@@ -2172,6 +2542,7 @@ export async function checkForgeUpdates(
   const pairs: string[] = [];
   const nameByIdentifier = new Map<string, string>();
   const unmatched: string[] = [];
+  const skippedByBudget: string[] = [];
   const infoOnly: ForgeUpdateItem[] = [];
 
   // Resolve TODOS os mods de uma vez (poucas requisições em lote), em vez de uma
@@ -2185,10 +2556,14 @@ export async function checkForgeUpdates(
     cacheRoot
   );
 
+  const notChecked = (matches as Map<string, ForgeMatch> & { notChecked?: Set<string> }).notChecked;
   for (const mod of mods) {
     const info = matches.get(mod.originalName);
     if (!info) {
-      unmatched.push(mod.name);
+      // Distingue quem não foi consultado (orçamento de requisições esgotado) de quem
+      // foi procurado e realmente não está na Forge com esse nome.
+      if (notChecked?.has(mod.originalName)) skippedByBudget.push(mod.name);
+      else unmatched.push(mod.name);
       continue;
     }
     if (mod.version) {
@@ -2212,7 +2587,8 @@ export async function checkForgeUpdates(
     upToDate: [],
     incompatible: [],
     infoOnly,
-    unmatched
+    unmatched,
+    skippedByBudget
   };
   if (pairs.length === 0) return empty;
 
@@ -2239,6 +2615,9 @@ export async function checkForgeUpdates(
         currentVersion: u.current_version?.version,
         recommendedVersion: u.recommended_version?.version,
         downloadLink: u.recommended_version?.link,
+        // Identificador da Forge, pra que atualizar pelo app grave o mesmo GUID e as
+        // próximas checagens desse mod não voltem a depender de casamento por nome.
+        guid: u.current_version?.guid,
         reason: u.update_reason
       }))
       // A Forge às vezes devolve como "atualização" uma versão igual à instalada (por
@@ -2266,7 +2645,8 @@ export async function checkForgeUpdates(
       reason: i.reason
     })),
     infoOnly,
-    unmatched
+    unmatched,
+    skippedByBudget
   };
 }
 
