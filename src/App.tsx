@@ -439,7 +439,17 @@ export default function App() {
     pushToast(tMsg(result.message), result.success);
     if (result.success) {
       // Atualização local (sem re-escanear o disco inteiro) — bem mais rápido com muitos mods.
-      setMods((prev) => prev.map((m) => (m.id === mod.id && m.type === mod.type ? { ...m, enabled: !m.enabled } : m)));
+      //
+      // Inclui as OUTRAS PARTES do mesmo pacote: o backend alterna todas juntas, e sem
+      // isso a lista continuava mostrando a outra metade no estado antigo — parecia que
+      // a cascata não tinha funcionado.
+      setMods((prev) =>
+        prev.map((m) => {
+          const isSame = m.id === mod.id && m.type === mod.type;
+          const isSamePackage = !!mod.packageId && m.packageId === mod.packageId;
+          return isSame || isSamePackage ? { ...m, enabled: !mod.enabled } : m;
+        })
+      );
     }
     setMutating(false);
   }
@@ -796,6 +806,9 @@ export default function App() {
     }
 
     pushToast(t("toast.bulkProcessed", { done: succeededKeys.size, total: selectedMods.length }), true);
+    // Em lote, um item de pacote arrasta as partes irmãs junto — a atualização local
+    // acima não sabe disso, então re-escaneia pra lista bater com o disco.
+    if (selectedMods.some((m) => m.packageId)) refreshMods();
     clearSelection();
     setMutating(false);
   }

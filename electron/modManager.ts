@@ -669,14 +669,22 @@ function saveRegistry(sptPath: string, entries: RegistryEntry[]) {
 
 function addToRegistry(sptPath: string, entry: RegistryEntry) {
   const reg = loadRegistry(sptPath);
-  const filtered = reg.filter((e) => e.id !== entry.id);
+  // A identidade de uma entrada é id + tipo, não só o id: um pacote pode instalar uma
+  // parte servidor e uma cliente com o MESMO nome de pasta (o Wedge faz isso). Filtrar
+  // só por id fazia o registro da segunda apagar o da primeira.
+  const filtered = reg.filter((e) => !(e.id === entry.id && e.type === entry.type));
   filtered.push(entry);
   saveRegistry(sptPath, filtered);
 }
 
-function removeFromRegistry(sptPath: string, id: string) {
+function removeFromRegistry(sptPath: string, id: string, type?: ModType) {
   const reg = loadRegistry(sptPath);
-  saveRegistry(sptPath, reg.filter((e) => e.id !== id));
+  // Mesma razão do addToRegistry: sem o tipo, remover a parte servidor do Wedge apagaria
+  // também o registro da parte cliente, que tem o mesmo id.
+  saveRegistry(
+    sptPath,
+    reg.filter((e) => !(e.id === id && (type === undefined || e.type === type)))
+  );
 }
 
 // --- Aliases (nome de exibição customizado, não mexe em arquivo nenhum) ---
@@ -975,7 +983,9 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
 
   function pushMod(id: string, cleanName: string, type: ModType, enabled: boolean, loadOrder: number, modPath?: string) {
     const metadata = modPath ? readModMetadata(modPath) : {};
-    const registryEntry = registry.find((r) => r.id === id);
+    // Busca por id + tipo: com Wedge servidor e Wedge cliente no registro, procurar só
+    // pelo id devolveria a entrada errada pra uma das duas linhas.
+    const registryEntry = registry.find((r) => r.id === id && r.type === type);
     mods.push({
       id,
       name: aliases[id] ?? cleanName,
@@ -1367,6 +1377,10 @@ function performMerge(
   // arquivo aponta pros arquivos soltos, e eles só somem quando o ÚLTIMO deles sai.
   const allNamedModIds = [...serverModNames, ...clientModNames];
 
+  // Todas as partes vindas deste mesmo arquivo compartilham um id de pacote — é o que
+  // permite tratar "Wedge servidor" e "Wedge cliente" como um mod só depois.
+  const packageId = `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   for (const name of serverModNames) {
     addToRegistry(clientRoot, {
       id: name,
@@ -1374,6 +1388,7 @@ function performMerge(
       type: "server",
       installedAt: new Date().toISOString(),
       source: "archive-install",
+      packageId,
       linkedModId: orphanId
     });
   }
@@ -1384,6 +1399,7 @@ function performMerge(
       type: "client",
       installedAt: new Date().toISOString(),
       source: "archive-install",
+      packageId,
       linkedModId: orphanId
     });
   }
@@ -1481,11 +1497,15 @@ function moveModEntry(clientRoot: string, serverRoot: string, id: string, type: 
 }
 
 /** As outras partes do mesmo pacote (ex: a metade servidor de um mod client+server). */
-function findPackageSiblings(clientRoot: string, modId: string): RegistryEntry[] {
+function findPackageSiblings(clientRoot: string, modId: string, modType: ModType): RegistryEntry[] {
   const registry = loadRegistry(clientRoot);
-  const own = registry.find((r) => r.id === modId);
+  const own = registry.find((r) => r.id === modId && r.type === modType);
   if (!own?.packageId) return [];
-  return registry.filter((r) => r.packageId === own.packageId && r.id !== modId && !r.id.startsWith("hybrid-manifest-"));
+  // Compara por id + tipo: as duas metades do Wedge têm o mesmo id, e comparar só por id
+  // descartaria justamente a outra parte que a gente quer alternar junto.
+  return registry.filter(
+    (r) => r.packageId === own.packageId && !(r.id === modId && r.type === modType) && !r.id.startsWith("hybrid-manifest-")
+  );
 }
 
 export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
@@ -1549,7 +1569,7 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
   // As outras partes do mesmo pacote acompanham: um mod com metade servidor e metade
   // cliente meio desabilitado normalmente não funciona, e o usuário quase nunca quer isso.
   let movedSiblings = 0;
-  for (const sibling of findPackageSiblings(clientRoot, mod.id)) {
+  for (const sibling of findPackageSiblings(clientRoot, mod.id, mod.type)) {
     if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
   }
 
@@ -1589,7 +1609,7 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
       // Registro já estava vazio/inconsistente — ainda assim limpa a entrada
       // da lista pra não deixar um fantasma que ninguém consegue remover.
       removeManifestEntry(clientRoot, mod.id);
-      removeFromRegistry(clientRoot, mod.id);
+      removeFromRegistry(clientRoot, mod.id, mod.type);
       return { success: true, message: "Entrada removida da lista (nenhum arquivo rastreado)." };
     }
     let removedCount = 0;
@@ -1666,7 +1686,7 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
     removeFromRegistry(clientRoot, orphanEntry.id);
   }
 
-  removeFromRegistry(clientRoot, mod.id);
+  removeFromRegistry(clientRoot, mod.id, mod.type);
   return {
     success: true,
     message:
