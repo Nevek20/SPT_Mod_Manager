@@ -15,7 +15,9 @@ export interface ModInfo {
   guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge // true = mod "órfão" rastreado por manifesto (sem pasta nomeada própria); não suporta habilitar/desabilitar
   linkedModName?: string; // nome de exibição de um mod "ligado" (ex: arquivo solto do mesmo install) — remover um remove o outro
   sptVersion?: string;
+  sptCompatibility?: "compatible" | "incompatible" | "unknown"; // versão do SPT declarada x instância
   packageId?: string; // partes instaladas do mesmo arquivo compartilham esse id
+  packageSiblings?: { id: string; type: ModType }[];
 }
 
 export interface InstanceConfig {

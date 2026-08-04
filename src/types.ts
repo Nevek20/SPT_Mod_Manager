@@ -13,7 +13,9 @@ export interface ModInfo {
   installedAt?: string;
   manifestOnly?: boolean;
   sptVersion?: string; // restrição de versão do SPT declarada pelo mod (lida da DLL)
+  sptCompatibility?: "compatible" | "incompatible" | "unknown"; // declarada x versão da instância
   packageId?: string; // partes instaladas do mesmo arquivo compartilham esse id
+  packageSiblings?: { id: string; type: ModType }[]; // outras partes, quando o pacote é inferido
   guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge
   linkedModName?: string;
 }

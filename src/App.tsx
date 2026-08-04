@@ -1573,6 +1573,14 @@ function ModList({
                     {t("modlist.forgeInfo", { version: forgeStatus.version ?? "" })}
                   </span>
                 )}
+                {mod.sptCompatibility === "incompatible" && (
+                  <span
+                    className="meta-chip forge-chip-incompatible"
+                    title={t("modlist.sptIncompatibleTitle", { declared: mod.sptVersion ?? "" })}
+                  >
+                    {t("modlist.sptIncompatible")}
+                  </span>
+                )}
                 {(() => {
                   const parts = mod.packageId ? packagePartsById?.get(mod.packageId) : undefined;
                   if (!parts || parts.length < 2) return null;
@@ -1580,7 +1588,10 @@ function ModList({
                   return (
                     <span
                       className="meta-chip package-chip"
-                      title={t("modlist.packageTooltip", { others: others.join(", ") })}
+                      title={t(
+                        mod.packageId?.startsWith("inferred:") ? "modlist.packageTooltipInferred" : "modlist.packageTooltip",
+                        { others: others.join(", ") }
+                      )}
                     >
                       {t("modlist.packagePart", { count: parts.length })}
                     </span>

@@ -15,6 +15,7 @@ import {
   detectConflicts,
   detectSptVersion,
   detectSptSemver,
+  checkSptCompatibility,
   checkForgeUpdates,
   getForgeSptVersions,
   searchForgeMods,
@@ -117,7 +118,14 @@ ipcMain.handle("select-spt-folder", async () => {
 ipcMain.handle("scan-mods", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return [];
-  return scanMods(sptPath, getServerRoot()!);
+  // A compatibilidade é calculada aqui (e não no scan) porque depende da versão do SPT
+  // ESCOLHIDA pelo usuário, que o backend só conhece pelo store. Fazer aqui evita
+  // duplicar a lógica de comparação de versão no processo de interface.
+  const instanceVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath);
+  return scanMods(sptPath, getServerRoot()!).map((mod) => ({
+    ...mod,
+    sptCompatibility: checkSptCompatibility(mod.sptVersion, instanceVersion ?? undefined)
+  }));
 });
 
 ipcMain.handle("get-spt-version", () => {

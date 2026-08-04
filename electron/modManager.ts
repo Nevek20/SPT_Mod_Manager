@@ -1084,6 +1084,15 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
     const displayName = registryEntry?.displayName;
     if (displayName && namedModIds.has(displayName)) continue;
 
+    // O nome do órfão costuma vir do arquivo baixado, com versão colada
+    // ("MergeConsumables.1.5.4"), enquanto o mod se chama "MergeConsumables". Comparar
+    // as formas limpas liga os dois e tira a linha duplicada da lista.
+    if (displayName) {
+      const cleanedVariants = stripFolderNameNoise(displayName).map((v) => v.toLowerCase());
+      const namedLower = new Map([...namedModIds].map((id) => [id.toLowerCase(), id]));
+      if (cleanedVariants.some((v) => namedLower.has(v))) continue;
+    }
+
     mods.push({
       id: manifestId,
       name: aliases[manifestId] ?? registryEntry?.displayName ?? manifestId,
@@ -1096,6 +1105,54 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       manifestOnly: true,
       linkedModName: resolveLinkedName(registryEntry?.linkedModId)
     });
+  }
+
+  // Pacote INFERIDO, pra mods que já estavam instalados antes do vínculo existir.
+  //
+  // Sinal: a mesma pasta aparecendo dos dois lados (user/mods/Wedge + BepInEx/plugins/Wedge).
+  // Autor de mod nomeia a pasta com o nome do mod, então dois mods DIFERENTES com nome de
+  // pasta idêntico é bem improvável — conferido numa instalação real de 136 mods, onde os
+  // 8 pares nessa situação eram todos o mesmo mod.
+  //
+  // O id começa com "inferred:" de propósito: é palpite, não registro, então não é gravado
+  // em disco e some se a pasta for renomeada. Se errar, desfazer é só alternar de novo.
+  // A chave ignora separadores e o sufixo que indica O PAPEL da parte, não o mod:
+  // "MoreBotsServer" + "MoreBotsAPI" -> "morebots"; "MergeConsumablesServer" +
+  // "MergeConsumables" -> "mergeconsumables". Conferido contra 9 pares reais de uma
+  // instalação de verdade — todos agruparam, e pares que NÃO são o mesmo mod
+  // ("WTT-ServerCommonLib" e "WTT-ClientCommonLib") continuaram separados, porque o
+  // sufixo removido é só o do fim.
+  const packageBaseKey = (folderName: string): string => {
+    let key = folderName.toLowerCase().replace(/[-._\s]/g, "");
+    for (const suffix of ["serverside", "clientside", "backend", "server", "client", "api"]) {
+      if (key.endsWith(suffix) && key.length > suffix.length + 2) {
+        key = key.slice(0, -suffix.length);
+        break;
+      }
+    }
+    return key;
+  };
+
+  const byFolderName = new Map<string, ModInfo[]>();
+  for (const mod of mods) {
+    if (mod.packageId || mod.manifestOnly) continue;
+    const key = packageBaseKey(mod.id);
+    if (!key) continue;
+    if (!byFolderName.has(key)) byFolderName.set(key, []);
+    byFolderName.get(key)!.push(mod);
+  }
+  for (const [key, group] of byFolderName) {
+    const tiposDistintos = new Set(group.map((m) => m.type));
+    if (group.length >= 2 && tiposDistintos.size >= 2) {
+      for (const mod of group) {
+        mod.packageId = `inferred:${key}`;
+        // Guarda quem são as outras partes: os nomes podem diferir, então o toggle não
+        // tem como redescobrir isso sozinho.
+        mod.packageSiblings = group
+          .filter((other) => !(other.id === mod.id && other.type === mod.type))
+          .map((other) => ({ id: other.id, type: other.type }));
+      }
+    }
   }
 
   return mods.sort((a, b) => a.loadOrder - b.loadOrder || a.name.localeCompare(b.name));
@@ -1569,8 +1626,17 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
   // As outras partes do mesmo pacote acompanham: um mod com metade servidor e metade
   // cliente meio desabilitado normalmente não funciona, e o usuário quase nunca quer isso.
   let movedSiblings = 0;
-  for (const sibling of findPackageSiblings(clientRoot, mod.id, mod.type)) {
-    if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
+  if (mod.packageId?.startsWith("inferred:")) {
+    // Pacote inferido: as partes podem ter nomes DIFERENTES ("MoreBotsServer" e
+    // "MoreBotsAPI"), então quem sabe quais são é o scan — que já mandou os ids no
+    // próprio mod. Sem isso, só agrupava quando os nomes eram idênticos.
+    for (const sibling of mod.packageSiblings ?? []) {
+      if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
+    }
+  } else {
+    for (const sibling of findPackageSiblings(clientRoot, mod.id, mod.type)) {
+      if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
+    }
   }
 
   if (movedSiblings > 0) {
@@ -1639,7 +1705,9 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
   if (!isServer) {
     for (const patchersDir of [p(clientRoot, CLIENT_PATCHERS_DIR), p(clientRoot, CLIENT_PATCHERS_DISABLED_DIR)]) {
       for (const filePath of findRelatedPatcherFiles(patchersDir, mod.id)) {
-        fs.rmSync(filePath, { force: true });
+        // Pode ser arquivo OU pasta: alguns mods põem os patchers numa subpasta
+        // (BepInEx/patchers/Wedge/), então a remoção precisa ser recursiva.
+        fs.rmSync(filePath, { recursive: true, force: true });
       }
     }
   }
@@ -2570,6 +2638,10 @@ export async function checkForgeUpdates(
   // chance de achar, já que agora tenta slug/nome/derivado/full-text.
   // Busca pelo nome ORIGINAL (da pasta), não pelo apelido que o usuário deu —
   // assim renomear um mod pra exibição nunca quebra o casamento com a Forge.
+  // Versão que lemos do próprio mod, pra descartar "atualização" pra versão já instalada.
+  const localVersionByName = new Map<string, string>();
+  for (const m of mods) if (m.version) localVersionByName.set(m.name, m.version);
+
   const matches = await matchForgeMods(
     mods.map((m) => ({ folderName: m.originalName, guid: m.guid })),
     onProgress,
@@ -2644,9 +2716,16 @@ export async function checkForgeUpdates(
       // exemplo, o mesmo número publicado para outra versão do SPT). Anunciar
       // "v1.2.6 disponível" pra quem já está na v1.2.6 é ruído: se o número é o mesmo,
       // não há o que atualizar.
-      .filter((u: { currentVersion?: string; recommendedVersion?: string }) => {
+      .filter((u: { name: string; currentVersion?: string; recommendedVersion?: string }) => {
         const norm = (v?: string) => (v ?? "").trim().replace(/^v/i, "");
-        return !norm(u.recommendedVersion) || norm(u.recommendedVersion) !== norm(u.currentVersion);
+        if (!norm(u.recommendedVersion)) return true;
+        // Compara com a versão da Forge E com a que lemos localmente. A Forge às vezes
+        // está desatualizada sobre o que você tem instalado (MakeMedsGreatAgain: ela diz
+        // que você está na 1.2.5 e recomenda a 1.2.6, mas a DLL local já é 1.2.6), e
+        // anunciar atualização pra versão que a pessoa já tem é ruído.
+        const local = localVersionByName.get(u.name);
+        if (local && norm(u.recommendedVersion) === norm(local)) return false;
+        return norm(u.recommendedVersion) !== norm(u.currentVersion);
       }),
     blocked: (data.blocked_updates || []).map((b: any) => ({
       name: nameFor(b.current_version?.guid, b.current_version?.name),
