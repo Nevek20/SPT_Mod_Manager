@@ -4,6 +4,7 @@ import fs from "fs";
 import Store from "electron-store";
 import {
   resolveSptInstance,
+  hasServerExe,
   scanMods,
   installModFromArchive,
   toggleMod,
@@ -40,7 +41,28 @@ const store = new Store<InstanceConfig>({
 // instalador da SPT 4.x pode criar uma subpasta separada pro server). O fallback aqui
 // cobre configs salvas antes dessa mudança, onde serverRoot nunca foi definido.
 function getServerRoot(): string | null {
-  return store.get("serverRoot") || store.get("sptPath");
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return null;
+  const stored = store.get("serverRoot") || sptPath;
+
+  // Auto-conserto: quem configurou a instância antes de a gente entender o layout do
+  // SPT 4.1 (pasta SPT_Runtime) ficou com uma raiz de servidor errada salva — e uma
+  // instalação errada cria <raiz>/user/mods, que fazia a detecção antiga confirmar o
+  // erro pra sempre. Se o que está salvo não tem o executável do servidor e a detecção
+  // acha um lugar melhor, corrige sozinho.
+  //
+  // A checagem barata vem primeiro de propósito: getServerRoot() roda em toda chamada de
+  // IPC (scan, conflitos, install, toggle, uninstall, export...), e resolveSptInstance
+  // faz readdir + um monte de existsSync de forma síncrona na main process. No caminho
+  // normal — raiz salva correta — isso aqui custa um existsSync e para.
+  if (hasServerExe(stored)) return stored;
+
+  const better = resolveSptInstance(sptPath)?.instance.serverRoot;
+  if (better && better !== stored && hasServerExe(better)) {
+    store.set("serverRoot", better);
+    return better;
+  }
+  return stored;
 }
 
 let mainWindow: BrowserWindow | null = null;

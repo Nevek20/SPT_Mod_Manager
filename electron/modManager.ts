@@ -572,28 +572,22 @@ function hasClientMarkers(dir: string): boolean {
   return CLIENT_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe))) || fs.existsSync(path.join(dir, "BepInEx"));
 }
 
-function hasServerMarkers(dir: string): boolean {
-  return SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe))) || fs.existsSync(path.join(dir, "user"));
+/** Prova FORTE de raiz do servidor: o executável dele. */
+export function hasServerExe(dir: string): boolean {
+  return SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe)));
 }
 
-export function validateSptPath(sptPath: string): { valid: boolean; reason?: string } {
-  if (!fs.existsSync(sptPath)) {
-    return { valid: false, reason: "Pasta não existe." };
-  }
-  if (!fs.statSync(sptPath).isDirectory()) {
-    return { valid: false, reason: "O caminho selecionado não é uma pasta." };
-  }
-
-  const valid = hasClientMarkers(sptPath) || hasServerMarkers(sptPath);
-
-  if (!valid) {
-    return {
-      valid: false,
-      reason:
-        "Não parece ser uma instância SPT válida. Esperava encontrar SPT.Server.exe, EscapeFromTarkov.exe, ou as pastas user/ e BepInEx/ juntas."
-    };
-  }
-  return { valid: true };
+/**
+ * Prova FRACA de raiz do servidor: só uma pasta "user". Serve de plano B, nunca de
+ * primeira escolha.
+ *
+ * O SPT 4.1 renomeou a pasta do servidor de "SPT" pra "SPT_Runtime", e é lá que ficam o
+ * SPT.Server.exe e o user/. Tratar "user" como prova forte fazia a raiz do jogo ganhar de
+ * SPT_Runtime — e pior, virava profecia auto-realizável: bastava uma instalação errada
+ * criar <raiz>/user/mods pra que toda detecção seguinte confirmasse a raiz errada.
+ */
+function hasUserFolder(dir: string): boolean {
+  return fs.existsSync(path.join(dir, "user"));
 }
 
 export interface SptInstancePaths {
@@ -615,21 +609,32 @@ export function resolveSptInstance(chosenPath: string): { instance: SptInstanceP
   if (!fs.existsSync(chosenPath) || !fs.statSync(chosenPath).isDirectory()) return null;
 
   const chosenHasClient = hasClientMarkers(chosenPath);
-  const chosenHasServer = hasServerMarkers(chosenPath);
+  const subEntries = fs.readdirSync(chosenPath, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const subPaths = subEntries.map((e) => path.join(chosenPath, e.name));
 
-  // Caso comum: tudo já está na pasta escolhida.
-  if (chosenHasClient && chosenHasServer) {
-    return { instance: { clientRoot: chosenPath, serverRoot: chosenPath, split: false }, autoDetected: false };
+  // O executável do servidor decide, onde quer que ele esteja — raiz ou subpasta
+  // (SPT_Runtime no 4.1, SPT no 4.0). Só se não houver executável em lugar nenhum é que
+  // a pasta "user" entra como pista.
+  let serverRoot: string | undefined;
+  if (hasServerExe(chosenPath)) serverRoot = chosenPath;
+  else serverRoot = subPaths.find(hasServerExe);
+  if (!serverRoot) {
+    if (hasUserFolder(chosenPath)) serverRoot = chosenPath;
+    else serverRoot = subPaths.find(hasUserFolder);
   }
 
   let clientRoot = chosenHasClient ? chosenPath : undefined;
-  let serverRoot = chosenHasServer ? chosenPath : undefined;
+  if (!clientRoot) clientRoot = subPaths.find(hasClientMarkers);
 
-  const subEntries = fs.readdirSync(chosenPath, { withFileTypes: true }).filter((e) => e.isDirectory());
-  for (const entry of subEntries) {
-    const candidate = path.join(chosenPath, entry.name);
-    if (!clientRoot && hasClientMarkers(candidate)) clientRoot = candidate;
-    if (!serverRoot && hasServerMarkers(candidate)) serverRoot = candidate;
+  // Se achamos o server mas nenhum client aqui embaixo, olha pra CIMA antes de desistir.
+  // No layout do SPT 4.1 o server mora em <jogo>/SPT_Runtime, e a mensagem de erro daqui
+  // manda o usuário escolher "a pasta que tem o SPT.Server.exe" — ou seja, o próprio app
+  // induz a selecionar SPT_Runtime. Sem esse passo, o fallback de baixo usaria SPT_Runtime
+  // como raiz de client e os mods de client iriam pra SPT_Runtime/BepInEx/plugins, onde o
+  // jogo nunca vai enxergar.
+  if (serverRoot && !clientRoot) {
+    const parent = path.dirname(chosenPath);
+    if (parent !== chosenPath && hasClientMarkers(parent)) clientRoot = parent;
   }
 
   if (clientRoot && serverRoot) {
