@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { readExeProductVersion } from "./peVersion";
 import AdmZip from "adm-zip";
 import Seven from "node-7z";
 import { path7za } from "7zip-bin";
@@ -77,11 +78,25 @@ export function detectSptVersion(sptPath: string): string | undefined {
 // (ex: "3.11.5") e não entenderia "Tarkov 0.16.9.40087". Em instalações
 // SPT 4.0+ que não expõem mais esse campo, retorna undefined de propósito —
 // melhor pedir pro usuário informar do que mandar algo errado pro Forge.
-export function detectSptSemver(sptPath: string): string | undefined {
+export function detectSptSemver(sptPath: string, serverRoot?: string): string | undefined {
   const core = findCoreJson(sptPath);
-  if (!core) return undefined;
-  if (typeof core.sptVersion === "string") return core.sptVersion;
-  if (typeof core.akiVersion === "string") return core.akiVersion;
+  if (typeof core?.sptVersion === "string") return core.sptVersion;
+  if (typeof core?.akiVersion === "string") return core.akiVersion;
+
+  // SPT 4.0+ tirou a versão do core.json — sobrou só a versão do Tarkov, que é
+  // outra coisa. O executável do servidor, porém, carrega a versão real no
+  // metadata do PE (ProductVersion "4.1.2-RELEASE+cf04a11..."), então é de lá
+  // que ela sai daqui em diante.
+  //
+  // A raiz do servidor vem primeiro porque é diferente da raiz do jogo em
+  // instalação dividida — que é justamente o layout padrão do 4.1.
+  for (const root of [serverRoot, sptPath]) {
+    if (!root) continue;
+    for (const exe of SERVER_EXE_CANDIDATES) {
+      const version = readExeProductVersion(path.join(root, exe));
+      if (version) return version;
+    }
+  }
   return undefined;
 }
 
@@ -1009,6 +1024,11 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       // do runtime do mod e nem sempre é o mesmo — serve de plano B pra quem foi
       // instalado por fora do app.
       guid: registryEntry?.forgeGuid ?? metadata.guid,
+      // Nome publicado na Forge. Diferente de version/author, ele NÃO entra como
+      // fallback do nome exibido: o nome da linha é o da pasta (que o usuário pode
+      // ter renomeado), e este aqui serve pra linha-pai da árvore, onde as duas
+      // metades de um pacote precisam concordar num rótulo só.
+      forgeName: registryEntry?.forgeName,
       sptVersion: metadata.sptVersion,
       packageId: registryEntry?.packageId,
       installedAt: registryEntry?.installedAt,
@@ -1443,6 +1463,17 @@ function performMerge(
   // permite tratar "Wedge servidor" e "Wedge cliente" como um mod só depois.
   const packageId = `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  // A identidade vinda da Forge vale pro PACOTE, não pra uma parte só: as duas
+  // metades saíram da mesma página. Sem gravar aqui, o caminho de várias partes
+  // — justamente onde a linha-pai da árvore precisa de um rótulo comum — ficava
+  // sem forgeName, enquanto a instalação de parte única gravava normalmente.
+  const forgeFields = {
+    forgeName: forgeInfo?.name,
+    forgeAuthor: forgeInfo?.author,
+    forgeVersion: forgeInfo?.version,
+    forgeGuid: forgeInfo?.guid
+  };
+
   for (const name of serverModNames) {
     addToRegistry(clientRoot, {
       id: name,
@@ -1451,7 +1482,8 @@ function performMerge(
       installedAt: new Date().toISOString(),
       source: "archive-install",
       packageId,
-      linkedModId: orphanId
+      linkedModId: orphanId,
+      ...forgeFields
     });
   }
   for (const name of clientModNames) {
@@ -1462,7 +1494,8 @@ function performMerge(
       installedAt: new Date().toISOString(),
       source: "archive-install",
       packageId,
-      linkedModId: orphanId
+      linkedModId: orphanId,
+      ...forgeFields
     });
   }
   if (orphanId) {
@@ -1488,7 +1521,8 @@ function performMerge(
       type: mergedType,
       installedAt: new Date().toISOString(),
       source: "archive-install",
-      linkedModIds: allNamedModIds
+      linkedModIds: allNamedModIds,
+      ...forgeFields
     });
   }
   if (skippedCoreFiles.length > 0) {
@@ -1884,14 +1918,22 @@ function verifyCopyRecursive(
 }
 
 /* ==========================================================================
- * Integração com a API da Forge (forge.sp-tarkov.com) — plataforma oficial
+ * Integração com a API da Forge (sp-mod.com) — plataforma oficial
  * de mods do SPT. API pública, só leitura, sem chave necessária. Limite de
  * uso: 40 requisições/10s em rajada, 200/60s sustentado — por isso as
  * buscas de nome abaixo são feitas uma de cada vez com um intervalo entre
  * elas, em vez de disparar tudo de uma vez.
  * ========================================================================== */
 
-const FORGE_API_BASE = "https://forge.sp-tarkov.com/api/v0";
+// A Forge original (forge.sp-tarkov.com) saiu do ar em agosto de 2026. A
+// continuação oficial vive em sp-mod.com, com a MESMA API v0 e os MESMOS ids
+// numéricos de mod e de versão — por isso trocar o domínio basta, e o cache de
+// casamento de todo mundo continua válido, sem invalidação.
+//
+// Isto aqui vira configuração na 0.5.0, com fonte selecionável (sp-mod, Forge
+// Alt, outras). Está fixo por enquanto só porque a API antiga caiu e deixar os
+// usuários quebrados até lá custa mais do que o atalho.
+const FORGE_API_BASE = "https://sp-mod.com/api/v0";
 
 export interface ForgeUpdateItem {
   name: string;
@@ -2783,6 +2825,8 @@ export interface ForgeCatalogMod {
   fikaCompatible?: boolean;
   detailUrl?: string;
   versions: ForgeCatalogVersion[];
+  /** Versão mais nova compatível com a instância, quando a busca foi filtrada por versão do SPT. */
+  compatibleVersionId?: number;
 }
 
 export interface ForgeSearchResult {
@@ -2852,8 +2896,24 @@ export async function searchForgeMods(params: {
     throw new Error(json?.message || `Forge respondeu ${res.status}`);
   }
 
+  // O filtro da Forge é por MOD, não por versão: ela devolve todo mod que tenha
+  // ALGUMA versão compatível, e a lista de versões vem inteira, com a mais nova
+  // primeiro. Sem o passo abaixo, quem marcou "só compatíveis com 4.0.13" via a
+  // linha marcada como ~4.1.0 e instalava justamente a versão incompatível —
+  // parecia que o filtro não funcionava, quando na verdade era a seleção padrão
+  // que ignorava ele.
+  const mods: ForgeCatalogMod[] = (json.data || []).map(mapCatalogMod);
+  if (params.sptVersionConstraint) {
+    for (const mod of mods) {
+      const compat = mod.versions.find(
+        (v) => checkSptCompatibility(v.sptConstraint, params.sptVersionConstraint) === "compatible"
+      );
+      mod.compatibleVersionId = compat?.id;
+    }
+  }
+
   return {
-    mods: (json.data || []).map(mapCatalogMod),
+    mods,
     page: json.meta?.current_page ?? 1,
     lastPage: json.meta?.last_page ?? 1,
     total: json.meta?.total ?? (json.data || []).length
@@ -2963,7 +3023,7 @@ const GITHUB_RELEASES_API = "https://api.github.com/repos/Nevek20/SPT_Mod_Manage
 
 // A versão vem da API de releases do GitHub (é lá que o número é publicado), mas o
 // link que a gente mostra é o da Forge — é de lá que o pessoal do SPT baixa de verdade.
-const FORGE_MOD_PAGE = "https://forge.sp-tarkov.com/mod/2851/spt-mod-manager";
+const FORGE_MOD_PAGE = "https://sp-mod.com/mod/2851/spt-mod-manager";
 
 export interface AppUpdateInfo {
   updateAvailable: boolean;

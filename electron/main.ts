@@ -30,7 +30,7 @@ import {
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
-const MOD_HUB_URL = "https://hub.sp-tarkov.com/";
+const MOD_HUB_URL = "https://sp-mod.com/";
 
 const store = new Store<InstanceConfig>({
   defaults: { sptPath: null, serverRoot: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null }
@@ -143,7 +143,7 @@ ipcMain.handle("scan-mods", () => {
   // A compatibilidade é calculada aqui (e não no scan) porque depende da versão do SPT
   // ESCOLHIDA pelo usuário, que o backend só conhece pelo store. Fazer aqui evita
   // duplicar a lógica de comparação de versão no processo de interface.
-  const instanceVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath);
+  const instanceVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath, getServerRoot() ?? undefined);
   return scanMods(sptPath, getServerRoot()!).map((mod) => ({
     ...mod,
     sptCompatibility: checkSptCompatibility(mod.sptVersion, instanceVersion ?? undefined)
@@ -165,7 +165,9 @@ ipcMain.handle("detect-conflicts", () => {
 ipcMain.handle("get-spt-semver", () => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return undefined;
-  return detectSptSemver(sptPath);
+  // A raiz do servidor é onde mora o SPT.Server.exe, e no layout do 4.1 ela é
+  // uma subpasta (SPT_Runtime) — passar só sptPath não acharia o executável.
+  return detectSptSemver(sptPath, getServerRoot() ?? undefined);
 });
 
 ipcMain.handle("get-spt-version-override", () => store.get("sptVersionOverride"));
@@ -229,7 +231,7 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   // processo renderer, que não é totalmente confiável pra mandar abrir qualquer
   // coisa no navegador.
   const allowed =
-    /^https:\/\/forge\.sp-tarkov\.com\/mod\/2851\//.test(url) ||
+    /^https:\/\/sp-mod\.com\/mod\/2851\//.test(url) ||
     /^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url);
   if (allowed) {
     shell.openExternal(url);
