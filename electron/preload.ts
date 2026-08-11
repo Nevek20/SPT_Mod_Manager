@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   detectConflicts: () => ipcRenderer.invoke("detect-conflicts"),
   getSptSemver: () => ipcRenderer.invoke("get-spt-semver"),
   getSptVersionOverride: () => ipcRenderer.invoke("get-spt-version-override"),
+  getModSources: () => ipcRenderer.invoke("get-mod-sources"),
+  setModSource: (key: string) => ipcRenderer.invoke("set-mod-source", key),
   setSptVersionOverride: (value: string) => ipcRenderer.invoke("set-spt-version-override", value),
   getForgeSptVersions: () => ipcRenderer.invoke("get-forge-spt-versions"),
   getForgeCache: () => ipcRenderer.invoke("get-forge-cache"),
@@ -43,7 +45,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     jobId: string,
     downloadLink: string,
     suggestedName: string,
-    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
   ) => ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName, forgeInfo),
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) =>
     ipcRenderer.invoke("install-mod-confirm", tmpDir, archivePath),

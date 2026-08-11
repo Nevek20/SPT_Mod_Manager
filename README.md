@@ -2,7 +2,7 @@
 
 🇧🇷 Leia em Português: [README_pt-BR.md](README_pt-BR.md)
 
-A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **Single Player Tarkov (SPT)**.
+A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **SPT**.
 
 A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
 
@@ -29,7 +29,7 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 **Reliability**
 - Conflict detection: duplicate DLL names across different client mods, and server mods declaring the same `name` in different folders
-- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary — on SPT 4.0+ installs, `core.json` no longer stores the SPT version itself, so it falls back to showing the compatible Tarkov version instead
+- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary — on SPT 4.0+ installs, `core.json` no longer stores the SPT version itself, so it falls back to showing the compatible game version instead
 - Checks your installed mods against [Forge](https://forge.sp-tarkov.com)'s public API for updates, with a per-mod inline status chip: update available, update blocked by a dependency conflict, incompatible with your SPT version, or — for mods with no locally-readable version (e.g. `.dll`-only mods with no `package.json`) — the latest version Forge knows about
 - Search/browse the Forge catalogue from inside the app (by name, category, and optionally filtered to your selected SPT version) and install a mod in one click — it downloads the chosen version and runs it through the same installer as a manually picked archive
 - SPT version picker pulled straight from Forge's own version list (with a mod count per version) instead of free text

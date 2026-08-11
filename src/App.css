@@ -1151,3 +1151,31 @@ h2 {
 .package-chip-inferred {
   border-style: dashed;
 }
+
+/* Aviso de que a fonte escolhida vale além deste modal — a checagem de
+   atualizações usa a mesma, e ela acontece fora daqui. */
+.browse-source-note {
+  margin: 6px 0 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Selo de "já instalado" no browse. Verde, não laranja: é confirmação de estado,
+   não chamada pra ação — o laranja compete com o botão de instalar ao lado. */
+.forge-chip-installed {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+/* 
+ ⣿⣿⣿⣿⡟⣶⣾⣿⣾⣧⣮⣡⡃⠀⠀⡐⣀⣀⣾⣿⣿⣿⣿⣿⣿⣵⣋⡀⠛⣻⢿⣿⡿⣿⣇
+⣿⣿⣿⣿⠉⠋⢁⣈⡽⠼⠒⠛⠛⠛⠉⠉⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣯⣾⢋⣅⣿⠙
+⣿⡿⠉⢉⣴⡴⡋⠀⠀⠀⠀⠐⠠⢀⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣛⡁⣿⣯⠀
+⣿⣷⣿⣟⣉⣓⡏⠹⣷⢲⣄⡀⢀⣀⡈⠹⣿⣿⣿⣿⣿⠿⠷⠾⠿⣶⣄⡤⠽⢿⣭⣅⣿⣙⣶
+⣿⣿⡿⣿⣿⣿⣾⣧⣽⣇⣻⣿⣿⣿⣿⣶⣹⣿⣿⣿⣿⡀⠀⠀⢀⡿⠋⠇⠂⠀⠀⢠⣿⡏⠁
+⣿⣿⣿⣟⢻⣿⣿⢋⢰⣿⣿⣿⣿⣿⣟⡛⠀⠉⢻⣿⣇⠉⠉⠉⢉⣀⡀⠀⠑⠒⠒⣺⡇⢣⡄
+⣿⣿⣿⣿⣿⣿⣷⣼⣾⣛⣯⣿⣵⣾⣿⣍⠑⢦⠘⢿⣿⠀⠀⣀⣀⣙⢇⡀⡀⠀⣠⠿⠟⠛⠁
+⡿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡾⢒⣈⣴⣿⣿⣆⠀⠙⠿⠭⠭⠼⠃⣴⣅⠀⠀⠀⠀
+⣧⣿⣿⣿⣿⣿⣶⣿⣿⣿⣿⣿⣿⣏⣥⣴⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⢀⣴⣿⣿⣿⣦⣄⠀
+
+WOW TATIKAWA HIIIIIIII!!!!!
+*/

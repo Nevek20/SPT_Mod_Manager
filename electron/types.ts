@@ -27,6 +27,7 @@ export interface InstanceConfig {
   sptVersionOverride: string | null;
   forgeStatusCache: { name: string; status: "update" | "blocked" | "incompatible" | "info"; version?: string }[] | null;
   forgeCheckedAt: string | null;
+  modSourceKey: string | null; // fonte de mods escolhida; null = padrão
 }
 
 export interface RegistryEntry {
@@ -42,7 +43,9 @@ export interface RegistryEntry {
   forgeName?: string;
   forgeAuthor?: string;
   forgeVersion?: string;
-  forgeGuid?: string; // id de outro registro "ligado" a esse (ex: um mod nomeado + o arquivo solto que veio junto no mesmo install) — removê-lo remove o outro também
+  forgeGuid?: string;
+  forgeId?: number; // id numérico na fonte de onde o mod foi instalado
+  forgeSourceKey?: string; // qual fonte gerou o forgeId — ids não são intercambiáveis entre fontes // id de outro registro "ligado" a esse (ex: um mod nomeado + o arquivo solto que veio junto no mesmo install) — removê-lo remove o outro também
   packageId?: string;
 }
 

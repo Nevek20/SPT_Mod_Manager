@@ -2,7 +2,7 @@
 
 🇺🇸 Read in English: [README.md](README.md)
 
-Um gerenciador de mods estilo **Vortex / Mod Organizer 2**, feito especificamente pro **Single Player Tarkov (SPT)**.
+Um gerenciador de mods estilo **Vortex / Mod Organizer 2**, feito especificamente pro **SPT**.
 
 Desktop app (Electron + React + TypeScript) que cuida de instalar, organizar, habilitar/desabilitar e remover mods sem precisar mexer manualmente em pastas — mantendo compatibilidade com mods que você já instalou na mão.
 
@@ -35,7 +35,7 @@ Com identidade visual própria, tipo "manifesto de equipamento tático" — tít
 **Confiabilidade**
 - Exportar a lista de mods atual pra um JSON, e importar uma exportação anterior pra comparar com o que tá instalado agora (mostra o que falta / o que sobra). Pro que falta, oferece buscar e baixar automaticamente da Forge (por nome, o mesmo casamento exato usado na checagem de atualização); pro que sobra (instalado agora mas fora da lista importada), oferece desativar. O que a Forge não achar por nome ainda precisa de instalação manual.
 - Verificação de conflitos: DLLs com o mesmo nome vindas de client mods diferentes, e mods server com o mesmo `name` declarado em pastas diferentes
-- Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão do Tarkov compatível como alternativa
+- Versão do SPT detectada automaticamente (lida do `core.json` da instância) e mostrada no resumo — em instalações SPT 4.0+, o `core.json` não guarda mais a versão do SPT em si, então nesse caso mostra a versão compatível do jogo como alternativa
 - Verifica os mods instalados contra a API pública da [Forge](https://forge.sp-tarkov.com) por atualizações, com um chip de status por mod: atualização disponível, atualização bloqueada por conflito de dependência, incompatível com a tua versão do SPT, ou — pra mods sem versão legível localmente (ex: mods só de `.dll`, sem `package.json`) — a versão mais recente que a Forge conhece
 - Busca/navegação pelo catálogo da Forge de dentro do app (por nome, categoria e, opcionalmente, filtrando pela versão do SPT selecionada) e instalação com 1 clique — baixa a versão escolhida e passa pelo mesmo instalador usado pra um arquivo escolhido manualmente
 - Seletor de versão do SPT vindo direto da lista oficial da Forge (com contagem de mods por versão), em vez de digitação livre

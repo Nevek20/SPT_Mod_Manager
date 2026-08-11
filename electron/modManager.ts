@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { readExeProductVersion } from "./peVersion";
+import { DEFAULT_SOURCE_KEY, getSourceByKey, type ModSource } from "./sources";
 import AdmZip from "adm-zip";
 import Seven from "node-7z";
 import { path7za } from "7zip-bin";
@@ -363,6 +364,9 @@ function ensureDir(dirPath: string) {
  * ------------------------------------------------------------------------ */
 
 export interface ForgeInstallInfo {
+  /** Id numérico na fonte. É ele que liga o instalado ao catálogo sem depender
+   *  de checagem de atualização — e ele existe sempre, ao contrário do guid. */
+  id?: number;
   name?: string;
   author?: string;
   version?: string;
@@ -1158,6 +1162,32 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
     return key;
   };
 
+  // Antes do palpite por nome: partes que declaram a MESMA identidade de fonte
+  // (mesma fonte + mesmo id numérico) são o mesmo mod por registro, não por
+  // suposição. Isso reúne partes cujos packageId divergiram — reinstalar só uma
+  // metade gravava um id novo, e antes disso as duas ficavam órfãs uma da outra.
+  //
+  // Vem primeiro porque é evidência mais forte que nome parecido, e o laço de
+  // baixo já pula quem tem packageId.
+  const bySourceIdentity = new Map<string, ModInfo[]>();
+  for (const mod of mods) {
+    if (mod.manifestOnly) continue;
+    const entry = registry.find((e) => e.id === mod.id && e.type === mod.type);
+    if (!entry?.forgeId || !entry.forgeSourceKey) continue;
+    const key = `src:${entry.forgeSourceKey}:${entry.forgeId}`;
+    if (!bySourceIdentity.has(key)) bySourceIdentity.set(key, []);
+    bySourceIdentity.get(key)!.push(mod);
+  }
+  for (const [key, group] of bySourceIdentity) {
+    if (group.length < 2) continue;
+    for (const mod of group) {
+      mod.packageId = key;
+      mod.packageSiblings = group
+        .filter((other) => !(other.id === mod.id && other.type === mod.type))
+        .map((other) => ({ id: other.id, type: other.type }));
+    }
+  }
+
   const byFolderName = new Map<string, ModInfo[]>();
   for (const mod of mods) {
     if (mod.packageId || mod.manifestOnly) continue;
@@ -1289,7 +1319,9 @@ export async function installModFromArchive(
       forgeName: forgeInfo?.name,
       forgeAuthor: forgeInfo?.author,
       forgeVersion: forgeInfo?.version,
-      forgeGuid: forgeInfo?.guid
+      forgeGuid: forgeInfo?.guid,
+      forgeId: forgeInfo?.id,
+      forgeSourceKey: forgeInfo?.id ? activeSource.key : undefined
     });
     return { success: true, message: `Mod "${modId}" instalado e verificado como ${type === "server" ? "server mod" : "client mod"}.` };
   } catch (err) {
@@ -1461,7 +1493,20 @@ function performMerge(
 
   // Todas as partes vindas deste mesmo arquivo compartilham um id de pacote — é o que
   // permite tratar "Wedge servidor" e "Wedge cliente" como um mod só depois.
-  const packageId = `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  //
+  // Quando o mod veio de uma fonte, o id sai da IDENTIDADE dela (fonte + id numérico)
+  // em vez de um aleatório. A diferença aparece na reinstalação: instalar o pacote
+  // hoje e reinstalar só a metade client daqui a um mês gerava um id novo, e as duas
+  // metades se desgrudavam. Derivando da fonte, elas se reencontram sozinhas.
+  //
+  // A fonte entra na chave porque ids não são intercambiáveis entre fontes — o 791 do
+  // sp-mod não é necessariamente o 791 de outra.
+  //
+  // Instalação por arquivo solto não tem identidade nenhuma, e aí o aleatório continua
+  // sendo o certo: é a única forma de dizer "estas partes vieram juntas".
+  const packageId = forgeInfo?.id
+    ? `src:${activeSource.key}:${forgeInfo.id}`
+    : `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // A identidade vinda da Forge vale pro PACOTE, não pra uma parte só: as duas
   // metades saíram da mesma página. Sem gravar aqui, o caminho de várias partes
@@ -1471,7 +1516,11 @@ function performMerge(
     forgeName: forgeInfo?.name,
     forgeAuthor: forgeInfo?.author,
     forgeVersion: forgeInfo?.version,
-    forgeGuid: forgeInfo?.guid
+    forgeGuid: forgeInfo?.guid,
+    forgeId: forgeInfo?.id,
+    // O id só vale dentro da fonte de onde veio — guardar de qual fonte evita
+    // que um id da Forge Alt seja lido como se fosse do sp-mod.
+    forgeSourceKey: forgeInfo?.id ? activeSource.key : undefined
   };
 
   for (const name of serverModNames) {
@@ -1665,11 +1714,14 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
   // As outras partes do mesmo pacote acompanham: um mod com metade servidor e metade
   // cliente meio desabilitado normalmente não funciona, e o usuário quase nunca quer isso.
   let movedSiblings = 0;
-  if (mod.packageId?.startsWith("inferred:")) {
-    // Pacote inferido: as partes podem ter nomes DIFERENTES ("MoreBotsServer" e
-    // "MoreBotsAPI"), então quem sabe quais são é o scan — que já mandou os ids no
-    // próprio mod. Sem isso, só agrupava quando os nomes eram idênticos.
-    for (const sibling of mod.packageSiblings ?? []) {
+  if (mod.packageSiblings?.length) {
+    // O scan já sabe quais são as outras partes, e nesses casos ele sabe melhor que
+    // o registro: num pacote inferido os nomes das pastas podem diferir
+    // ("MoreBotsServer" e "MoreBotsAPI"), e num pacote reunido pela identidade da
+    // fonte os packageId gravados podem estar DIVERGENTES — que é exatamente a
+    // situação que reinstalar meia parte criava. Procurar pelo packageId no
+    // registro erraria nos dois.
+    for (const sibling of mod.packageSiblings) {
       if (moveModEntry(clientRoot, serverRoot, sibling.id, sibling.type, !mod.enabled)) movedSiblings++;
     }
   } else {
@@ -1925,15 +1977,33 @@ function verifyCopyRecursive(
  * elas, em vez de disparar tudo de uma vez.
  * ========================================================================== */
 
-// A Forge original (forge.sp-tarkov.com) saiu do ar em agosto de 2026. A
-// continuação oficial vive em sp-mod.com, com a MESMA API v0 e os MESMOS ids
-// numéricos de mod e de versão — por isso trocar o domínio basta, e o cache de
-// casamento de todo mundo continua válido, sem invalidação.
-//
-// Isto aqui vira configuração na 0.5.0, com fonte selecionável (sp-mod, Forge
-// Alt, outras). Está fixo por enquanto só porque a API antiga caiu e deixar os
-// usuários quebrados até lá custa mais do que o atalho.
-const FORGE_API_BASE = "https://sp-mod.com/api/v0";
+// Fonte ativa. Mutável de propósito: quem manda é a escolha salva do usuário, e
+// o main avisa aqui na inicialização e a cada troca. Deixar como constante
+// obrigaria a apostar num site — e depois da queda da Forge original nenhum
+// deles é aposta segura.
+let activeSource: ModSource = getSourceByKey(DEFAULT_SOURCE_KEY);
+
+export function setModSource(key: string | null | undefined): ModSource {
+  activeSource = getSourceByKey(key);
+  return activeSource;
+}
+
+export function getModSource(): ModSource {
+  return activeSource;
+}
+
+/** Responde rápido se a fonte está de pé, pra falhar com mensagem clara na troca. */
+export async function pingModSource(apiBase: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiBase}/ping`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000)
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export interface ForgeUpdateItem {
   name: string;
@@ -1968,7 +2038,7 @@ export async function getForgeSptVersions(): Promise<ForgeSptVersion[]> {
   // (só como campo de dado) — pediria "3.9.0" depois de "3.10.0" se a gente
   // ordenasse pela string "version" (comparação alfabética, não numérica).
   // Pede os números separados e ordena certinho aqui mesmo.
-  const url = `${FORGE_API_BASE}/spt/versions?per_page=50&fields=version,mod_count,version_major,version_minor,version_patch`;
+  const url = `${activeSource.apiBase}/spt/versions?per_page=50&fields=version,mod_count,version_major,version_minor,version_patch`;
   try {
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) return [];
@@ -2305,7 +2375,7 @@ async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 
  * constraint de versão do SPT) — e vários mods instalados são justamente esses.
  */
 async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string, budget: ForgeBudget): Promise<any[]> {
-  const url = new URL(`${FORGE_API_BASE}/mods`);
+  const url = new URL(`${activeSource.apiBase}/mods`);
   url.searchParams.set(`filter[${filterKey}]`, value);
   url.searchParams.set("per_page", "10");
   url.searchParams.set("include", "versions");
@@ -2324,7 +2394,7 @@ async function fetchForgeByIds(ids: string[], budget: ForgeBudget): Promise<any[
   const results: any[] = [];
   const CHUNK = 25;
   for (let i = 0; i < ids.length; i += CHUNK) {
-    const url = new URL(`${FORGE_API_BASE}/mods`);
+    const url = new URL(`${activeSource.apiBase}/mods`);
     url.searchParams.set("filter[id]", ids.slice(i, i + CHUNK).join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
@@ -2340,7 +2410,7 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
   const results: any[] = [];
   const CHUNK = 25;
   for (let i = 0; i < guids.length; i += CHUNK) {
-    const url = new URL(`${FORGE_API_BASE}/mods`);
+    const url = new URL(`${activeSource.apiBase}/mods`);
     url.searchParams.set("filter[guid]", guids.slice(i, i + CHUNK).join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
@@ -2368,25 +2438,64 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
 const FORGE_MATCH_CACHE_FILE = ".spt-mod-manager-forge-match.json";
 
 /**
- * IMPORTANTE: o cache guarda o ID NUMÉRICO da Forge, não o guid.
+ * O cache guarda o ID NUMÉRICO da fonte, POR FONTE.
  *
- * Conferido numa resposta real da API: de 11 mods retornados numa busca, 8 tinham
- * "guid": null — só o autor que registra um GUID na plataforma tem esse campo. O id
- * numérico existe sempre. Guardar guid aqui deixava o cache inútil justamente pros mods
- * que mais precisam dele (os que não têm guid e caem nas estratégias lentas por nome).
+ * Por que id e não guid: o id existe sempre, por construção. O guid depende de o
+ * autor ter registrado um na plataforma, e conteúdo sem DLL (preset, pack de
+ * config) nunca tem. Medido contra 73 mods reais que precisaram de casamento por
+ * nome, todos tinham guid preenchido — então guid também funcionaria aqui, mas o
+ * id dispensa o "quase sempre".
+ *
+ * Por que POR FONTE: sp-mod e Forge Alt herdaram os mesmos ids da Forge original,
+ * o que é herança e não garantia. Uma fonte futura pode numerar do próprio jeito,
+ * e aí um id 791 que era o SAIN vira outro mod — casando calado com o errado.
+ *
+ * Formato:
+ *   { "SAIN": { "ids": { "sp-mod": "791" } } }
+ *
+ * O formato antigo era { "SAIN": "791" }, sem fonte. Ele é migrado como sendo da
+ * Forge original e reaproveitado nas fontes que herdaram a numeração dela —
+ * descartar jogaria fora justamente os mods que custaram ~1,2s cada pra resolver.
  */
-function loadForgeMatchCache(root: string): Record<string, string> {
+interface MatchCacheEntry {
+  ids: Record<string, string>;
+}
+
+/** Fontes que herdaram a numeração da Forge original — o cache antigo vale nelas. */
+const LEGACY_ID_SOURCES = new Set(["sp-mod", "forge-alt"]);
+const LEGACY_SOURCE_KEY = "legacy-forge";
+
+export function loadForgeMatchCache(root: string): Record<string, MatchCacheEntry> {
   try {
     const file = path.join(root, FORGE_MATCH_CACHE_FILE);
     if (!fs.existsSync(file)) return {};
     const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
-    return typeof parsed === "object" && parsed ? parsed : {};
+    if (typeof parsed !== "object" || !parsed) return {};
+
+    const out: Record<string, MatchCacheEntry> = {};
+    for (const [folderName, value] of Object.entries(parsed)) {
+      if (typeof value === "string") {
+        // Formato antigo: id solto, sem fonte.
+        out[folderName] = { ids: { [LEGACY_SOURCE_KEY]: value } };
+      } else if (value && typeof value === "object" && typeof (value as any).ids === "object") {
+        out[folderName] = { ids: { ...(value as any).ids } };
+      }
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
-function saveForgeMatchCache(root: string, cache: Record<string, string>): void {
+/** Id utilizável nesta fonte: o dela, ou o legado quando a fonte herdou a numeração. */
+export function cachedIdFor(entry: MatchCacheEntry | undefined, sourceKey: string): string | undefined {
+  if (!entry) return undefined;
+  const direto = entry.ids[sourceKey];
+  if (direto) return direto;
+  return LEGACY_ID_SOURCES.has(sourceKey) ? entry.ids[LEGACY_SOURCE_KEY] : undefined;
+}
+
+export function saveForgeMatchCache(root: string, cache: Record<string, MatchCacheEntry>): void {
   try {
     fs.writeFileSync(path.join(root, FORGE_MATCH_CACHE_FILE), JSON.stringify(cache, null, 2), "utf-8");
   } catch {
@@ -2402,8 +2511,9 @@ export async function matchForgeMods(
   const cache = cacheRoot ? loadForgeMatchCache(cacheRoot) : {};
   const entries = input
     .map((v) => (typeof v === "string" ? { folderName: v, guid: undefined as string | undefined } : { ...v }))
-    // Mod já resolvido numa checagem anterior: o cache guarda o id numérico da Forge.
-    .map((e) => ({ ...e, cachedId: cache[e.folderName] }));
+    // Mod já resolvido numa checagem anterior, na fonte ATIVA (ou numa que herdou
+    // a numeração da Forge original).
+    .map((e) => ({ ...e, cachedId: cachedIdFor(cache[e.folderName], activeSource.key) }));
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
@@ -2511,7 +2621,7 @@ export async function matchForgeMods(
     if (!matched.has(folderName) && !budget.aborted) {
       const term = cand.looseNames[0] ?? cand.strictNames[0];
       if (term) {
-        const url = new URL(`${FORGE_API_BASE}/mods`);
+        const url = new URL(`${activeSource.apiBase}/mods`);
         url.searchParams.set("query", term);
         url.searchParams.set("per_page", "5");
         url.searchParams.set("include", "versions");
@@ -2547,9 +2657,14 @@ export async function matchForgeMods(
   if (cacheRoot) {
     // Guarda o identificador de quem foi resolvido pelas estratégias lentas, pra que a
     // próxima checagem já encontre esses mods na consulta em lote.
-    const updated = { ...cache };
+    // Grava sob a chave da fonte ATIVA, preservando o que outras fontes já
+    // resolveram pro mesmo mod — trocar de fonte e voltar não deve custar a
+    // primeira checagem lenta de novo.
+    const updated: Record<string, MatchCacheEntry> = { ...cache };
     for (const [folderName, match] of matched) {
-      if (match.modId) updated[folderName] = String(match.modId);
+      if (!match.modId) continue;
+      const anterior = updated[folderName]?.ids ?? {};
+      updated[folderName] = { ids: { ...anterior, [activeSource.key]: String(match.modId) } };
     }
     saveForgeMatchCache(cacheRoot, updated);
   }
@@ -2563,7 +2678,7 @@ async function findForgeModInfo(
   sptVersion?: string
 ): Promise<{ identifier: string; latestVersion?: string; latestVersionLink?: string; forgeName?: string } | null> {
   try {
-    const url = new URL(`${FORGE_API_BASE}/mods`);
+    const url = new URL(`${activeSource.apiBase}/mods`);
     url.searchParams.set("filter[name]", name);
     url.searchParams.set("per_page", "1");
     url.searchParams.set("include", "versions");
@@ -2631,7 +2746,7 @@ export async function findForgeDownloadsForNames(
     // Casou com o mod na Forge, mas a resposta não trouxe o link de download. Em vez de
     // desistir em silêncio (o sintoma era "importa, mostra a diferença e não baixa
     // nada"), busca as versões desse mod diretamente pelo identificador.
-    const url = new URL(`${FORGE_API_BASE}/mods`);
+    const url = new URL(`${activeSource.apiBase}/mods`);
     url.searchParams.set("filter[guid]", info.identifier);
     url.searchParams.set("per_page", "1");
     url.searchParams.set("include", "versions");
@@ -2731,7 +2846,7 @@ export async function checkForgeUpdates(
   };
   if (pairs.length === 0) return empty;
 
-  const url = `${FORGE_API_BASE}/mods/updates?mods=${encodeURIComponent(pairs.join(","))}&spt_version=${encodeURIComponent(trimmedVersion)}`;
+  const url = `${activeSource.apiBase}/mods/updates?mods=${encodeURIComponent(pairs.join(","))}&spt_version=${encodeURIComponent(trimmedVersion)}`;
   let json: any;
   try {
     const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -2812,6 +2927,33 @@ export interface ForgeCatalogVersion {
   contentLength?: number;
 }
 
+/**
+ * Quais mods do catálogo já estão instalados, e em que versão.
+ *
+ * A ligação pasta -> id da fonte já existe em dois lugares, e os dois são usados
+ * porque cobrem casos diferentes: o cache de casamento resolve quem foi achado
+ * numa checagem de atualização, e o forgeGuid do registro resolve quem foi
+ * instalado pelo próprio browse (que nem precisa de checagem pra saber a origem).
+ */
+export function installedForgeIds(sptPath: string): Map<string, string | undefined> {
+  const porId = new Map<string, string | undefined>();
+  const registro = loadRegistry(sptPath);
+  const versaoPorPasta = new Map(registro.map((e) => [e.id, e.forgeVersion]));
+
+  const cache = loadForgeMatchCache(sptPath);
+  for (const [folderName, entry] of Object.entries(cache)) {
+    const id = cachedIdFor(entry, activeSource.key);
+    if (id) porId.set(id, versaoPorPasta.get(folderName));
+  }
+
+  for (const entrada of registro) {
+    if (entrada.forgeId && entrada.forgeSourceKey === activeSource.key) {
+      porId.set(String(entrada.forgeId), entrada.forgeVersion);
+    }
+  }
+  return porId;
+}
+
 export interface ForgeCatalogMod {
   id: number;
   guid: string;
@@ -2827,6 +2969,9 @@ export interface ForgeCatalogMod {
   versions: ForgeCatalogVersion[];
   /** Versão mais nova compatível com a instância, quando a busca foi filtrada por versão do SPT. */
   compatibleVersionId?: number;
+  /** Já está instalado nesta instância? A versão pode faltar mesmo estando instalado. */
+  installed?: boolean;
+  installedVersion?: string;
 }
 
 export interface ForgeSearchResult {
@@ -2880,8 +3025,10 @@ export async function searchForgeMods(params: {
   sort?: string;
   page?: number;
   perPage?: number;
+  /** Raiz da instância, pra marcar o que já está instalado. Sem ela, nada é marcado. */
+  sptPath?: string;
 }): Promise<ForgeSearchResult> {
-  const url = new URL(`${FORGE_API_BASE}/mods`);
+  const url = new URL(`${activeSource.apiBase}/mods`);
   url.searchParams.set("include", "category,versions");
   url.searchParams.set("sort", params.sort || "-downloads");
   url.searchParams.set("page", String(params.page || 1));
@@ -2903,6 +3050,17 @@ export async function searchForgeMods(params: {
   // parecia que o filtro não funcionava, quando na verdade era a seleção padrão
   // que ignorava ele.
   const mods: ForgeCatalogMod[] = (json.data || []).map(mapCatalogMod);
+
+  if (params.sptPath) {
+    const instalados = installedForgeIds(params.sptPath);
+    for (const mod of mods) {
+      const chave = String(mod.id);
+      if (!instalados.has(chave)) continue;
+      mod.installed = true;
+      mod.installedVersion = instalados.get(chave);
+    }
+  }
+
   if (params.sptVersionConstraint) {
     for (const mod of mods) {
       const compat = mod.versions.find(
@@ -2921,7 +3079,7 @@ export async function searchForgeMods(params: {
 }
 
 export async function getForgeCategories(): Promise<ForgeCategory[]> {
-  const url = `${FORGE_API_BASE}/mod-categories?per_page=100&fields=id,title,slug`;
+  const url = `${activeSource.apiBase}/mod-categories?per_page=100&fields=id,title,slug`;
   try {
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) return [];
@@ -3023,7 +3181,6 @@ const GITHUB_RELEASES_API = "https://api.github.com/repos/Nevek20/SPT_Mod_Manage
 
 // A versão vem da API de releases do GitHub (é lá que o número é publicado), mas o
 // link que a gente mostra é o da Forge — é de lá que o pessoal do SPT baixa de verdade.
-const FORGE_MOD_PAGE = "https://sp-mod.com/mod/2851/spt-mod-manager";
 
 export interface AppUpdateInfo {
   updateAvailable: boolean;
@@ -3069,7 +3226,11 @@ export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateI
       updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
       currentVersion,
       latestVersion: latestVersion.replace(/^v/i, ""),
-      downloadPageUrl: FORGE_MOD_PAGE,
+      // Aponta pro GitHub, não pra página do mod na fonte: nenhuma das fontes
+      // aceita publicação hoje (sp-mod está só-leitura, Forge Alt é espelho de
+      // arquivo), então a versão nova só existe na release do GitHub. Mandar
+      // pra página do mod levaria a pessoa a um lugar sem o que ela procura.
+      downloadPageUrl: json?.html_url,
       releaseUrl: json?.html_url,
       releaseName: json?.name || undefined
     };

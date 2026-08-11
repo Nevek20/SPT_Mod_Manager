@@ -1,3 +1,4 @@
+import { MOD_SOURCES, getSourceByKey } from "./sources";
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from "electron";
 import path from "path";
 import fs from "fs";
@@ -16,6 +17,9 @@ import {
   detectConflicts,
   detectSptVersion,
   detectSptSemver,
+  setModSource,
+  getModSource,
+  pingModSource,
   checkSptCompatibility,
   checkForgeUpdates,
   getForgeSptVersions,
@@ -30,11 +34,13 @@ import {
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
-const MOD_HUB_URL = "https://sp-mod.com/";
-
 const store = new Store<InstanceConfig>({
-  defaults: { sptPath: null, serverRoot: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null }
+  defaults: { sptPath: null, serverRoot: null, sptVersionOverride: null, forgeStatusCache: null, forgeCheckedAt: null, modSourceKey: null }
 });
+
+// Aplica a fonte salva antes de qualquer chamada de rede. Sem isto o app usaria
+// o padrão até a primeira troca, ignorando a escolha do usuário na sessão toda.
+setModSource(store.get("modSourceKey"));
 
 // sptPath (armazenado) é sempre a raiz de CLIENT. serverRoot é igual a sptPath na
 // grande maioria das instâncias; só é diferente quando a instalação é "dividida" (o
@@ -106,7 +112,7 @@ ipcMain.handle("get-spt-path", () => {
 });
 
 ipcMain.handle("open-mod-hub", () => {
-  shell.openExternal(MOD_HUB_URL);
+  shell.openExternal(getModSource().siteUrl);
 });
 
 ipcMain.handle("select-spt-folder", async () => {
@@ -172,6 +178,22 @@ ipcMain.handle("get-spt-semver", () => {
 
 ipcMain.handle("get-spt-version-override", () => store.get("sptVersionOverride"));
 
+ipcMain.handle("get-mod-sources", () => ({
+  sources: MOD_SOURCES.map(({ key, label, siteUrl }) => ({ key, label, siteUrl })),
+  activeKey: getModSource().key
+}));
+
+ipcMain.handle("set-mod-source", async (_event, key: string) => {
+  const source = getSourceByKey(key);
+  // Confere que a fonte responde ANTES de salvar. Salvar primeiro deixaria o
+  // usuário preso numa fonte fora do ar, sem entender por que nada carrega.
+  const alive = await pingModSource(source.apiBase);
+  if (!alive) return { success: false, message: `${source.label} não respondeu.` };
+  store.set("modSourceKey", source.key);
+  setModSource(source.key);
+  return { success: true, activeKey: source.key };
+});
+
 ipcMain.handle("set-spt-version-override", (_event, value: string) => {
   store.set("sptVersionOverride", value || null);
 });
@@ -214,7 +236,7 @@ ipcMain.handle(
     params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; sort?: string; page?: number }
   ) => {
     try {
-      const result = await searchForgeMods(params);
+      const result = await searchForgeMods({ ...params, sptPath: store.get("sptPath") ?? undefined });
       return { success: true, result };
     } catch (err: any) {
       return { success: false, message: err?.message || "Falha ao buscar mods na Forge." };
@@ -230,8 +252,11 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   // Só abre a página do mod na Forge ou o release no próprio repo — a URL vem do
   // processo renderer, que não é totalmente confiável pra mandar abrir qualquer
   // coisa no navegador.
+  // A página do mod muda junto com a fonte, então a allowlist não pode ser um
+  // domínio fixo: valida contra o site da fonte ativa e o repositório.
+  const source = getModSource();
   const allowed =
-    /^https:\/\/sp-mod\.com\/mod\/2851\//.test(url) ||
+    url.startsWith(source.siteUrl) ||
     /^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url);
   if (allowed) {
     shell.openExternal(url);
@@ -269,7 +294,7 @@ ipcMain.handle(
     jobId: string,
     downloadLink: string,
     suggestedName: string,
-    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
   ) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };

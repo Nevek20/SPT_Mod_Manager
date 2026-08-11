@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { buildModTree, type ModTreeNode } from "./modTree";
+import type { ModSourceInfo } from "./types";
 import {
   ModInfo,
   ModType,
@@ -97,6 +98,8 @@ export default function App() {
   const [browseOpen, setBrowseOpen] = useState(false);
   const [browseQuery, setBrowseQuery] = useState("");
   const [browseCategory, setBrowseCategory] = useState("");
+  const [modSources, setModSources] = useState<ModSourceInfo[]>([]);
+  const [activeSourceKey, setActiveSourceKey] = useState("");
   const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
   const [browseOnlyCompatible, setBrowseOnlyCompatible] = useState(false);
   const [browseResults, setBrowseResults] = useState<ForgeCatalogMod[]>([]);
@@ -308,6 +311,10 @@ export default function App() {
         }
 
         window.modManagerAPI.getForgeSptVersions().then(setForgeSptVersions);
+        window.modManagerAPI.getModSources().then((r) => {
+          setModSources(r.sources);
+          setActiveSourceKey(r.activeKey);
+        });
 
         const cache = await window.modManagerAPI.getForgeCache();
         if (cache.statusCache) {
@@ -318,6 +325,26 @@ export default function App() {
       }
     })();
   }, [refreshMods]);
+
+  async function handleChangeSource(key: string) {
+    if (key === activeSourceKey) return;
+    const anterior = activeSourceKey;
+    setActiveSourceKey(key);
+    const result = await window.modManagerAPI.setModSource(key);
+    if (!result.success) {
+      // Volta pro que estava: o backend não trocou (a fonte não respondeu ao
+      // ping), então deixar o dropdown na nova mentiria sobre o estado real.
+      setActiveSourceKey(anterior);
+      pushToast(tMsg(result.message) || t("toast.sourceFailed"), false);
+      return;
+    }
+    // Categorias e ids são POR FONTE — o que estava na tela é da fonte antiga.
+    setBrowseCategories([]);
+    setBrowseCategory("");
+    setBrowseResults([]);
+    window.modManagerAPI.getForgeCategories().then(setBrowseCategories);
+    runForgeSearch(1);
+  }
 
   async function handleSelectFolder() {
     const result = await window.modManagerAPI.selectSptFolder();
@@ -756,6 +783,7 @@ export default function App() {
     markQueueActive(queueId);
     const result = await installArchiveWithConfirmFlow(
       window.modManagerAPI.installForgeMod(queueId, version.link, mod.name, {
+        id: mod.id,
         name: mod.name,
         author: mod.author,
         version: version.version,
@@ -1330,6 +1358,16 @@ export default function App() {
                 onChange={(e) => setBrowseQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") runForgeSearch(1); }}
               />
+              <select
+                value={activeSourceKey}
+                onChange={(e) => handleChangeSource(e.target.value)}
+                disabled={browseLoading}
+                title={t("browse.sourceTitle")}
+              >
+                {modSources.map((src) => (
+                  <option key={src.key} value={src.key}>{src.label}</option>
+                ))}
+              </select>
               <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title={t("browse.categoryFilterTitle")}>
                 <option value="">{t("browse.allCategories")}</option>
                 {browseCategories.map((c) => (
@@ -1349,6 +1387,7 @@ export default function App() {
                 {browseLoading ? t("browse.searching") : t("browse.searchButton")}
               </button>
             </div>
+            <p className="browse-source-note">{t("browse.sourceNote")}</p>
 
             {browseError && <p className="compare-note">{browseError}</p>}
 
@@ -1381,6 +1420,13 @@ export default function App() {
                         </a>
                         {mod.category && <span className="meta-chip">{mod.category}</span>}
                         {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title={t("browse.fikaCompatibleTitle")}>Fika</span>}
+                        {mod.installed && (
+                          <span className="meta-chip forge-chip-installed" title={t("browse.installedTitle")}>
+                            {mod.installedVersion
+                              ? t("browse.installedWithVersion", { version: mod.installedVersion })
+                              : t("browse.installed")}
+                          </span>
+                        )}
                       </div>
                       {mod.teaser && <p className="forge-mod-teaser">{mod.teaser}</p>}
                       <div className="forge-mod-meta">
@@ -1403,7 +1449,11 @@ export default function App() {
                             ))}
                           </select>
                           <button onClick={() => handleInstallFromForge(mod)} disabled={installingModId === mod.id} className="primary">
-                            {installingModId === mod.id ? t("browse.installing") : t("browse.installButton")}
+                            {installingModId === mod.id
+                              ? t("browse.installing")
+                              : mod.installed
+                                ? t("browse.reinstallButton")
+                                : t("browse.installButton")}
                           </button>
                         </>
                       ) : (

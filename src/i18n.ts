@@ -10,6 +10,7 @@ type Dict = Record<string, string>;
 const pt: Dict = {
   "toast.instanceConfigured": "Instância configurada.",
   "toast.folderSelectFailed": "Não foi possível selecionar a pasta.",
+  "toast.sourceFailed": "Não consegui falar com essa fonte. Continuo na anterior.",
   "toast.dropInvalidFile": "Solte um arquivo .zip, .7z ou .rar pra instalar.",
   "toast.confirmRemove": 'Remover "{name}" permanentemente?',
   "toast.selectUpdatedFile": "Selecione o arquivo atualizado do mod (.zip / .7z / .rar)...",
@@ -43,7 +44,7 @@ const pt: Dict = {
   "summary.active": "Ativos:",
   "summary.disabled": "Desativados:",
   "summary.versionTooltip":
-    "Lido de SPT_Data/Server/configs/core.json — a partir do SPT 4.0 esse arquivo só guarda a versão do Tarkov compatível, não a versão do SPT em si",
+    "Lido de SPT_Data/Server/configs/core.json — a partir do SPT 4.0 esse arquivo só guarda a versão compatível do jogo, não a versão do SPT em si",
   "summary.validInstance": "Instância válida",
   "summary.validInstanceTitle": "A pasta selecionada passou na validação de instância SPT",
 
@@ -132,6 +133,12 @@ const pt: Dict = {
   "browse.searchPlaceholder": "Pesquisar por nome, slug ou descrição...",
   "browse.categoryFilterTitle": "Filtrar por categoria",
   "browse.allCategories": "Todas as categorias",
+  "browse.sourceTitle": "De qual site buscar e baixar mods",
+  "browse.sourceNote": "A fonte escolhida também é usada na checagem de atualizações.",
+  "browse.installed": "Instalado",
+  "browse.installedWithVersion": "Instalado v{version}",
+  "browse.installedTitle": "Este mod já está na sua instância",
+  "browse.reinstallButton": "Reinstalar",
   "browse.compatibleOnlyTitle": "Usa a versão do SPT selecionada nos filtros principais",
   "browse.compatibleOnlyLabel": "Só compatíveis com {version}",
   "browse.selectVersionPlaceholder": "(selecione a versão do SPT)",
@@ -224,6 +231,7 @@ const pt: Dict = {
 const en: Dict = {
   "toast.instanceConfigured": "Instance configured.",
   "toast.folderSelectFailed": "Couldn't select the folder.",
+  "toast.sourceFailed": "Couldn't reach that source. Staying on the previous one.",
   "toast.dropInvalidFile": "Drop a .zip, .7z, or .rar file to install.",
   "toast.confirmRemove": 'Permanently remove "{name}"?',
   "toast.selectUpdatedFile": "Select the mod's updated file (.zip / .7z / .rar)...",
@@ -257,7 +265,7 @@ const en: Dict = {
   "summary.active": "Active:",
   "summary.disabled": "Disabled:",
   "summary.versionTooltip":
-    "Read from SPT_Data/Server/configs/core.json — starting with SPT 4.0 this file only stores the compatible Tarkov version, not the SPT version itself",
+    "Read from SPT_Data/Server/configs/core.json — starting with SPT 4.0 this file only stores the compatible game version, not the SPT version itself",
   "summary.validInstance": "Valid instance",
   "summary.validInstanceTitle": "The selected folder passed SPT instance validation",
 
@@ -347,6 +355,12 @@ const en: Dict = {
   "browse.searchPlaceholder": "Search by name, slug, or description...",
   "browse.categoryFilterTitle": "Filter by category",
   "browse.allCategories": "All categories",
+  "browse.sourceTitle": "Which site to search and download mods from",
+  "browse.sourceNote": "The selected source is also used when checking for updates.",
+  "browse.installed": "Installed",
+  "browse.installedWithVersion": "Installed v{version}",
+  "browse.installedTitle": "This mod is already in your instance",
+  "browse.reinstallButton": "Reinstall",
   "browse.compatibleOnlyTitle": "Uses the SPT version selected in the main filters",
   "browse.compatibleOnlyLabel": "Only compatible with {version}",
   "browse.selectVersionPlaceholder": "(select the SPT version)",

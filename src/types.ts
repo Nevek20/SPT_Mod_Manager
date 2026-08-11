@@ -21,6 +21,12 @@ export interface ModInfo {
   forgeName?: string; // nome publicado na Forge, gravado no registro na instalação
 }
 
+export interface ModSourceInfo {
+  key: string;
+  label: string;
+  siteUrl: string;
+}
+
 export interface ModListComparison {
   missing: string[];
   extra: string[];
@@ -87,6 +93,8 @@ export interface ForgeCatalogMod {
   versions: ForgeCatalogVersion[];
   /** Versão mais nova compatível com a instância, quando a busca foi filtrada por versão do SPT. */
   compatibleVersionId?: number;
+  installed?: boolean;
+  installedVersion?: string;
 }
 
 export interface ForgeSearchResult {
@@ -142,6 +150,8 @@ export interface ModManagerAPI {
   detectConflicts: () => Promise<ConflictReport>;
   getSptSemver: () => Promise<string | undefined>;
   getSptVersionOverride: () => Promise<string | null>;
+  getModSources: () => Promise<{ sources: ModSourceInfo[]; activeKey: string }>;
+  setModSource: (key: string) => Promise<{ success: boolean; message?: string; activeKey?: string }>;
   setSptVersionOverride: (value: string) => Promise<void>;
   getForgeSptVersions: () => Promise<ForgeSptVersion[]>;
   getForgeCache: () => Promise<{ statusCache: ForgeStatusCacheEntry[] | null; checkedAt: string | null }>;
@@ -172,7 +182,7 @@ export interface ModManagerAPI {
     jobId: string,
     downloadLink: string,
     suggestedName: string,
-    forgeInfo?: { name?: string; author?: string; version?: string; guid?: string }
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
   ) => Promise<InstallResult>;
   onDownloadProgress: (callback: (data: { jobId: string; receivedBytes: number; totalBytes: number }) => void) => () => void;
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) => Promise<InstallResult>;
