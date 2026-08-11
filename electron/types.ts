@@ -18,6 +18,7 @@ export interface ModInfo {
   sptCompatibility?: "compatible" | "incompatible" | "unknown"; // versão do SPT declarada x instância
   packageId?: string; // partes instaladas do mesmo arquivo compartilham esse id
   packageSiblings?: { id: string; type: ModType }[];
+  forgeName?: string; // nome publicado na Forge, gravado no registro na instalação — usado como rótulo da linha-pai na árvore
 }
 
 export interface InstanceConfig {

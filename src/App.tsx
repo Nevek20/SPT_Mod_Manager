@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo, useRef, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { buildModTree, type ModTreeNode } from "./modTree";
 import {
   ModInfo,
   ModType,
@@ -202,7 +203,10 @@ export default function App() {
     const q = searchQuery.trim().toLowerCase();
     const filtered = mods.filter((m) => {
       if (q && !m.name.toLowerCase().includes(q)) return false;
-      if (typeFilter !== "all" && m.type !== typeFilter) return false;
+      // O filtro de tipo NÃO entra aqui: ele é aplicado depois do agrupamento,
+      // em buildModTree. Podar antes desmontaria pacotes mistos — a metade
+      // server sumiria da lista e o pai perderia o nome, que é calculado sobre
+      // o pacote inteiro.
       if (statusFilter === "enabled" && !m.enabled) return false;
       if (statusFilter === "disabled" && m.enabled) return false;
       if (originFilter === "manual" && !m.installedManually) return false;
@@ -256,7 +260,26 @@ export default function App() {
     });
 
     return sorted;
-  }, [mods, searchQuery, typeFilter, statusFilter, originFilter, sortField, sortDirection, forgeStatusByName]);
+  }, [mods, searchQuery, statusFilter, originFilter, sortField, sortDirection, forgeStatusByName]);
+
+  const modTree = useMemo(() => buildModTree(filteredMods, typeFilter), [filteredMods, typeFilter]);
+
+  const typeFilterOptions = useMemo(() => {
+    const base: TypeFilter[] = ["all", "server", "client"];
+    // Híbrido/desconhecido só ocupa espaço quando a instalação tem algum.
+    if (mods.some((m) => m.type === "hybrid")) base.push("hybrid");
+    if (mods.some((m) => m.type === "unknown")) base.push("unknown");
+    return base;
+  }, [mods]);
+
+  // Conta MODS, não pastas: com 136 mods, um chip dizendo 190 confundiria.
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const option of typeFilterOptions) {
+      counts[option] = buildModTree(filteredMods, option as TypeFilter).length;
+    }
+    return counts;
+  }, [filteredMods, typeFilterOptions]);
 
   const filtersActive = searchQuery.trim() !== "" || typeFilter !== "all" || statusFilter !== "all" || originFilter !== "all";
 
@@ -675,6 +698,10 @@ export default function App() {
       return;
     }
     setBrowseResults(response.result.mods);
+    // Escolhas manuais de versão são da busca ANTERIOR. Mantê-las fazia o filtro
+    // parecer quebrado: marcar "só compatíveis", buscar de novo e continuar vendo
+    // a versão escolhida antes, porque a escolha manual ganha do padrão.
+    setSelectedVersionByModId(new Map());
     setBrowsePage(response.result.page);
     setBrowseLastPage(response.result.lastPage);
   }
@@ -714,7 +741,10 @@ export default function App() {
   }
 
   async function handleInstallFromForge(mod: ForgeCatalogMod) {
-    const versionId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
+    // Sem escolha explícita, cai na versão compatível apontada pela busca — e só
+    // depois na mais nova. O contrário instalava a versão incompatível pra quem
+    // tinha justamente pedido só as compatíveis.
+    const versionId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
     const version = mod.versions.find((v) => v.id === versionId) ?? mod.versions[0];
     if (!version) {
       pushToast(t("browse.noVersionPublished", { name: mod.name }), false);
@@ -819,16 +849,6 @@ export default function App() {
 
   // Quantas partes cada pacote tem instaladas. Serve pra avisar na linha do mod que ele
   // faz parte de um conjunto — sem isso, ver a outra metade desabilitar junto parece bug.
-  const packagePartsById = useMemo(() => {
-    const counts = new Map<string, ModInfo[]>();
-    for (const m of mods) {
-      if (!m.packageId) continue;
-      if (!counts.has(m.packageId)) counts.set(m.packageId, []);
-      counts.get(m.packageId)!.push(m);
-    }
-    return counts;
-  }, [mods]);
-
   const listProps = {
     onToggle: handleToggle,
     onUninstall: handleUninstall,
@@ -847,7 +867,6 @@ export default function App() {
     onSetOpenMenuKey: setOpenMenuKey,
     disabled: mutating,
     forgeStatusByName,
-    packagePartsById,
     t
   };
 
@@ -1029,13 +1048,6 @@ export default function App() {
           />
 
           <div className="filter-bar">
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TypeFilter)} title={t("filters.typeFilterTitle")}>
-              <option value="all">{t("filters.typeAll")}</option>
-              <option value="server">Server</option>
-              <option value="client">Client</option>
-              <option value="hybrid">Hybrid</option>
-              <option value="unknown">Unknown</option>
-            </select>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} title={t("filters.statusFilterTitle")}>
               <option value="all">{t("filters.statusAll")}</option>
               <option value="enabled">{t("filters.statusEnabled")}</option>
@@ -1286,11 +1298,19 @@ export default function App() {
             </div>
           )}
 
-          <Section title="Server Mods" mods={filteredMods.filter((m) => m.type === "server")} {...listProps} />
-          <Section title="Client Mods" mods={filteredMods.filter((m) => m.type === "client")} {...listProps} />
-          {mods.some((m) => m.type === "hybrid" || m.type === "unknown") && (
-            <Section title="Hybrid / Unknown" mods={filteredMods.filter((m) => m.type === "hybrid" || m.type === "unknown")} {...listProps} />
-          )}
+          <div className="type-filter-bar">
+            {typeFilterOptions.map((option) => (
+              <button
+                key={option}
+                className={`type-filter-chip ${typeFilter === option ? "active" : ""}`}
+                onClick={() => setTypeFilter(option)}
+              >
+                {t(`typeFilter.${option}`)} {typeCounts[option]}
+              </button>
+            ))}
+          </div>
+
+          <ModList nodes={modTree} {...listProps} />
         </div>
       )}
 
@@ -1337,7 +1357,7 @@ export default function App() {
                 <p className="compare-note">{t("browse.noResults")}</p>
               )}
               {browseResults.map((mod) => {
-                const selectedId = selectedVersionByModId.get(mod.id) ?? mod.versions[0]?.id;
+                const selectedId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
                 return (
                   <div key={mod.id} className="forge-mod-card">
                     {mod.thumbnail ? (
@@ -1436,21 +1456,8 @@ export default function App() {
   );
 }
 
-function Section({
-  title,
-  mods,
-  ...listProps
-}: { title: string; mods: ModInfo[] } & Omit<Parameters<typeof ModList>[0], "mods">) {
-  return (
-    <section>
-      <h2>{title} ({mods.length})</h2>
-      <ModList mods={mods} {...listProps} />
-    </section>
-  );
-}
-
 function ModList({
-  mods,
+  nodes,
   onToggle,
   onUninstall,
   onOpenFolder,
@@ -1468,10 +1475,9 @@ function ModList({
   onSetOpenMenuKey,
   disabled = false,
   forgeStatusByName,
-  packagePartsById,
   t
 }: {
-  mods: ModInfo[];
+  nodes: ModTreeNode[];
   onToggle: (mod: ModInfo) => void;
   onUninstall: (mod: ModInfo) => void;
   onOpenFolder: (mod: ModInfo) => void;
@@ -1489,19 +1495,41 @@ function ModList({
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
   forgeStatusByName?: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>;
-  packagePartsById?: Map<string, ModInfo[]>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  // Grupo registrado na instalação abre; grupo INFERIDO nasce fechado, porque
+  // aninhar um palpite afirma parentesco com muito mais força que um chip.
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
 
-  if (mods.length === 0) {
+  function isExpanded(node: ModTreeNode) {
+    if (node.single) return false;
+    return collapsedKeys.has(node.key) ? false : !node.inferred;
+  }
+
+  function toggleExpanded(node: ModTreeNode) {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      // O Set guarda "estado invertido em relação ao padrão do nó", e não
+      // "fechado": assim um grupo inferido (fechado por padrão) e um registrado
+      // (aberto por padrão) usam o mesmo botão sem precisar de dois estados.
+      if (next.has(node.key)) next.delete(node.key);
+      else next.add(node.key);
+      return next;
+    });
+  }
+
+  if (nodes.length === 0) {
     return <p className="empty-list">{t("modlist.emptyCategory")}</p>;
   }
 
   function handleCheckboxClick(e: ReactMouseEvent<HTMLInputElement>, mod: ModInfo, index: number) {
     if (e.shiftKey && lastClickedIndex !== null) {
       const [start, end] = lastClickedIndex < index ? [lastClickedIndex, index] : [index, lastClickedIndex];
-      onRangeSelect(mods.slice(start, end + 1).map(selectionKey));
+      // O intervalo percorre as linhas VISÍVEIS (uma por linha-pai), não as
+      // pastas: shift-clique entre a 1ª e a 3ª linha pega 3 mods, e um mod de
+      // duas partes entra inteiro.
+      onRangeSelect(nodes.slice(start, end + 1).flatMap((n) => n.parts.map(selectionKey)));
     } else {
       onToggleSelect(mod);
     }
@@ -1510,13 +1538,18 @@ function ModList({
 
   return (
     <ul className="mod-list">
-      {mods.map((mod, index) => {
+      {nodes.map((node, index) => {
+        // A linha-pai age sobre a primeira parte. Como habilitar/desabilitar já
+        // cascateia pelo pacote, isso vale pelo pacote inteiro.
+        const mod = node.parts[0];
         const key = selectionKey(mod);
         const isEditing = editingKey === key;
         const isMenuOpen = openMenuKey === key;
         const forgeStatus = forgeStatusByName?.get(mod.name);
+        const expanded = isExpanded(node);
         return (
-          <li key={key} className={`mod-item ${mod.enabled ? "" : "disabled"}`}>
+          <Fragment key={node.key}>
+          <li className={`mod-item ${mod.enabled ? "" : "disabled"}`}>
             <input
               type="checkbox"
               checked={selectedKeys.has(key)}
@@ -1527,6 +1560,18 @@ function ModList({
               title={t("modlist.checkboxTitle")}
             />
             <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
+            {node.single ? (
+              <span className="tree-toggle-spacer" />
+            ) : (
+              <button
+                className="tree-toggle"
+                onClick={() => toggleExpanded(node)}
+                aria-expanded={expanded}
+                title={t(expanded ? "modlist.collapseParts" : "modlist.expandParts")}
+              >
+                {expanded ? "▾" : "▸"}
+              </button>
+            )}
             <div className="mod-info">
               {isEditing ? (
                 <input
@@ -1541,12 +1586,16 @@ function ModList({
                   onBlur={() => onRenameConfirm(mod)}
                 />
               ) : (
-                <span className="mod-name" title={t("modlist.renameTitle", { name: mod.originalName })} onDoubleClick={() => onRenameStart(mod)}>
-                  {mod.name}
+                <span
+                  className="mod-name"
+                  title={node.single ? t("modlist.renameTitle", { name: mod.originalName }) : node.name}
+                  onDoubleClick={() => node.single && onRenameStart(mod)}
+                >
+                  {node.name}
                 </span>
               )}
               <div className="mod-meta">
-                <span className={`type-badge type-${mod.type}`}>{mod.type}</span>
+                {node.single && <span className={`type-badge type-${mod.type}`}>{mod.type}</span>}
                 <span className={`status-chip ${mod.enabled ? "status-chip-on" : "status-chip-off"}`}>
                   {mod.enabled ? t("modlist.statusActive") : t("modlist.statusDisabled")}
                 </span>
@@ -1581,22 +1630,21 @@ function ModList({
                     {t("modlist.sptIncompatible")}
                   </span>
                 )}
-                {(() => {
-                  const parts = mod.packageId ? packagePartsById?.get(mod.packageId) : undefined;
-                  if (!parts || parts.length < 2) return null;
-                  const others = parts.filter((x) => selectionKey(x) !== key).map((x) => `${x.name} (${x.type})`);
-                  return (
-                    <span
-                      className="meta-chip package-chip"
-                      title={t(
-                        mod.packageId?.startsWith("inferred:") ? "modlist.packageTooltipInferred" : "modlist.packageTooltip",
-                        { others: others.join(", ") }
-                      )}
-                    >
-                      {t("modlist.packagePart", { count: parts.length })}
-                    </span>
-                  );
-                })()}
+                {!node.single && (
+                  <span
+                    className={`meta-chip package-chip ${node.inferred ? "package-chip-inferred" : ""}`}
+                    title={t(node.inferred ? "modlist.packageTooltipInferred" : "modlist.packageTooltip", {
+                      others: node.parts.map((x) => `${x.name} (${x.type})`).join(", ")
+                    })}
+                  >
+                    {node.hiddenParts > 0
+                      ? t("modlist.packagePartFiltered", {
+                          shown: node.parts.length,
+                          count: node.parts.length + node.hiddenParts
+                        })
+                      : t("modlist.packagePart", { count: node.parts.length })}
+                  </span>
+                )}
                 {mod.manifestOnly && (
                   <span className="meta-chip" title={t("modlist.orphanTitle")}>
                     {t("modlist.orphan")}
@@ -1625,6 +1673,15 @@ function ModList({
               )}
             </div>
           </li>
+          {expanded &&
+            node.parts.map((part) => (
+              <li key={selectionKey(part)} className={`mod-part ${part.enabled ? "" : "disabled"}`}>
+                <span className="mod-part-rail" />
+                <span className="mod-part-name">{part.name}</span>
+                <span className={`type-badge type-${part.type}`}>{part.type}</span>
+              </li>
+            ))}
+          </Fragment>
         );
       })}
     </ul>

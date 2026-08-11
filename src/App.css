@@ -1060,3 +1060,94 @@ h2 {
   color: var(--accent-strong);
   cursor: help;
 }
+/* ── Lista em árvore ───────────────────────────────────────────────────────
+   As seções Server/Client deram lugar a uma lista única: o mod é a linha, e
+   as partes (server/client do mesmo pacote) ficam aninhadas embaixo. */
+
+.type-filter-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.type-filter-chip {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.type-filter-chip:hover {
+  background: var(--bg-panel-raised);
+  color: var(--text);
+}
+
+.type-filter-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+
+/* O espaçador ocupa a mesma largura do botão pra que mod de parte única e
+   linha-pai fiquem com o nome alinhado na mesma coluna. */
+.tree-toggle,
+.tree-toggle-spacer {
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.tree-toggle {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  color: var(--accent-strong);
+}
+
+.mod-part {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 58px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-top: none;
+  font-size: 13px;
+}
+
+.mod-part.disabled {
+  opacity: 0.55;
+}
+
+.mod-part-rail {
+  width: 2px;
+  height: 15px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.mod-part-name {
+  flex: 1;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+/* Agrupamento inferido é palpite, não registro: o tracejado avisa disso sem
+   depender do usuário parar em cima pra ler o tooltip. */
+.package-chip-inferred {
+  border-style: dashed;
+}

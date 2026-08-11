@@ -18,6 +18,7 @@ export interface ModInfo {
   packageSiblings?: { id: string; type: ModType }[]; // outras partes, quando o pacote é inferido
   guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge
   linkedModName?: string;
+  forgeName?: string; // nome publicado na Forge, gravado no registro na instalação
 }
 
 export interface ModListComparison {
@@ -84,6 +85,8 @@ export interface ForgeCatalogMod {
   fikaCompatible?: boolean;
   detailUrl?: string;
   versions: ForgeCatalogVersion[];
+  /** Versão mais nova compatível com a instância, quando a busca foi filtrada por versão do SPT. */
+  compatibleVersionId?: number;
 }
 
 export interface ForgeSearchResult {
