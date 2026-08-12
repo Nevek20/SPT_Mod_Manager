@@ -3226,11 +3226,15 @@ export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateI
       updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
       currentVersion,
       latestVersion: latestVersion.replace(/^v/i, ""),
-      // Aponta pro GitHub, não pra página do mod na fonte: nenhuma das fontes
-      // aceita publicação hoje (sp-mod está só-leitura, Forge Alt é espelho de
-      // arquivo), então a versão nova só existe na release do GitHub. Mandar
-      // pra página do mod levaria a pessoa a um lugar sem o que ela procura.
-      downloadPageUrl: json?.html_url,
+      // Botão principal vai pra página do mod na fonte ativa, que é de onde o
+      // pessoal do SPT baixa de verdade. Ficou apontando pro GitHub enquanto
+      // nenhuma fonte aceitava publicação; a Forge voltou a aceitar, então volta
+      // ao normal. O link do changelog continua indo pro GitHub, que é o
+      // caminho de quem prefere não depender de site nenhum.
+      //
+      // Cai no GitHub quando a fonte ativa não tem página do mod — nem toda
+      // fonte hospeda este app.
+      downloadPageUrl: activeSource.modManagerPage ?? json?.html_url,
       releaseUrl: json?.html_url,
       releaseName: json?.name || undefined
     };
