@@ -302,13 +302,15 @@ export default function App() {
       if (instance?.path) {
         refreshMods();
         setSptVersion(await window.modManagerAPI.getSptVersion());
+        // A escolha do usuário vem PRIMEIRO. A detecção é palpite bom, mas quem
+        // roda 4.0.13 de propósito (mais mods disponíveis) precisa que a escolha
+        // dele sobreviva ao reinício. Enquanto a detecção falhava no 4.x, o
+        // else abaixo cobria isso por acidente; agora que ela funciona, a ordem
+        // tem que ser explícita. O backend já resolve assim (override ?? detectado).
+        const override = await window.modManagerAPI.getSptVersionOverride();
         const semver = await window.modManagerAPI.getSptSemver();
-        if (semver) {
-          setSptVersionInput(semver);
-        } else {
-          const override = await window.modManagerAPI.getSptVersionOverride();
-          if (override) setSptVersionInput(override);
-        }
+        if (override) setSptVersionInput(override);
+        else if (semver) setSptVersionInput(semver);
 
         window.modManagerAPI.getForgeSptVersions().then(setForgeSptVersions);
         window.modManagerAPI.getModSources().then((r) => {
@@ -355,13 +357,12 @@ export default function App() {
       pushToast(tMsg(result.message) || t("toast.instanceConfigured"), true);
       refreshMods();
       setSptVersion(await window.modManagerAPI.getSptVersion());
+      // Instância NOVA: a escolha manual salva era da anterior, então é descartada
+      // aqui. Se ficasse guardada, o próximo boot a ressuscitaria por cima da
+      // detecção desta instalação — e aí a versão errada voltaria sozinha.
       const semver = await window.modManagerAPI.getSptSemver();
-      if (semver) {
-        setSptVersionInput(semver);
-      } else {
-        const override = await window.modManagerAPI.getSptVersionOverride();
-        setSptVersionInput(override || "");
-      }
+      window.modManagerAPI.setSptVersionOverride("");
+      setSptVersionInput(semver || "");
       // Sem isso, o dropdown de versão do SPT ficava só com o placeholder na primeira
       // vez que alguém selecionava a pasta — só populava depois de fechar e reabrir o
       // app (quando o efeito de inicialização, que já buscava isso, finalmente rodava
@@ -1723,14 +1724,23 @@ function ModList({
               )}
             </div>
           </li>
-          {expanded &&
-            node.parts.map((part) => (
-              <li key={selectionKey(part)} className={`mod-part ${part.enabled ? "" : "disabled"}`}>
-                <span className="mod-part-rail" />
-                <span className="mod-part-name">{part.name}</span>
-                <span className={`type-badge type-${part.type}`}>{part.type}</span>
-              </li>
-            ))}
+          {expanded && (
+            // As partes vão num <li> só, como uma faixa dentro do bloco do mod. Uma
+            // linha por parte fazia cada uma parecer um mod da lista — e como parte
+            // não tem checkbox (habilitar/desabilitar age no pacote inteiro), isso
+            // era lido como "esse mod está sem checkbox".
+            <li className="mod-parts">
+              {node.parts.map((part) => (
+                <div key={selectionKey(part)} className={`mod-part ${part.enabled ? "" : "disabled"}`}>
+                  <span className="mod-part-elbow" aria-hidden="true" />
+                  <span className="mod-part-tag-slot">
+                    <span className={`mod-part-tag type-${part.type}`}>{part.type}</span>
+                  </span>
+                  <span className="mod-part-name" title={part.name}>{part.name}</span>
+                </div>
+              ))}
+            </li>
+          )}
           </Fragment>
         );
       })}

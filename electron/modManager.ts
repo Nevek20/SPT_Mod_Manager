@@ -634,9 +634,18 @@ export function resolveSptInstance(chosenPath: string): { instance: SptInstanceP
   // O executável do servidor decide, onde quer que ele esteja — raiz ou subpasta
   // (SPT_Runtime no 4.1, SPT no 4.0). Só se não houver executável em lugar nenhum é que
   // a pasta "user" entra como pista.
+  //
+  // A SUBPASTA vem primeiro quando a pasta escolhida é a raiz do JOGO. Caso real: um
+  // usuário tinha cópias soltas de SPT.Server.exe e SPT.Launcher.exe na raiz, além das
+  // verdadeiras em SPT_Runtime — e como a raiz era testada antes, ela ganhava e os mods
+  // de servidor iam parar em <raiz>/user/mods. Se a pasta escolhida tem marcadores de
+  // CLIENT, ela é a raiz do jogo, e num layout dividido o servidor mora numa subpasta:
+  // um executável ali fora é sobra, não a instalação de verdade.
   let serverRoot: string | undefined;
-  if (hasServerExe(chosenPath)) serverRoot = chosenPath;
-  else serverRoot = subPaths.find(hasServerExe);
+  const subComExe = subPaths.find(hasServerExe);
+  if (chosenHasClient && subComExe) serverRoot = subComExe;
+  else if (hasServerExe(chosenPath)) serverRoot = chosenPath;
+  else serverRoot = subComExe;
   if (!serverRoot) {
     if (hasUserFolder(chosenPath)) serverRoot = chosenPath;
     else serverRoot = subPaths.find(hasUserFolder);
@@ -2040,7 +2049,7 @@ export async function getForgeSptVersions(): Promise<ForgeSptVersion[]> {
   // Pede os números separados e ordena certinho aqui mesmo.
   const url = `${activeSource.apiBase}/spt/versions?per_page=50&fields=version,mod_count,version_major,version_minor,version_patch`;
   try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const res = await forgeFetch(url);
     if (!res.ok) return [];
     const json: any = await res.json();
     const list = (json?.data || []).map((v: any) => ({
@@ -2299,11 +2308,19 @@ function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
   };
 }
 
-/* Limites documentados da API da Forge: 40 req/10s (burst) e 200 req/60s (sustentado).
- * 40/10s = 1 requisição a cada 250ms no melhor caso; usamos 320ms de folga pra não
- * encostar no limite (era 120ms antes, que dava ~83 req/10s — o dobro do permitido, e
- * por isso a checagem entrava num ciclo de 429 -> espera -> 429 que parecia travada). */
-const FORGE_MIN_REQUEST_INTERVAL_MS = 320;
+/* Limites da API: 40 req/10s (burst, bloqueia 30s) e 200 req/60s (sustentado,
+ * bloqueia 60s). Estourar sai MUITO caro — meio minuto ou um minuto inteiro sem
+ * conseguir falar com a fonte —, então vale sobrar folga em vez de espremer.
+ *
+ * 400ms = 25 req/10s (62% do burst) e 150 req/60s (75% do sustentado). Os 320ms
+ * de antes davam 187/60s: só 6% abaixo do teto, sem margem pra nada.
+ *
+ * O intervalo vale pra TODA chamada à API, e não só pra checagem de atualizações
+ * — era esse o furo. Busca de mods, categorias, versões do SPT e /mods/updates
+ * disparavam direto, sem passar por aqui. Quem abria o browse e depois checava
+ * atualizações estourava o burst e levava 30s de bloqueio; os três primeiros 429
+ * abortavam a checagem, e o resultado era "N mods não verificados" logo de cara. */
+const FORGE_MIN_REQUEST_INTERVAL_MS = 400;
 let lastForgeRequestAt = 0;
 
 async function forgeRateLimitGate(): Promise<void> {
@@ -2312,6 +2329,66 @@ async function forgeRateLimitGate(): Promise<void> {
     await delay(FORGE_MIN_REQUEST_INTERVAL_MS - since);
   }
   lastForgeRequestAt = Date.now();
+}
+
+/**
+ * fetch pra API da fonte, respeitando o intervalo acima. Use SEMPRE isto em vez de
+ * fetch direto — o orçamento de requisições só protege quem passa por aqui.
+ *
+ * Exceções legítimas: /ping (isento de limite), download de arquivo de mod (não é
+ * a API) e a API do GitHub (outro servidor, outro limite).
+ */
+/** Contadores de diagnóstico da checagem. Zerados no início de cada matchForgeMods. */
+const forgeStats = {
+  requisicoes: 0,
+  msEsperando: 0,
+  msNaRede: 0,
+  ms429: 0,
+  n429: 0,
+  respostasVazias: 0,
+  porEndpoint: new Map<string, { n: number; ms: number }>()
+};
+
+function resetForgeStats() {
+  forgeStats.requisicoes = 0;
+  forgeStats.msEsperando = 0;
+  forgeStats.msNaRede = 0;
+  forgeStats.ms429 = 0;
+  forgeStats.n429 = 0;
+  forgeStats.respostasVazias = 0;
+  forgeStats.porEndpoint.clear();
+}
+
+function rotuloEndpoint(url: string): string {
+  try {
+    const u = new URL(url);
+    const filtros = [...u.searchParams.keys()].filter((k) => k.startsWith("filter[")).sort().join(",");
+    return u.pathname.replace(/\/\d+/g, "/{id}") + (filtros ? ` ?${filtros}` : "");
+  } catch {
+    return url.slice(0, 60);
+  }
+}
+
+async function forgeFetch(url: string, init?: RequestInit): Promise<Response> {
+  const t0 = Date.now();
+  await forgeRateLimitGate();
+  const t1 = Date.now();
+  forgeStats.requisicoes++;
+  forgeStats.msEsperando += t1 - t0;
+  const rotulo = rotuloEndpoint(url);
+  const acc = forgeStats.porEndpoint.get(rotulo) ?? { n: 0, ms: 0 };
+  try {
+    return await fetch(url, {
+      ...init,
+      headers: { Accept: "application/json", "User-Agent": "SPT-Mod-Manager", ...(init?.headers ?? {}) }
+    });
+  } finally {
+    const gasto = Date.now() - t1;
+    forgeStats.msNaRede += gasto;
+    acc.n++;
+    acc.ms += gasto;
+    forgeStats.porEndpoint.set(rotulo, acc);
+  }
 }
 
 // Estado por execução de checagem: teto de requisições e contagem de 429, pra garantir
@@ -2342,9 +2419,7 @@ async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 
   budget.remaining--;
   await forgeRateLimitGate();
   try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "SPT-Mod-Manager" }
-    });
+    const res = await forgeFetch(url);
     if (res.status === 429) {
       budget.rateLimitHits++;
       // Se continuar batendo no limite, desistir é melhor que insistir: a doc trata
@@ -2354,8 +2429,11 @@ async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 
         budget.aborted = true;
         return null;
       }
+      // O bloqueio dura 30s (burst) ou 60s (sustentado), então o teto tem que
+      // caber nos dois: 35s deixava a retentativa cair ainda dentro do bloqueio
+      // de 60s, gastando a tentativa à toa.
       const retryAfter = Number(res.headers.get("retry-after") || 0);
-      await delay(Math.min(Math.max(retryAfter, 1), 35) * 1000);
+      await delay(Math.min(Math.max(retryAfter, 1), 65) * 1000);
       return forgeFetchJson(url, budget, true);
     }
     if (!res.ok) return null;
@@ -2371,8 +2449,15 @@ async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 
  * filter[hub_id] aceitam). Por isso aqui é uma requisição por valor, e o resultado
  * ainda passa por verificação, já que "fuzzy" pode trazer coisa parecida mas errada.
  *
- * include_legacy=true porque, por padrão, a Forge ESCONDE mods legados (sem
- * constraint de versão do SPT) — e vários mods instalados são justamente esses.
+ * NÃO usar filter[include_legacy] junto com outro filtro: medido contra o sp-mod,
+ * quando ele está presente o filter[id] é IGNORADO e a API devolve o catálogo
+ * inteiro paginado (1433 mods) em vez do que foi pedido. Como nenhum dos mods
+ * devolvidos batia com o solicitado, TODA consulta em lote voltava sem casamento
+ * e cada mod caía nas estratégias lentas — 3 a 5 segundos por mod, e no fim a
+ * checagem estourava o limite de requisições e abortava.
+ *
+ * Ele também não fazia falta: com e sem o parâmetro, a mesma busca por categoria
+ * devolve a mesma quantidade.
  */
 async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string, budget: ForgeBudget): Promise<any[]> {
   const url = new URL(`${activeSource.apiBase}/mods`);
@@ -2382,7 +2467,6 @@ async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string
   // Sem restringir "fields": a restauração de modlist precisa do LINK de download de
   // cada versão, e a resposta reduzida não garante trazer esse campo. Pedir o objeto
   // completo custa alguns KB a mais e evita "não baixa nada" silencioso.
-  url.searchParams.set("filter[include_legacy]", "true");
   const json = await forgeFetchJson(url.toString(), budget);
   return Array.isArray(json?.data) ? json.data : [];
 }
@@ -2398,9 +2482,13 @@ async function fetchForgeByIds(ids: string[], budget: ForgeBudget): Promise<any[
     url.searchParams.set("filter[id]", ids.slice(i, i + CHUNK).join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
-    url.searchParams.set("filter[include_legacy]", "true");
-    const json = await forgeFetchJson(url.toString(), budget);
-    if (Array.isArray(json?.data)) results.push(...json.data);
+      const json = await forgeFetchJson(url.toString(), budget);
+    const n = Array.isArray(json?.data) ? json.data.length : 0;
+    // Lote que volta vazio é o sintoma de a fonte não aceitar vários valores
+    // separados por vírgula. Registrar separadamente evita confundir "a fonte não
+    // tem esses mods" com "a fonte não entendeu a consulta".
+    if (n === 0) forgeStats.respostasVazias++;
+    if (n) results.push(...json.data);
   }
   return results;
 }
@@ -2414,9 +2502,13 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
     url.searchParams.set("filter[guid]", guids.slice(i, i + CHUNK).join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
-    url.searchParams.set("filter[include_legacy]", "true");
-    const json = await forgeFetchJson(url.toString(), budget);
-    if (Array.isArray(json?.data)) results.push(...json.data);
+      const json = await forgeFetchJson(url.toString(), budget);
+    const n = Array.isArray(json?.data) ? json.data.length : 0;
+    // Lote que volta vazio é o sintoma de a fonte não aceitar vários valores
+    // separados por vírgula. Registrar separadamente evita confundir "a fonte não
+    // tem esses mods" com "a fonte não entendeu a consulta".
+    if (n === 0) forgeStats.respostasVazias++;
+    if (n) results.push(...json.data);
   }
   return results;
 }
@@ -2459,6 +2551,29 @@ const FORGE_MATCH_CACHE_FILE = ".spt-mod-manager-forge-match.json";
  */
 interface MatchCacheEntry {
   ids: Record<string, string>;
+  /**
+   * Quando a busca completa por este mod terminou sem achar nada, por fonte (ISO).
+   *
+   * Sem isto, um mod que não existe no catálogo esgota TODA a cadeia de estratégias
+   * (nome, nome sem prefixo, busca textual) em toda checagem — 7 a 12 requisições,
+   * 3 a 5 segundos, pra chegar sempre na mesma resposta. Numa instalação com umas
+   * quatro dezenas desses, são minutos gastos por checagem, toda vez.
+   *
+   * Não é permanente: mod não publicado hoje pode ser publicado amanhã, então a
+   * anotação vence (ver MATCH_MISS_TTL_DAYS) e a busca completa acontece de novo.
+   */
+  misses?: Record<string, string>;
+}
+
+/** Quanto tempo confiar num "não achei" antes de procurar de novo. */
+const MATCH_MISS_TTL_DAYS = 7;
+
+function missAindaVale(entry: MatchCacheEntry | undefined, sourceKey: string): boolean {
+  const quando = entry?.misses?.[sourceKey];
+  if (!quando) return false;
+  const idade = Date.now() - new Date(quando).getTime();
+  if (!Number.isFinite(idade) || idade < 0) return false; // data corrompida: procura
+  return idade < MATCH_MISS_TTL_DAYS * 24 * 60 * 60 * 1000;
 }
 
 /** Fontes que herdaram a numeração da Forge original — o cache antigo vale nelas. */
@@ -2479,6 +2594,8 @@ export function loadForgeMatchCache(root: string): Record<string, MatchCacheEntr
         out[folderName] = { ids: { [LEGACY_SOURCE_KEY]: value } };
       } else if (value && typeof value === "object" && typeof (value as any).ids === "object") {
         out[folderName] = { ids: { ...(value as any).ids } };
+        const misses = (value as any).misses;
+        if (misses && typeof misses === "object") out[folderName].misses = { ...misses };
       }
     }
     return out;
@@ -2508,12 +2625,23 @@ export async function matchForgeMods(
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
 ): Promise<Map<string, ForgeMatch> & { notChecked?: Set<string> }> {
+  const t0 = Date.now();
+  resetForgeStats();
   const cache = cacheRoot ? loadForgeMatchCache(cacheRoot) : {};
+  console.log(`[checagem] cacheRoot=${cacheRoot ?? "(nenhum!)"} entradas no cache=${Object.keys(cache).length}`);
   const entries = input
     .map((v) => (typeof v === "string" ? { folderName: v, guid: undefined as string | undefined } : { ...v }))
     // Mod já resolvido numa checagem anterior, na fonte ATIVA (ou numa que herdou
     // a numeração da Forge original).
-    .map((e) => ({ ...e, cachedId: cachedIdFor(cache[e.folderName], activeSource.key) }));
+    .map((e) => ({
+      ...e,
+      cachedId: cachedIdFor(cache[e.folderName], activeSource.key),
+      // Procurado a fundo há pouco e não encontrado: entra nos lotes (que são
+      // baratos) mas pula a cadeia lenta de estratégias por nome.
+      missRecente: missAindaVale(cache[e.folderName], activeSource.key)
+    }));
+
+  const pulaBuscaLenta = new Set(entries.filter((e) => e.missRecente).map((e) => e.folderName));
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
@@ -2580,6 +2708,13 @@ export async function matchForgeMods(
   for (const [folderName, cand] of candidatesByName) {
     if (matched.has(folderName)) continue; // já resolvido pelos lotes de id/guid
     if (budget.aborted) break;
+    if (pulaBuscaLenta.has(folderName)) {
+      // Já procuramos tudo por este nos últimos dias e não existe no catálogo.
+      // Repetir gastaria segundos pra chegar na mesma resposta.
+      exhausted++;
+      reportProgress();
+      continue;
+    }
 
     // 1) filtro por nome (fuzzy — o resultado SEMPRE passa por verificação)
     for (const name of cand.strictNames) {
@@ -2625,8 +2760,7 @@ export async function matchForgeMods(
         url.searchParams.set("query", term);
         url.searchParams.set("per_page", "5");
         url.searchParams.set("include", "versions");
-        url.searchParams.set("filter[include_legacy]", "true");
-        const json = await forgeFetchJson(url.toString(), budget);
+              const json = await forgeFetchJson(url.toString(), budget);
         const hit = (json?.data || []).find((entry: any) => isPlausibleMatch(entry, term, cand.authorHint));
         if (hit) matched.set(folderName, toForgeMatch(hit, "derived"));
       }
@@ -2661,12 +2795,56 @@ export async function matchForgeMods(
     // resolveram pro mesmo mod — trocar de fonte e voltar não deve custar a
     // primeira checagem lenta de novo.
     const updated: Record<string, MatchCacheEntry> = { ...cache };
+    const agora = new Date().toISOString();
+
     for (const [folderName, match] of matched) {
       if (!match.modId) continue;
-      const anterior = updated[folderName]?.ids ?? {};
-      updated[folderName] = { ids: { ...anterior, [activeSource.key]: String(match.modId) } };
+      const anterior = updated[folderName] ?? { ids: {} };
+      const misses = { ...(anterior.misses ?? {}) };
+      // Achou agora: apaga a anotação de "não existe" desta fonte, senão ela
+      // continuaria pulando a busca caso o id saia do cache depois.
+      delete misses[activeSource.key];
+      updated[folderName] = {
+        ids: { ...anterior.ids, [activeSource.key]: String(match.modId) },
+        ...(Object.keys(misses).length ? { misses } : {})
+      };
     }
+
+    // Anota quem esgotou a busca sem achar. Só quem foi REALMENTE procurado: mod
+    // que ficou de fora por falta de orçamento (notChecked) não é "não existe", e
+    // marcá-lo faria a próxima checagem pular um mod que nunca chegou a ser visto.
+    for (const folderName of folderNames) {
+      if (matched.has(folderName) || notChecked.has(folderName)) continue;
+      if (pulaBuscaLenta.has(folderName)) continue; // mantém a data original
+      const anterior = updated[folderName] ?? { ids: {} };
+      updated[folderName] = {
+        ...anterior,
+        misses: { ...(anterior.misses ?? {}), [activeSource.key]: agora }
+      };
+    }
+
     saveForgeMatchCache(cacheRoot, updated);
+  }
+
+  const total = Date.now() - t0;
+  const comId = entries.filter((e) => e.cachedId).length;
+  const comGuid = entries.filter((e) => e.guid).length;
+  console.log(
+    `[checagem] ${folderNames.length} mods em ${(total / 1000).toFixed(1)}s | ` +
+      `${forgeStats.requisicoes} requisições (${(forgeStats.msEsperando / 1000).toFixed(1)}s esperando o limite, ` +
+      `${(forgeStats.msNaRede / 1000).toFixed(1)}s de rede, ` +
+      `${(forgeStats.ms429 / 1000).toFixed(1)}s parado por 429 x${forgeStats.n429})`
+  );
+  console.log(
+    `[checagem] consultas em lote que voltaram VAZIAS: ${forgeStats.respostasVazias}` +
+      (forgeStats.respostasVazias ? "  <-- a fonte provavelmente não aceita vários valores por vírgula" : "")
+  );
+  console.log(
+    `[checagem] entraram com id em cache: ${comId} | com guid próprio: ${comGuid} | ` +
+      `pularam por falha recente: ${pulaBuscaLenta.size} | casaram: ${matched.size} | não achados: ${folderNames.length - matched.size - notChecked.size}`
+  );
+  for (const [rotulo, v] of [...forgeStats.porEndpoint.entries()].sort((a, b) => b[1].n - a[1].n)) {
+    console.log(`[checagem]   ${String(v.n).padStart(4)}x  ${(v.ms / 1000).toFixed(1)}s  ${rotulo}`);
   }
 
   (matched as Map<string, ForgeMatch> & { notChecked?: Set<string> }).notChecked = notChecked;
@@ -2684,7 +2862,7 @@ async function findForgeModInfo(
     url.searchParams.set("include", "versions");
     url.searchParams.set("fields", "id,guid,name");
     if (sptVersion?.trim()) url.searchParams.set("filter[spt_version]", sptVersion.trim());
-    const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    const res = await forgeFetch(url.toString());
     if (!res.ok) return null;
     const json: any = await res.json();
     const match = json?.data?.[0];
@@ -2750,8 +2928,7 @@ export async function findForgeDownloadsForNames(
     url.searchParams.set("filter[guid]", info.identifier);
     url.searchParams.set("per_page", "1");
     url.searchParams.set("include", "versions");
-    url.searchParams.set("filter[include_legacy]", "true");
-    const json = await forgeFetchJson(url.toString(), budget);
+      const json = await forgeFetchJson(url.toString(), budget);
     const versions = json?.data?.[0]?.versions;
     const latest = Array.isArray(versions) ? versions[0] : undefined;
     if (latest?.link) {
@@ -2849,7 +3026,7 @@ export async function checkForgeUpdates(
   const url = `${activeSource.apiBase}/mods/updates?mods=${encodeURIComponent(pairs.join(","))}&spt_version=${encodeURIComponent(trimmedVersion)}`;
   let json: any;
   try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const res = await forgeFetch(url);
     json = await res.json();
     if (!res.ok || json?.success === false) {
       throw new Error(json?.message || `Forge respondeu ${res.status}`);
@@ -3037,7 +3214,7 @@ export async function searchForgeMods(params: {
   if (params.categorySlug) url.searchParams.set("filter[category_slug]", params.categorySlug);
   if (params.sptVersionConstraint) url.searchParams.set("filter[spt_version]", params.sptVersionConstraint);
 
-  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  const res = await forgeFetch(url.toString());
   const json: any = await res.json();
   if (!res.ok || json?.success === false) {
     throw new Error(json?.message || `Forge respondeu ${res.status}`);
@@ -3081,7 +3258,7 @@ export async function searchForgeMods(params: {
 export async function getForgeCategories(): Promise<ForgeCategory[]> {
   const url = `${activeSource.apiBase}/mod-categories?per_page=100&fields=id,title,slug`;
   try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const res = await forgeFetch(url);
     if (!res.ok) return [];
     const json: any = await res.json();
     return (json?.data || []).map((c: any) => ({ id: c.id, title: c.title, slug: c.slug }));

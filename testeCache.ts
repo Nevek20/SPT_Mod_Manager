@@ -53,6 +53,34 @@ check("descarta lixo e mantem o valido", Object.keys(loadForgeMatchCache(dir)), 
 fs.writeFileSync(path.join(dir, FILE), "{ nao e json", "utf-8");
 check("arquivo corrompido devolve vazio, nao estoura", loadForgeMatchCache(dir), {});
 
+console.log("\nanotacao de busca infrutifera");
+{
+  const agora = new Date().toISOString();
+  const antigo = new Date(Date.now() - 9 * 24 * 3600 * 1000).toISOString();
+  write({
+    Novo: { ids: {}, misses: { "sp-mod": agora } },
+    Velho: { ids: {}, misses: { "sp-mod": antigo } },
+    OutraFonte: { ids: {}, misses: { "forge-alt": agora } },
+    Corrompido: { ids: {}, misses: { "sp-mod": "nao e data" } }
+  });
+  const c = loadForgeMatchCache(dir);
+  check("miss sobrevive ao load", c.Novo.misses?.["sp-mod"], agora);
+  check("miss de outra fonte nao vaza", c.OutraFonte.misses?.["sp-mod"], undefined);
+  check("ids continua presente", c.Novo.ids, {});
+  check("data corrompida nao vira miss valido", Number.isFinite(Date.parse(c.Corrompido.misses!["sp-mod"])), false);
+}
+
+console.log("\nmiss e id convivem");
+{
+  write({ Misto: { ids: { "sp-mod": "791" }, misses: { "forge-alt": new Date().toISOString() } } });
+  const c = loadForgeMatchCache(dir);
+  check("id da fonte que achou", cachedIdFor(c.Misto, "sp-mod"), "791");
+  check("miss registrado na outra", !!c.Misto.misses?.["forge-alt"], true);
+  saveForgeMatchCache(dir, c);
+  const relido = loadForgeMatchCache(dir);
+  check("sobrevive ao salvar e reler", relido.Misto.misses?.["forge-alt"], c.Misto.misses?.["forge-alt"]);
+}
+
 console.log(`\n${ok} ok, ${fail} falhas\n`);
 fs.rmSync(dir, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
