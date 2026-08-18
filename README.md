@@ -67,7 +67,7 @@ Styled with its own "tactical manifest" look — condensed headers, monospace te
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 18 or later
-- Windows (the app assumes Windows-style SPT folder conventions; not tested on Linux/macOS)
+- Windows (the app assumes Windows-style SPT folder conventions; while it seems to work on linux, testing is limited as of this edit; untested on macOS)
 - An existing SPT instance installed somewhere on your PC
 
 ### Development
@@ -87,12 +87,13 @@ npm run dev
 ```
 In this mode `window.modManagerAPI` doesn't exist, so anything depending on the backend will fail — it's just for visuals.
 
-### Building the installer (Windows)
+### Building the installer (Windows/Linux)
 
 ```bash
 npm run electron:build
 ```
-Generates a `.exe` via `electron-builder` (configuration already set in `package.json`).
+Generates an executable (`.exe` or `.appimage` depending on build OS) via `electron-builder` (configuration already set in `package.json`).
+- For Linux users building the AppImage, be sure to make it executable by running `chmod +x /path/to/SPT-Mod-Manager.xyz.AppImage` or doing so in the file properties.
 
 ---
 
