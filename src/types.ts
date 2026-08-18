@@ -76,6 +76,7 @@ export interface ForgeCatalogVersion {
   link: string;
   downloads: number;
   contentLength?: number;
+  compatibility?: "compatible" | "incompatible" | "unknown";
 }
 
 export interface ForgeCatalogMod {
@@ -164,6 +165,7 @@ export interface ModManagerAPI {
     query?: string;
     categorySlug?: string;
     sptVersionConstraint?: string;
+    markVersion?: string;
     sort?: string;
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;

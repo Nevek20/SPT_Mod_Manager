@@ -3102,6 +3102,8 @@ export interface ForgeCatalogVersion {
   link: string;
   downloads: number;
   contentLength?: number;
+  /** Compatibilidade com a versão do SPT da instância. Vem sempre, filtro ligado ou não. */
+  compatibility?: "compatible" | "incompatible" | "unknown";
 }
 
 /**
@@ -3198,7 +3200,15 @@ function mapCatalogMod(m: any): ForgeCatalogMod {
 export async function searchForgeMods(params: {
   query?: string;
   categorySlug?: string;
+  /** Filtra a busca por versão do SPT. Só quando o usuário pede "só compatíveis". */
   sptVersionConstraint?: string;
+  /**
+   * Versão da instância, usada só pra MARCAR cada versão de mod como compatível
+   * ou não. Vem separada do filtro de propósito: com o filtro desligado a lista
+   * mostra tudo, e sem a marcação não dava pra saber o que servia — era esse o
+   * buraco que fazia parecer que faltava um seletor de várias versões.
+   */
+  markVersion?: string;
   sort?: string;
   page?: number;
   perPage?: number;
@@ -3228,6 +3238,15 @@ export async function searchForgeMods(params: {
   // que ignorava ele.
   const mods: ForgeCatalogMod[] = (json.data || []).map(mapCatalogMod);
 
+  const versaoInstancia = params.markVersion ?? params.sptVersionConstraint;
+  if (versaoInstancia) {
+    for (const mod of mods) {
+      for (const v of mod.versions) {
+        v.compatibility = checkSptCompatibility(v.sptConstraint, versaoInstancia);
+      }
+    }
+  }
+
   if (params.sptPath) {
     const instalados = installedForgeIds(params.sptPath);
     for (const mod of mods) {
@@ -3238,12 +3257,9 @@ export async function searchForgeMods(params: {
     }
   }
 
-  if (params.sptVersionConstraint) {
+  if (versaoInstancia) {
     for (const mod of mods) {
-      const compat = mod.versions.find(
-        (v) => checkSptCompatibility(v.sptConstraint, params.sptVersionConstraint) === "compatible"
-      );
-      mod.compatibleVersionId = compat?.id;
+      mod.compatibleVersionId = mod.versions.find((v) => v.compatibility === "compatible")?.id;
     }
   }
 

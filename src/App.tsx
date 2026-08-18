@@ -718,6 +718,9 @@ export default function App() {
       query: browseQuery.trim() || undefined,
       categorySlug: browseCategory || undefined,
       sptVersionConstraint: browseOnlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
+      // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o que
+      // permite ver a lista inteira e ainda saber o que serve na sua instância.
+      markVersion: sptVersionInput.trim() || undefined,
       page
     });
     setBrowseLoading(false);
@@ -1416,11 +1419,33 @@ export default function App() {
                     <div className={`forge-mod-thumb forge-mod-thumb-placeholder ${mod.thumbnail ? "forge-mod-thumb-hidden" : ""}`} />
                     <div className="forge-mod-info">
                       <div className="forge-mod-title-row">
-                        <a href={mod.detailUrl} onClick={(e) => { e.preventDefault(); window.modManagerAPI.openModHub(); }} title={t("browse.viewOnForgeTitle")}>
+                        <a
+                          href={mod.detailUrl}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            // Abre a PÁGINA DO MOD. Antes chamava openModHub(), que leva
+                            // pra raiz do site — o detailUrl estava no href e era ignorado
+                            // no clique. Sem o detailUrl (fonte que não devolve o campo),
+                            // a raiz do site continua sendo melhor que não fazer nada.
+                            if (mod.detailUrl) window.modManagerAPI.openReleasePage(mod.detailUrl);
+                            else window.modManagerAPI.openModHub();
+                          }}
+                          title={t("browse.viewOnForgeTitle")}
+                        >
                           {mod.name}
                         </a>
                         {mod.category && <span className="meta-chip">{mod.category}</span>}
                         {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title={t("browse.fikaCompatibleTitle")}>Fika</span>}
+                        {(() => {
+                          const selectedId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
+                          const selected = mod.versions.find((v) => v.id === selectedId);
+                          if (selected?.compatibility !== "incompatible") return null;
+                          return (
+                            <span className="meta-chip forge-chip-incompatible" title={t("browse.incompatibleTitle", { constraint: selected.sptConstraint || "?" })}>
+                              {t("browse.incompatible")}
+                            </span>
+                          );
+                        })()}
                         {mod.installed && (
                           <span className="meta-chip forge-chip-installed" title={t("browse.installedTitle")}>
                             {mod.installedVersion
