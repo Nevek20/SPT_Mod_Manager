@@ -86,6 +86,7 @@ If you just want to work on the UI without opening Electron (faster to iterate o
 npm run dev
 ```
 In this mode `window.modManagerAPI` doesn't exist, so anything depending on the backend will fail — it's just for visuals.
+- Note, on Linux, certain dependencies may need execute permissions, leading to EACCESS errors. This is not an issue once built into an AppImage. (though the .appimage does require its own execute permissions, which is standard)
 
 ### Building the installer (Windows/Linux)
 
