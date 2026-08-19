@@ -233,7 +233,7 @@ ipcMain.handle(
   "search-forge-mods",
   async (
     _event,
-    params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; sort?: string; page?: number }
+    params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; perPage?: number; sort?: string; page?: number }
   ) => {
     try {
       const result = await searchForgeMods({ ...params, sptPath: store.get("sptPath") ?? undefined });

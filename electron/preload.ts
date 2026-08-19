@@ -27,7 +27,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     ipcRenderer.invoke("set-forge-cache", statusCache),
   checkForgeUpdates: (mods: { name: string; originalName: string; version?: string; guid?: string }[], sptVersion: string) =>
     ipcRenderer.invoke("check-forge-updates", mods, sptVersion),
-  searchForgeMods: (params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; sort?: string; page?: number }) =>
+  searchForgeMods: (params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; perPage?: number; sort?: string; page?: number }) =>
     ipcRenderer.invoke("search-forge-mods", params),
   getForgeCategories: () => ipcRenderer.invoke("get-forge-categories"),
   checkAppUpdate: () => ipcRenderer.invoke("check-app-update"),

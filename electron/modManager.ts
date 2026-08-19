@@ -2051,7 +2051,7 @@ export async function getForgeSptVersions(): Promise<ForgeSptVersion[]> {
   try {
     const res = await forgeFetch(url);
     if (!res.ok) return [];
-    const json: any = await res.json();
+    const json: any = await lerJson(res, activeSource.label);
     const list = (json?.data || []).map((v: any) => ({
       version: v.version as string,
       modCount: v.mod_count as number,
@@ -2369,6 +2369,29 @@ function rotuloEndpoint(url: string): string {
   }
 }
 
+/**
+ * Lê a resposta como JSON, mas com erro que diz alguma coisa quando não é JSON.
+ *
+ * Relato real: "Não foi possível consultar o Forge: Unexpected token '<'". Isso é
+ * HTML chegando no lugar de JSON — página de erro do Cloudflare, manutenção, 502,
+ * ou o portal cativo de um Wi-Fi de hotel interceptando a requisição. A mensagem
+ * de parse não ajuda nem o usuário nem quem vai investigar; o status HTTP e o
+ * começo do corpo ajudam os dois.
+ */
+async function lerJson(res: Response, ondeVeio: string): Promise<any> {
+  const texto = await res.text();
+  try {
+    return JSON.parse(texto);
+  } catch {
+    const tipo = res.headers.get("content-type") || "sem content-type";
+    const inicio = texto.trim().slice(0, 120).replace(/\s+/g, " ");
+    throw new Error(
+      `${ondeVeio} respondeu ${res.status} ${res.statusText} em vez de JSON ` +
+        `(${tipo}). Começo da resposta: ${inicio || "(vazia)"}`
+    );
+  }
+}
+
 async function forgeFetch(url: string, init?: RequestInit): Promise<Response> {
   const t0 = Date.now();
   await forgeRateLimitGate();
@@ -2437,7 +2460,7 @@ async function forgeFetchJson(url: string, budget: ForgeBudget, retriedAfter429 
       return forgeFetchJson(url, budget, true);
     }
     if (!res.ok) return null;
-    return await res.json();
+    return await lerJson(res, activeSource.label);
   } catch {
     return null;
   }
@@ -2864,7 +2887,7 @@ async function findForgeModInfo(
     if (sptVersion?.trim()) url.searchParams.set("filter[spt_version]", sptVersion.trim());
     const res = await forgeFetch(url.toString());
     if (!res.ok) return null;
-    const json: any = await res.json();
+    const json: any = await lerJson(res, activeSource.label);
     const match = json?.data?.[0];
     if (!match) return null;
     const identifier = typeof match.guid === "string" ? match.guid : String(match.id);
@@ -3027,7 +3050,7 @@ export async function checkForgeUpdates(
   let json: any;
   try {
     const res = await forgeFetch(url);
-    json = await res.json();
+    json = await lerJson(res, activeSource.label);
     if (!res.ok || json?.success === false) {
       throw new Error(json?.message || `Forge respondeu ${res.status}`);
     }
@@ -3225,7 +3248,7 @@ export async function searchForgeMods(params: {
   if (params.sptVersionConstraint) url.searchParams.set("filter[spt_version]", params.sptVersionConstraint);
 
   const res = await forgeFetch(url.toString());
-  const json: any = await res.json();
+  const json: any = await lerJson(res, activeSource.label);
   if (!res.ok || json?.success === false) {
     throw new Error(json?.message || `Forge respondeu ${res.status}`);
   }
@@ -3276,7 +3299,7 @@ export async function getForgeCategories(): Promise<ForgeCategory[]> {
   try {
     const res = await forgeFetch(url);
     if (!res.ok) return [];
-    const json: any = await res.json();
+    const json: any = await lerJson(res, activeSource.label);
     return (json?.data || []).map((c: any) => ({ id: c.id, title: c.title, slug: c.slug }));
   } catch {
     return [];
@@ -3411,7 +3434,7 @@ export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateI
     // release ainda: não é erro pro usuário, só não dá pra saber agora. Melhor ficar
     // quieto do que mostrar alarme falso.
     if (!res.ok) return { updateAvailable: false, currentVersion };
-    const json: any = await res.json();
+    const json: any = await lerJson(res, "GitHub");
     const latestVersion: string | undefined = json?.tag_name;
     if (!latestVersion) return { updateAvailable: false, currentVersion };
 

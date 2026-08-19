@@ -102,6 +102,7 @@ export default function App() {
   const [activeSourceKey, setActiveSourceKey] = useState("");
   const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
   const [browseOnlyCompatible, setBrowseOnlyCompatible] = useState(false);
+  const [browseHideInstalled, setBrowseHideInstalled] = useState(false);
   const [browseResults, setBrowseResults] = useState<ForgeCatalogMod[]>([]);
   const [browsePage, setBrowsePage] = useState(1);
   const [browseLastPage, setBrowseLastPage] = useState(1);
@@ -711,16 +712,28 @@ export default function App() {
     persistForgeStatus(next);
   }
 
-  async function runForgeSearch(page: number) {
+  // onlyCompatible entra como parâmetro porque o setState do React não vale na
+  // mesma volta: marcar o checkbox e buscar no mesmo clique leria o valor ANTIGO
+  // do estado e faria a busca com o filtro invertido.
+  async function runForgeSearch(
+    page: number,
+    onlyCompatible = browseOnlyCompatible,
+    hideInstalled = browseHideInstalled
+  ) {
     setBrowseLoading(true);
     setBrowseError(null);
     const response = await window.modManagerAPI.searchForgeMods({
       query: browseQuery.trim() || undefined,
       categorySlug: browseCategory || undefined,
-      sptVersionConstraint: browseOnlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
+      sptVersionConstraint: onlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
       // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o que
       // permite ver a lista inteira e ainda saber o que serve na sua instância.
       markVersion: sptVersionInput.trim() || undefined,
+      // Esconder é filtro LOCAL sobre a página que o servidor mandou, e a API não
+      // tem "só os que não tenho". Numa página de 24 quase tudo some pra quem já
+      // tem muita coisa — a página 1 vem por downloads, justamente os populares.
+      // Pedindo o máximo permitido, sobra lista depois de esconder.
+      perPage: hideInstalled ? 50 : undefined,
       page
     });
     setBrowseLoading(false);
@@ -798,6 +811,14 @@ export default function App() {
     setInstallingModId(null);
     pushToast(tMsg(result.message), result.success);
     if (result.success) {
+      // Marca o resultado como instalado na hora. O "installed" vem calculado na
+      // busca, então sem isto o selo só aparecia depois de clicar em Buscar de
+      // novo — e o botão continuava dizendo "Instalar" logo após instalar.
+      setBrowseResults((anteriores) =>
+        anteriores.map((m) =>
+          m.id === mod.id ? { ...m, installed: true, installedVersion: version.version } : m
+        )
+      );
       const updated = await refreshMods();
       checkForgeForNewMods(previousKeys, updated);
     }
@@ -1382,10 +1403,33 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={browseOnlyCompatible}
-                  onChange={(e) => setBrowseOnlyCompatible(e.target.checked)}
-                  disabled={!sptVersionInput.trim()}
+                  onChange={(e) => {
+                    setBrowseOnlyCompatible(e.target.checked);
+                    // Refaz a busca na hora. Este filtro é do servidor (muda a
+                    // consulta), então sem isto ele só valia no próximo clique em
+                    // Buscar — e ficava incoerente com o de esconder instalados,
+                    // que é local e responde na hora.
+                    if (browseResults.length > 0 || browseQuery.trim()) runForgeSearch(1, e.target.checked);
+                  }}
+                  disabled={!sptVersionInput.trim() || browseLoading}
                 />
                 {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
+              </label>
+              <label className="forge-browse-checkbox" title={t("browse.hideInstalledTitle")}>
+                <input
+                  type="checkbox"
+                  checked={browseHideInstalled}
+                  onChange={(e) => {
+                    setBrowseHideInstalled(e.target.checked);
+                    // Refaz a busca porque o tamanho da página muda junto: sem
+                    // isso, esconder numa página de 24 deixaria quase nada.
+                    if (browseResults.length > 0 || browseQuery.trim()) {
+                      runForgeSearch(1, browseOnlyCompatible, e.target.checked);
+                    }
+                  }}
+                  disabled={browseLoading}
+                />
+                {t("browse.hideInstalled")}
               </label>
               <button onClick={() => runForgeSearch(1)} disabled={browseLoading} className="primary">
                 {browseLoading ? t("browse.searching") : t("browse.searchButton")}
@@ -1394,12 +1438,24 @@ export default function App() {
             <p className="browse-source-note">{t("browse.sourceNote")}</p>
 
             {browseError && <p className="compare-note">{browseError}</p>}
+            {browseHideInstalled &&
+              !browseLoading &&
+              browseResults.length > 0 &&
+              browseResults.every((m) => m.installed) && (
+                // Acontece com quem tem muita coisa instalada: mesmo pedindo a
+                // página maior, tudo que veio já está instalado. Sem este aviso
+                // parece busca sem resultado.
+                <p className="compare-note">{t("browse.allInstalledOnPage")}</p>
+              )}
+
 
             <div className="forge-browse-results">
               {!browseLoading && browseResults.length === 0 && !browseError && (
                 <p className="compare-note">{t("browse.noResults")}</p>
               )}
-              {browseResults.map((mod) => {
+              {browseResults
+              .filter((mod) => !(browseHideInstalled && mod.installed))
+              .map((mod) => {
                 const selectedId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
                 return (
                   <div key={mod.id} className="forge-mod-card">

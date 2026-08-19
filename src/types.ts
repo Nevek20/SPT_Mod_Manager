@@ -166,6 +166,7 @@ export interface ModManagerAPI {
     categorySlug?: string;
     sptVersionConstraint?: string;
     markVersion?: string;
+    perPage?: number;
     sort?: string;
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;

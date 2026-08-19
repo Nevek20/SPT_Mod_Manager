@@ -744,16 +744,31 @@ h2 {
   padding: 2px 9px;
 }
 
+/* A barra tem busca, fonte, categoria, dois checkboxes e o botão. Numa linha só
+   ela estourava e o botão caía sozinho embaixo. Duas linhas de propósito: o campo
+   de busca ocupa a primeira inteira, e os filtros com o botão ficam na segunda. */
 .forge-browse-controls {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
   margin-bottom: 12px;
 }
 
 .forge-browse-controls input[type="text"] {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 220px;
+}
+
+/* O botão vai pro fim da linha dos filtros, longe deles, pra não parecer só mais
+   um controle da fileira. */
+.forge-browse-controls > button {
+  margin-left: auto;
+}
+
+.forge-browse-controls select {
+  flex: 0 1 auto;
+  min-width: 130px;
 }
 
 .forge-browse-checkbox {
