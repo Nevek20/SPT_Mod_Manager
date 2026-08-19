@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/i18n.ts","./src/main.tsx","./src/modtree.ts","./src/types.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/i18n.ts","./src/main.tsx","./src/modTree.ts","./src/types.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
