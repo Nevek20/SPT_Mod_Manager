@@ -11,5 +11,5 @@
     "strict": true,
     "resolveJsonModule": true
   },
-  "include": [".", "../testeMetadata.ts"]
+  "include": ["."]
 }
