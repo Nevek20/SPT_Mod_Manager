@@ -13,7 +13,7 @@ import {
   InstallResult,
   AppUpdateInfo
 } from "./types";
-import { Lang, translate, translateBackendMessage } from "./i18n";
+import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 
@@ -48,7 +48,13 @@ function ToastStack({ toasts }: { toasts: Toast[] }) {
 }
 
 export default function App() {
-  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem(LANG_STORAGE_KEY) as Lang) || "pt-BR");
+  const [lang, setLang] = useState<Lang>(() => {
+    const salvo = localStorage.getItem(LANG_STORAGE_KEY) as Lang | null;
+    // Só aceita o que está gravado se ainda for um idioma suportado: uma chave
+    // antiga ou editada na mão deixaria a interface sem dicionário.
+    if (salvo && SUPPORTED_LANGS.includes(salvo)) return salvo;
+    return detectSystemLang();
+  });
   function changeLang(next: Lang) {
     setLang(next);
     localStorage.setItem(LANG_STORAGE_KEY, next);
@@ -923,10 +929,33 @@ export default function App() {
     t
   };
 
+  // Virou seletor: com sete idiomas, um botão pra cada não cabe na barra — e
+  // ia continuar não cabendo a cada contribuição nova.
   const langToggle = (
-    <div className="lang-toggle" role="group" aria-label="Language">
-      <button className={lang === "pt-BR" ? "lang-active" : ""} onClick={() => changeLang("pt-BR")}>PT</button>
-      <button className={lang === "en" ? "lang-active" : ""} onClick={() => changeLang("en")}>EN</button>
+    <div className="lang-picker">
+      {/* O crédito de tradução fica colado no seletor de idioma em vez de num
+          rodapé solto: é o único ponto da interface onde "tradução" já é o
+          assunto, então não precisa explicar o que ele está fazendo ali. */}
+      <span className="lang-credit">
+        {t("credits.translations")}{" "}
+        <button
+          className="link-button"
+          onClick={() => window.modManagerAPI.openReleasePage("https://github.com/GAVRIEL-911")}
+        >
+          GΛVRIEL
+        </button>
+      </span>
+      <select
+        className="lang-select"
+        value={lang}
+        onChange={(e) => changeLang(e.target.value as Lang)}
+        aria-label="Language"
+        title={t("settings.language")}
+      >
+        {SUPPORTED_LANGS.map((code) => (
+          <option key={code} value={code}>{LANG_LABELS[code]}</option>
+        ))}
+      </select>
     </div>
   );
 
@@ -1584,6 +1613,7 @@ export default function App() {
           </div>
         </div>
       )}
+
     </>
   );
 }

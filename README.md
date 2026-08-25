@@ -182,9 +182,21 @@ Still open:
 
 ---
 
+## Credits
+
+The Chinese, Russian, French, Japanese and German translations were contributed by **[GΛVRIEL](https://github.com/GAVRIEL-911)**, who built a multilingual edition of the Manager on his own and offered it back to the project. Portuguese and English are maintained here.
+
 ## Contributing
 
 Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
+
+**Translations are especially welcome.** Copy an existing dictionary in `src/i18n.ts`, add the code to the `Lang` type and to `LANG_LABELS`, and run the checker before opening the PR:
+
+```
+npx tsx verificaTraducoes.ts
+```
+
+It compares every key against English and catches the mistake that a manual review misses: a placeholder like `{name}` renamed or dropped, which makes the app print the literal `{name}` instead of the mod's name.
 
 ## License
 

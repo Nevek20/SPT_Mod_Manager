@@ -248,6 +248,9 @@ ipcMain.handle("get-forge-categories", () => getForgeCategories());
 
 ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
 
+/** Páginas de crédito linkadas no rodapé. Ver a allowlist logo abaixo. */
+const CREDIT_URLS = ["https://github.com/GAVRIEL-911"];
+
 ipcMain.handle("open-release-page", (_event, url: string) => {
   // Só abre a página do mod na Forge ou o release no próprio repo — a URL vem do
   // processo renderer, que não é totalmente confiável pra mandar abrir qualquer
@@ -257,7 +260,10 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   const source = getModSource();
   const allowed =
     url.startsWith(source.siteUrl) ||
-    /^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url);
+    /^https:\/\/github\.com\/Nevek20\/SPT_Mod_Manager\//.test(url) ||
+    // Links de crédito que o próprio app renderiza. Comparação exata em vez de
+    // prefixo: a lista existe pra abrir estas páginas e nada mais.
+    CREDIT_URLS.includes(url);
   if (allowed) {
     shell.openExternal(url);
     return { success: true };

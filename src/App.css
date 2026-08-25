@@ -917,33 +917,77 @@ h2 {
 }
 
 /* ==========================================================================
-   Toggle de idioma (PT/EN)
+   Seletor de idioma
+   Substituiu os botões PT | EN quando o app passou a sete idiomas: um botão
+   por idioma não cabe na barra, e ia continuar não cabendo a cada
+   contribuição nova.
    ========================================================================== */
 
-.lang-toggle {
-  display: flex;
-  gap: 2px;
+.lang-select {
+  font-family: var(--font-body);
+  font-size: 12px;
+  padding: 5px 8px;
+  max-width: 130px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 2px;
+  background: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
 }
 
-.lang-toggle button {
-  padding: 3px 9px;
-  font-size: 11px;
-  border: none;
-  background: transparent;
+.lang-select:hover {
+  border-color: var(--accent);
 }
 
-.lang-toggle button.lang-active {
-  background: var(--accent);
-  color: var(--bg);
-}
-
-.empty-state .lang-toggle {
+.empty-state .lang-select {
   position: absolute;
   top: 20px;
   right: 24px;
+}
+
+/* ==========================================================================
+   Crédito de tradução, à esquerda do seletor de idioma
+   Fica ao lado do seletor porque é o único ponto da interface onde tradução
+   já é o assunto. Some em janela estreita: numa barra cheia de botões, o
+   crédito é o que pode faltar sem prejuízo.
+   ========================================================================== */
+
+.lang-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty-state .lang-picker {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+}
+
+.lang-credit {
+  font-size: 11px;
+  color: var(--text-dim, #8a8a8a);
+  white-space: nowrap;
+}
+
+.lang-credit .link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.lang-credit .link-button:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 1150px) {
+  .lang-credit {
+    display: none;
+  }
 }
 
 /* ==========================================================================
