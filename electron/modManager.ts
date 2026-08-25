@@ -373,13 +373,39 @@ export interface ForgeInstallInfo {
   guid?: string;
 }
 
+export interface ModDependency {
+  guid: string;
+  /** Faixa de versão exigida ("~3.0"). Sempre presente: é o que distingue uma
+   *  dependência de uma incompatibilidade no bloco de valores — ver o parser. */
+  constraint: string;
+}
+
 export interface DllModMetadata {
   guid?: string;
   name?: string;
   author?: string;
   version?: string;
   sptVersion?: string;
+  /** Mods que este exige, com a faixa de versão de cada um. */
+  dependencies?: ModDependency[];
+  /** Mods com os quais este declara não conviver. Só GUID, sem faixa. */
+  incompatibilities?: string[];
+  /**
+   * Client: dependências marcadas como SoftDependency — o mod funciona sem
+   * elas, então nunca devem virar aviso de "faltando". Guardadas separado
+   * porque servem pra outra coisa: explicar integração entre mods.
+   */
+  optionalDependencies?: string[];
 }
+
+/**
+ * Rótulo do ModMetadata no SPT 4.1: ", Name = ", "ModGuid = ". O nome do campo
+ * é capturado pra sabermos QUAIS campos o mod declarou e em que ordem — e a
+ * ordem importa por um motivo só, mas decisivo: se Incompatibilities vem antes
+ * de ModDependencies, os GUIDs soltos do bloco de valores são incompatibilidade.
+ */
+const DLL_ROTULO_RE = /^,?\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*$/;
+const DLL_ABERTURA_RE = /^\s*\{\s*$/;
 
 const DLL_VERSION_RE = /^\d+\.\d+(\.\d+)?(\.\d+)?$/;
 const DLL_CONSTRAINT_RE = /^[~^>=<]/;
@@ -445,39 +471,136 @@ function looksLikeModName(value: string): boolean {
 }
 
 /**
- * Server mod (SPT 4.0): os valores ficam como literais UTF-16, logo depois do
- * marcador "ModMetadata". A ORDEM DOS CAMPOS VARIA de mod pra mod, porque depende
- * de como o autor escreveu o inicializador — conferido em dois mods do mesmo autor:
+ * Server mod. Existem DOIS layouts, e o parser tem que ler os dois.
  *
- *   bosseshavelegamedals: ModMetadata, " { ", GUID, nome, autor, versão, ~spt, MIT
- *   brightlasers:         ModMetadata, " { ", nome, autor, versão, ~spt, MIT, GUID
+ * SPT 4.0 — só os valores, na sequência, logo depois do marcador:
  *
- * Por isso NÃO dá pra ler por posição fixa a partir do GUID (foi o que fez metade
- * dos mods sair em branco). Ancoramos no marcador "ModMetadata" e classificamos
- * cada string por FORMATO; o que sobra de texto é nome e autor, nessa ordem
- * (consistente nos mods conferidos).
+ *   ModMetadata, " { ", "com.autor.mod", "Mod", "Autor", "2.1.0", "~4.0.0", "MIT"
+ *
+ * SPT 4.1 — os RÓTULOS vêm primeiro, todos, e só então os valores:
+ *
+ *   ModMetadata, " { ", "ModGuid = ", ", Name = ", ..., ", License = ",
+ *   "com.autor.mod", "Mod", "Autor", "2.1.0", "~4.1.0", "MIT"
+ *
+ * Foi essa mudança que quebrou a leitura na 0.5.3: o parser antigo olhava nove
+ * strings depois do marcador, que no 4.1 são todas rótulo, e devolvia vazio.
+ *
+ * Por que NÃO parear rótulo com valor por índice, que seria o óbvio: campo vazio
+ * não gera literal, e campo booleano NUNCA gera (HasPrepatcher e IsBundleMod
+ * aparecem em todos os mods e não emitem string, porque true/false não é
+ * literal de string no .NET). Medido em 29 mods reais: 11 rótulos contra 6
+ * valores é comum. Então continuamos classificando os valores por FORMATO, que
+ * é o que já estava testado; os rótulos servem pra duas coisas só, mas que não
+ * dá pra obter de outro jeito:
+ *
+ *   1. saber onde o bloco de valores COMEÇA (depois do último rótulo)
+ *   2. saber se Incompatibilities vem antes de ModDependencies
+ *
+ * O item 2 resolve a única ambiguidade real do formato. Os dois campos despejam
+ * GUID no mesmo lugar, mas ModDependencies é um mapa GUID -> faixa de versão e
+ * portanto emite SEMPRE o par ("com.wtt.commonlib", "~3.0"), enquanto
+ * Incompatibilities é uma lista e emite o GUID sozinho. Conferido em cinco mods
+ * reais: o ozen.InstantInsurance lista quatro GUIDs sem faixa nenhuma (mods de
+ * seguro concorrentes — incompatibilidade), e Scorpion, Eco-WW2-Pack e
+ * WTT-ContentBackport trazem com.wtt.commonlib seguido da faixa (dependência).
+ * Sem essa distinção, os quatro do ozen virariam "dependência faltando".
  */
 function parseServerModMetadata(utf16: string[]): DllModMetadata | null {
   const anchor = utf16.findIndex((v) => v === "ModMetadata");
   if (anchor === -1) return null;
-  const window = utf16.slice(anchor + 1, anchor + 10);
 
-  const guid = window.find(looksLikeModGuid);
-  const version = window.find((v) => DLL_VERSION_RE.test(v));
-  const sptVersion = window.find((v) => DLL_CONSTRAINT_RE.test(v) && /\d/.test(v));
-  const textual = window.filter(
+  // Consome o cabeçalho: a abertura do bloco e a sequência de rótulos, se houver.
+  // Sem rótulo nenhum é o layout 4.0, e a janela começa logo aqui.
+  const rotulos: string[] = [];
+  let i = anchor + 1;
+  while (i < utf16.length) {
+    if (DLL_ABERTURA_RE.test(utf16[i])) {
+      i++;
+      continue;
+    }
+    const m = DLL_ROTULO_RE.exec(utf16[i]);
+    if (!m) break;
+    rotulos.push(m[1]);
+    i++;
+  }
+
+  // A janela acompanha quantos campos o mod declarou, com folga pros pares de
+  // dependência (cada um ocupa duas posições).
+  const tamanho = rotulos.length > 0 ? rotulos.length + 6 : 10;
+  const bruta = utf16.slice(i, i + tamanho);
+
+  // ...mas essa folga sozinha vaza. Verificado contra 46 mods reais: sem corte,
+  // o Tyfon.HideoutInProgress.Server "declarava incompatibilidade" com o próprio
+  // namespace dele (Tyfon.HideoutInProgress, que aparece bem depois do bloco,
+  // atrás de mensagens de log), e dois mods ganhavam versão de QUATRO partes
+  // vinda do AssemblyVersion — justamente o valor que a doc deste arquivo diz
+  // pra nunca usar.
+  //
+  // O corte usa a única regularidade estrutural disponível: nas 7 ordens de
+  // rótulo observadas, Url e License vêm SEMPRE depois de Incompatibilities e
+  // ModDependencies. Então a primeira url ou licença marca o fim do que
+  // interessa — nenhum dos dois é usado pela gente, e tudo que vier depois é
+  // corpo do assembly, não metadata.
+  // O corte vale SÓ pro layout com rótulos. No 4.0 a ordem dos campos é livre e
+  // o GUID pode vir depois da licença (caso real brightlasers, documentado
+  // acima), então cortar ali perderia justamente o campo mais importante.
+  const fim = rotulos.length > 0 ? bruta.findIndex((v) => DLL_LICENSE_RE.test(v) || /^https?:/i.test(v)) : -1;
+  const janela = fim >= 0 ? bruta.slice(0, fim) : bruta;
+
+  const ehGuid = (v: string) => looksLikeModGuid(v);
+  const ehVersao = (v: string) => DLL_VERSION_RE.test(v);
+  const ehConstraint = (v: string) => DLL_CONSTRAINT_RE.test(v) && /\d/.test(v);
+
+  // O PRIMEIRO GUID é o do próprio mod: ModGuid abre a lista de campos em todos
+  // os 29 mods medidos. Os demais são dependência ou incompatibilidade.
+  const primeiroGuid = janela.findIndex(ehGuid);
+  const guid = primeiroGuid >= 0 ? janela[primeiroGuid] : undefined;
+
+  const version = janela.find(ehVersao);
+  // A primeira constraint é o SptVersion; as seguintes pertencem a dependências.
+  const sptVersion = janela.find(ehConstraint);
+
+  const textual = janela.filter(
     (v) =>
-      // Exclui QUALQUER string com cara de GUID, não só a escolhida — mods com
-      // dependência declarada têm mais de uma, e a segunda virava "autor".
-      !looksLikeModGuid(v) &&
-      !DLL_VERSION_RE.test(v) &&
-      !DLL_CONSTRAINT_RE.test(v) &&
+      !ehGuid(v) &&
+      !ehVersao(v) &&
+      !ehConstraint(v) &&
       !DLL_LICENSE_RE.test(v) &&
       !/^https?:/i.test(v) &&
       looksLikeModName(v)
   );
+
+  // Dependência vs incompatibilidade: o GUID seguido de faixa é dependência.
+  // O sozinho é incompatibilidade — mas só quando o mod declarou o campo, senão
+  // é ruído do assembly (um GUID solto sem contexto não prova nada).
+  // Sem rótulo não dá pra saber se o mod sequer tem o campo Incompatibilities
+  // (é campo do formato 4.1), então no layout antigo não classificamos nada como
+  // incompatibilidade — melhor não reportar do que reportar errado.
+  const declarouIncompat = rotulos.includes("Incompatibilities");
+  const dependencies: ModDependency[] = [];
+  const incompatibilities: string[] = [];
+  for (let k = primeiroGuid + 1; k >= 1 && k < janela.length; k++) {
+    const valor = janela[k];
+    if (!ehGuid(valor)) continue;
+    const seguinte = janela[k + 1];
+    if (seguinte && ehConstraint(seguinte)) {
+      dependencies.push({ guid: valor, constraint: seguinte });
+      k++; // a faixa já foi consumida
+    } else if (declarouIncompat) {
+      incompatibilities.push(valor);
+    }
+  }
+
   if (!guid && !version) return null;
-  return { guid, name: textual[0], author: textual[1], version, sptVersion };
+  return {
+    guid,
+    name: textual[0],
+    author: textual[1],
+    version,
+    sptVersion,
+    dependencies: dependencies.length > 0 ? dependencies : undefined,
+    incompatibilities: incompatibilities.length > 0 ? incompatibilities : undefined
+  };
 }
 
 /**
@@ -488,6 +611,75 @@ function parseServerModMetadata(utf16: string[]): DllModMetadata | null {
  * PascalCase do próprio assembly, tipo "DrakiaXYZ.BigBrain").
  * Esse formato não tem campo de autor — deixamos vazio em vez de inventar.
  */
+/**
+ * Dependências declaradas por [BepInDependency] num assembly de client.
+ *
+ * Ao contrário de todo o resto deste arquivo, aqui a leitura é por BYTE e não
+ * por string extraída, porque as duas formas do atributo se distinguem por um
+ * NÚMERO:
+ *
+ *   [BepInDependency("com.SPT.core", "4.1.0")]                -> versão mínima
+ *   [BepInDependency("com.fika.core", DependencyFlags.Soft)]  -> opcional
+ *
+ * No blob do atributo, o primeiro grava uma segunda string depois do GUID; o
+ * segundo grava um uint32 (1 = Hard, 2 = Soft). Extrair só texto não separa os
+ * dois, e tratar dependência OPCIONAL como obrigatória encheria a lista de
+ * aviso falso — o Fika é soft em praticamente todo mod que o menciona.
+ *
+ * Blob de atributo guarda string como "SerString": um byte de tamanho seguido do
+ * texto UTF-8. O prólogo 01 00 marca o início do blob. Então o padrão procurado
+ * é literalmente: 01 00 <tam> <guid> e, logo depois, versão ou flag.
+ *
+ * O que vem depois é TODO o discriminador, e foi medido em 73 DLLs reais: um
+ * GUID seguido de uma string que NÃO é versão é o BepInPlugin do próprio mod
+ * (guid + nome), não uma dependência. Sem essa distinção, todo mod declararia
+ * dependência de si mesmo.
+ */
+function parseClientDependencies(buffer: Buffer): { dependencies: ModDependency[]; opcionais: string[] } {
+  const dependencies: ModDependency[] = [];
+  const opcionais: string[] = [];
+  const vistos = new Set<string>();
+
+  const lerSerString = (pos: number): { texto: string; fim: number } | null => {
+    if (pos < 0 || pos >= buffer.length) return null;
+    const n = buffer[pos];
+    // Tamanho de 1 byte cobre qualquer GUID ou versão plausível; 0x80+ indica
+    // codificação estendida, que aqui só apareceria em string longa demais.
+    if (n === 0 || n >= 0x80 || pos + 1 + n > buffer.length) return null;
+    const bruto = buffer.subarray(pos + 1, pos + 1 + n);
+    for (const b of bruto) if (b < 0x20 || b > 0x7e) return null;
+    return { texto: bruto.toString("latin1"), fim: pos + 1 + n };
+  };
+
+  for (let i = 0; i + 3 < buffer.length; i++) {
+    if (buffer[i] !== 0x01 || buffer[i + 1] !== 0x00) continue; // prólogo do blob
+    const guid = lerSerString(i + 2);
+    if (!guid || !looksLikeModGuid(guid.texto)) continue;
+
+    const seguinte = lerSerString(guid.fim);
+    if (seguinte) {
+      // String depois do GUID: só é dependência se for versão. Se for outra
+      // coisa, é o nome do BepInPlugin do próprio mod.
+      if (!DLL_VERSION_RE.test(seguinte.texto)) continue;
+      if (vistos.has(guid.texto)) continue;
+      vistos.add(guid.texto);
+      dependencies.push({ guid: guid.texto, constraint: `>=${seguinte.texto}` });
+      continue;
+    }
+
+    if (guid.fim + 4 > buffer.length) continue;
+    const flag = buffer.readUInt32LE(guid.fim);
+    if (flag !== 1 && flag !== 2) continue;
+    if (vistos.has(guid.texto)) continue;
+    vistos.add(guid.texto);
+    // Sem faixa declarada: qualquer versão instalada serve.
+    if (flag === 1) dependencies.push({ guid: guid.texto, constraint: "*" });
+    else opcionais.push(guid.texto);
+  }
+
+  return { dependencies, opcionais };
+}
+
 function parseClientModMetadata(ascii: string[]): DllModMetadata | null {
   // Coleta TODOS os blocos (guid, nome, versão) plausíveis e fica com o de GUID mais
   // "qualificado" (mais segmentos de domínio invertido).
@@ -511,21 +703,50 @@ function parseClientModMetadata(ascii: string[]): DllModMetadata | null {
   return candidates[0].meta;
 }
 
-export function parseModMetadataFromStrings(utf16: string[], ascii: string[] = []): DllModMetadata {
-  return parseServerModMetadata(utf16) ?? parseClientModMetadata(ascii) ?? {};
+/**
+ * De que lado do jogo o assembly veio. Importa porque BepInPlugin é atributo do
+ * BepInEx e portanto SÓ existe em mod de client — rodar o parser de client num
+ * DLL de server não é fallback, é chute. Verificado num caso real: o
+ * Tyfon.UIFixes.Server não tem bloco ModMetadata, e o parser de client montava
+ * um BepInPlugin inexistente a partir de strings adjacentes do #Blob, com o
+ * namespace como "GUID" e o AssemblyVersion (6.0.1.0) como versão do mod.
+ * "auto" existe pros pontos em que a origem é desconhecida (órfão, manifesto).
+ */
+export type LadoDoMod = "server" | "client" | "auto";
+
+export function parseModMetadataFromStrings(
+  utf16: string[],
+  ascii: string[] = [],
+  lado: LadoDoMod = "auto"
+): DllModMetadata {
+  const doServidor = parseServerModMetadata(utf16);
+  if (doServidor) return doServidor;
+  if (lado === "server") return {};
+  return parseClientModMetadata(ascii) ?? {};
 }
 
-export function readDllModMetadata(dllPath: string): DllModMetadata {
+export function readDllModMetadata(dllPath: string, lado: LadoDoMod = "auto"): DllModMetadata {
   try {
     const buffer = fs.readFileSync(dllPath);
     if (buffer.length < 2 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) return {}; // não é PE ("MZ")
-    return parseModMetadataFromStrings(extractUtf16Strings(buffer), extractAsciiStrings(buffer));
+    const meta = parseModMetadataFromStrings(extractUtf16Strings(buffer), extractAsciiStrings(buffer), lado);
+
+    // BepInDependency é atributo do BepInEx, então só faz sentido no client — e
+    // precisa do buffer, não das strings extraídas (ver parseClientDependencies).
+    // Só complementa: se o bloco ModMetadata do server já trouxe dependência,
+    // aquela é a declaração canônica e fica.
+    if (lado !== "server" && !meta.dependencies) {
+      const { dependencies, opcionais } = parseClientDependencies(buffer);
+      if (dependencies.length > 0) meta.dependencies = dependencies;
+      if (opcionais.length > 0) meta.optionalDependencies = opcionais;
+    }
+    return meta;
   } catch {
     return {};
   }
 }
 
-function readModMetadata(modPath: string): {
+function readModMetadata(modPath: string, lado: LadoDoMod = "auto"): {
   version?: string;
   author?: string;
   guid?: string;
@@ -538,7 +759,7 @@ function readModMetadata(modPath: string): {
     // Client mod pode ser uma .dll solta, sem pasta própria.
     if (!fs.statSync(modPath).isDirectory()) {
       if (modPath.toLowerCase().endsWith(".dll")) {
-        const meta = readDllModMetadata(modPath);
+        const meta = readDllModMetadata(modPath, lado);
         return { version: meta.version, author: meta.author, guid: meta.guid, declaredName: meta.name, sptVersion: meta.sptVersion };
       }
       return {};
@@ -556,7 +777,7 @@ function readModMetadata(modPath: string): {
 
     // SPT 4.0: metadados dentro da DLL.
     for (const dll of findFilesRecursive(modPath, ".dll")) {
-      const meta = readDllModMetadata(dll);
+      const meta = readDllModMetadata(dll, lado);
       if (meta.version || meta.guid) {
         return { version: meta.version, author: meta.author, guid: meta.guid, declaredName: meta.name, sptVersion: meta.sptVersion };
       }
@@ -956,7 +1177,7 @@ export function detectConflicts(clientRoot: string, serverRoot: string): Conflic
       // Antes isso olhava só o package.json — que mods 4.0 não trazem mais, já que os
       // metadados migraram pra dentro do assembly. Ou seja, a checagem não detectava
       // duplicata nenhuma numa instalação 4.0.
-      const metadata = readModMetadata(path.join(serverDir, entry.name));
+      const metadata = readModMetadata(path.join(serverDir, entry.name), "server");
       const identity = metadata.guid ?? metadata.declaredName;
       if (!identity) continue;
       if (!nameOwners.has(identity)) nameOwners.set(identity, new Set());
@@ -975,7 +1196,7 @@ export function detectConflicts(clientRoot: string, serverRoot: string): Conflic
   if (fs.existsSync(clientDir)) {
     for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
       if (isProtectedClientEntry(entry.name)) continue;
-      const meta = readModMetadata(path.join(clientDir, entry.name));
+      const meta = readModMetadata(path.join(clientDir, entry.name), "client");
       if (!meta.guid) continue;
       if (!clientGuidOwners.has(meta.guid)) clientGuidOwners.set(meta.guid, new Set());
       clientGuidOwners.get(meta.guid)!.add(entry.name);
@@ -1015,7 +1236,10 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   }
 
   function pushMod(id: string, cleanName: string, type: ModType, enabled: boolean, loadOrder: number, modPath?: string) {
-    const metadata = modPath ? readModMetadata(modPath) : {};
+    // O type já diz de que lado o mod está, então o parser de client nunca roda
+    // num DLL de server (ver o comentário do LadoDoMod). "hybrid" fica em "auto":
+    // nesse caso o mod tem as duas metades e qualquer um dos dois pode acertar.
+    const metadata = modPath ? readModMetadata(modPath, type === "server" || type === "client" ? type : "auto") : {};
     // Busca por id + tipo: com Wedge servidor e Wedge cliente no registro, procurar só
     // pelo id devolveria a entrada errada pra uma das duas linhas.
     const registryEntry = registry.find((r) => r.id === id && r.type === type);
