@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { readExeProductVersion } from "./electron/peVersion";
+import { readExeProductVersion } from "../electron/peVersion";
 
 let ok = 0;
 let fail = 0;

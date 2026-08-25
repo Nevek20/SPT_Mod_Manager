@@ -1,4 +1,4 @@
-import { checkSptCompatibility } from "./electron/modManager";
+import { checkSptCompatibility } from "../electron/modManager";
 let ok=0,fail=0;
 const check=(l:string,g:unknown,w:unknown)=>{ if(JSON.stringify(g)===JSON.stringify(w)){ok++;console.log("  ok   "+l);} else {fail++;console.log(`  FAIL ${l}\n    esperado ${JSON.stringify(w)}\n    obtido   ${JSON.stringify(g)}`);} };
 

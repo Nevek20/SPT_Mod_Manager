@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadForgeMatchCache, cachedIdFor, saveForgeMatchCache } from "./electron/modManager";
+import { loadForgeMatchCache, cachedIdFor, saveForgeMatchCache } from "../electron/modManager";
 
 let ok = 0, fail = 0;
 function check(label: string, got: unknown, want: unknown) {

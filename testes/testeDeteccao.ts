@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { resolveSptInstance } from "./electron/modManager";
+import { resolveSptInstance } from "../electron/modManager";
 
 let ok = 0, fail = 0;
 function check(label: string, got: unknown, want: unknown) {
@@ -14,7 +14,12 @@ const mk = (p: string) => fs.mkdirSync(path.join(B, p), { recursive: true });
 const tk = (p: string) => fs.writeFileSync(path.join(B, p), "");
 const res = (p: string) => {
   const r = resolveSptInstance(path.join(B, p))?.instance;
-  return r ? { client: r.clientRoot.slice(B.length) || "/", server: r.serverRoot.slice(B.length) || "/", split: r.split } : null;
+  if (!r) return null;
+  // Normaliza a barra: o resolveSptInstance usa path.join, que devolve "\" no
+  // Windows e "/" no Linux. Sem isto o teste passa num sistema e falha no outro
+  // por causa do separador, sem que nada de real esteja errado.
+  const rel = (abs: string) => abs.slice(B.length).replace(/\\/g, "/") || "/";
+  return { client: rel(r.clientRoot), server: rel(r.serverRoot), split: r.split };
 };
 
 // Caso Kovacs: executáveis duplicados na raiz, os de verdade em SPT_Runtime

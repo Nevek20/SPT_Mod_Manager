@@ -1,5 +1,5 @@
-import { buildModTree, parentName } from "./src/modTree";
-import type { ModInfo, ModType } from "./src/types";
+import { buildModTree, parentName } from "../src/modTree";
+import type { ModInfo, ModType } from "../src/types";
 
 let ok = 0;
 let fail = 0;
