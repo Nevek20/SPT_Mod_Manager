@@ -3140,6 +3140,141 @@ async function findForgeModInfo(
  * esperasse o Retry-After (até 35s) por conta própria. Compartilhando um orçamento só,
  * a operação inteira desiste junto e termina em tempo previsível.
  */
+/**
+ * Uma dependência de um mod, já resolvida contra o que está instalado.
+ *
+ * O `status` é o campo que a interface usa pra decidir o que dizer, e existe
+ * porque "faltando" não é a única situação: um mod pode estar instalado numa
+ * versão velha demais, que é o caso mais traiçoeiro — instala, não reclama, e
+ * não funciona.
+ */
+export interface ModDependencyInfo {
+  id: number;
+  guid: string;
+  /** Nome publicado ("WTT - CommonLib"), não o GUID: é o que vai na tela. */
+  name: string;
+  slug?: string;
+  /** A fonte declara que os dois NÃO convivem. */
+  conflict: boolean;
+  /** Versão mais nova COMPATÍVEL com a instância (a API já filtra por spt_version). */
+  version?: string;
+  downloadLink?: string;
+  sizeBytes?: number;
+  status: "installed" | "outdated" | "missing" | "unavailable";
+  installedVersion?: string;
+  /** Nome da pasta instalada, pra que a mensagem fale do que o usuário vê. */
+  installedName?: string;
+  /** Profundidade na árvore: 0 é dependência direta, 1+ é dependência de dependência. */
+  depth: number;
+}
+
+/**
+ * Pergunta à fonte o que uma versão específica de um mod exige, e cruza com o
+ * que está instalado.
+ *
+ * Por que passar a VERSÃO e não só o id: o que um mod exige muda entre versões.
+ * O WTT-ContentBackport 2.0.1 pede CommonLib 3.0.4, mas a cópia 1.x instalada na
+ * máquina pede 3.0.2. Perguntar pelo id sozinho responderia a pergunta errada.
+ *
+ * O spt_version vai junto porque a API filtra a compatibilidade por ele: o
+ * `latest_compatible_version` que volta não é a última versão publicada, é a
+ * última que SERVE nesta instância. Isso evita oferecer um download que não
+ * roda — e evita ter que refazer essa checagem aqui.
+ *
+ * Devolve lista vazia em qualquer falha. Uma dependência que não deu pra
+ * consultar não pode virar bloqueio: o usuário veio instalar um mod, e a
+ * checagem é um auxílio, não um pedágio.
+ */
+export async function fetchModDependencies(
+  modId: number | string,
+  modVersion: string,
+  sptVersion: string | undefined,
+  instalados: { guid?: string; name: string; version?: string }[]
+): Promise<ModDependencyInfo[]> {
+  const url = new URL(`${activeSource.apiBase}/mods/dependencies`);
+  url.searchParams.set("mods", `${modId}:${modVersion}`);
+  if (sptVersion) url.searchParams.set("spt_version", sptVersion);
+
+  const budget = newForgeBudget(1);
+  const json = await forgeFetchJson(url.toString(), budget);
+  return resolveModDependencies(json, `${modId}:${modVersion}`, instalados);
+}
+
+/**
+ * A parte pura do fetchModDependencies: recebe o JSON já baixado e resolve
+ * contra o instalado. Separado pra ser testável sem rede — a lógica de status
+ * é onde mora o risco de aviso falso, e é ela que precisa de teste.
+ */
+export function resolveModDependencies(
+  json: any,
+  chave: string,
+  instalados: { guid?: string; name: string; version?: string }[]
+): ModDependencyInfo[] {
+  const raiz = json?.data?.[chave];
+  if (!Array.isArray(raiz)) return [];
+
+  // Índice do que está instalado, por GUID. O GUID é o que amarra a resposta da
+  // API à leitura do DLL sem heurística nenhuma — os dois falam o mesmo
+  // "com.wtt.commonlib".
+  const porGuid = new Map<string, { name: string; version?: string }>();
+  for (const m of instalados) {
+    if (m.guid) porGuid.set(m.guid.toLowerCase(), { name: m.name, version: m.version });
+  }
+
+  const out: ModDependencyInfo[] = [];
+  const vistos = new Set<string>();
+
+  // A API aninha a árvore inteira em `dependencies`. Achatamos preservando a
+  // profundidade, porque a interface quer mostrar "precisa de X, que precisa de
+  // Y" sem esconder o Y nem tratá-lo como se fosse pedido direto.
+  const anda = (nos: any[], depth: number) => {
+    for (const n of nos) {
+      const guid = typeof n?.guid === "string" ? n.guid : "";
+      if (!guid || vistos.has(guid.toLowerCase())) continue;
+      vistos.add(guid.toLowerCase());
+
+      const lvc = n?.latest_compatible_version;
+      const version = typeof lvc?.version === "string" ? lvc.version : undefined;
+      const downloadLink = typeof lvc?.link === "string" ? lvc.link : undefined;
+      const instalado = porGuid.get(guid.toLowerCase());
+
+      let status: ModDependencyInfo["status"];
+      if (!instalado) {
+        // Sem link, nem adianta oferecer: a fonte não tem versão que sirva.
+        status = downloadLink ? "missing" : "unavailable";
+      } else if (instalado.version && version && compareVersions(instalado.version, version) < 0) {
+        status = downloadLink ? "outdated" : "installed";
+      } else {
+        // Sem versão lida do DLL (o heap #US deduplica literais e às vezes ela
+        // não existe), não dá pra afirmar que está velha. Silêncio é melhor que
+        // um "atualize" que pode ser falso.
+        status = "installed";
+      }
+
+      out.push({
+        id: Number(n?.id) || 0,
+        guid,
+        name: typeof n?.name === "string" && n.name ? n.name : guid,
+        slug: typeof n?.slug === "string" ? n.slug : undefined,
+        conflict: n?.conflict === true,
+        version,
+        downloadLink,
+        sizeBytes: Number(lvc?.content_length) || undefined,
+        status,
+        installedVersion: instalado?.version,
+        installedName: instalado?.name,
+        depth
+      });
+
+      if (Array.isArray(n?.dependencies) && n.dependencies.length > 0) {
+        anda(n.dependencies, depth + 1);
+      }
+    }
+  };
+  anda(raiz, 0);
+  return out;
+}
+
 export async function findForgeDownloadsForNames(
   entries: { name: string; guid?: string }[],
   onProgress?: (done: number, total: number) => void,

@@ -27,6 +27,7 @@ import {
   getForgeCategories,
   installForgeModVersion,
   findForgeDownloadForName,
+  fetchModDependencies,
   findForgeDownloadsForNames,
   checkAppUpdate,
   finalizeUnrecognizedInstall,
@@ -290,6 +291,33 @@ ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptV
     return await findForgeDownloadForName(name, sptVersion);
   } catch (err: any) {
     return { found: false };
+  }
+});
+
+/**
+ * O que a versão escolhida de um mod exige, cruzado com o que já está instalado.
+ * O renderer chama isto ANTES de baixar, pra poder oferecer as dependências
+ * junto — que é o momento em que dá pra evitar o problema, em vez de
+ * diagnosticá-lo depois.
+ *
+ * A lista de instalados é montada aqui e não recebida do renderer: o scanMods é
+ * a fonte de verdade, e mandar o renderer remontar isso abriria espaço pra
+ * divergência silenciosa.
+ */
+ipcMain.handle("fetch-mod-dependencies", async (_event, modId: number | string, modVersion: string) => {
+  try {
+    const sptPath = store.get("sptPath");
+    if (!sptPath) return [];
+    const instalados = scanMods(sptPath, getServerRoot()!).map((m) => ({
+      guid: m.guid,
+      name: m.name,
+      version: m.version
+    }));
+    const sptVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath, getServerRoot() ?? undefined);
+    return await fetchModDependencies(modId, modVersion, sptVersion ?? undefined, instalados);
+  } catch {
+    // Falhar aqui não pode impedir a instalação: a checagem é auxílio, não pedágio.
+    return [];
   }
 });
 

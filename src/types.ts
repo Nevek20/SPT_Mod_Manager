@@ -1,5 +1,25 @@
 export type ModType = "server" | "client" | "hybrid" | "unknown";
 
+/**
+ * Dependência de um mod, já resolvida contra o que está instalado.
+ * Espelha ModDependencyInfo de electron/modManager.ts — o renderer não importa
+ * daquele lado, então os dois precisam ser mantidos em sincronia.
+ */
+export interface ModDependencyInfo {
+  id: number;
+  guid: string;
+  name: string;
+  slug?: string;
+  conflict: boolean;
+  version?: string;
+  downloadLink?: string;
+  sizeBytes?: number;
+  status: "installed" | "outdated" | "missing" | "unavailable";
+  installedVersion?: string;
+  installedName?: string;
+  depth: number;
+}
+
 export interface ModInfo {
   id: string;
   name: string;
@@ -181,6 +201,7 @@ export interface ModManagerAPI {
     name: string,
     sptVersion?: string
   ) => Promise<{ found: boolean; downloadLink?: string; version?: string; forgeName?: string }>;
+  fetchModDependencies: (modId: number | string, modVersion: string) => Promise<ModDependencyInfo[]>;
   installForgeMod: (
     jobId: string,
     downloadLink: string,
