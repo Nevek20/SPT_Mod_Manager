@@ -76,6 +76,18 @@
       "icon": "build/icon.ico",
       "artifactName": "SPT-Mod-Manager-${version}-${os}-${arch}.${ext}"
     },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "SPT-Mod-Manager-${version}-${os}-${arch}.${ext}"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
