@@ -11,8 +11,7 @@ import {
   ForgeCatalogMod,
   ForgeCategory,
   InstallResult,
-  AppUpdateInfo
-} from "./types";
+  AppUpdateInfo, ModDependencyInfo } from "./types";
 import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
@@ -102,6 +101,17 @@ export default function App() {
   const [forgeCheckedAt, setForgeCheckedAt] = useState<string | null>(null);
 
   const [browseOpen, setBrowseOpen] = useState(false);
+  /**
+   * Dependências por chave `id:versao`, preenchido em lote depois de cada busca.
+   * Serve pro selo na linha do resultado: avisa que existe vínculo ANTES do
+   * clique, em vez de só no diálogo.
+   */
+  const [depsPorChave, setDepsPorChave] = useState<Record<string, ModDependencyInfo[]>>({});
+  const [depPrompt, setDepPrompt] = useState<{
+    mod: ForgeCatalogMod;
+    version: { id: number; version: string; link: string };
+    deps: ModDependencyInfo[];
+  } | null>(null);
   const [browseQuery, setBrowseQuery] = useState("");
   const [browseCategory, setBrowseCategory] = useState("");
   const [modSources, setModSources] = useState<ModSourceInfo[]>([]);
@@ -748,6 +758,24 @@ export default function App() {
       return;
     }
     setBrowseResults(response.result.mods);
+    // Uma requisição pra página inteira. O endpoint aceita as chaves separadas
+    // por vírgula, então marcar 20 resultados custa o mesmo que marcar um.
+    // Roda solto de propósito: a lista já apareceu, e o selo entra quando
+    // chegar. Prender a busca a isso deixaria o catálogo mais lento por um
+    // detalhe secundário.
+    const chaves = response.result.mods
+      .map((m) => {
+        const vId = m.compatibleVersionId ?? m.versions[0]?.id;
+        const v = m.versions.find((x) => x.id === vId);
+        return v ? `${m.id}:${v.version}` : null;
+      })
+      .filter((c): c is string => c !== null);
+    void window.modManagerAPI
+      .fetchModDependenciesBatch(chaves)
+      .then((mapa) => setDepsPorChave((anterior) => ({ ...anterior, ...mapa })))
+      .catch(() => {
+        /* sem selo é degrade aceitável: o diálogo no clique ainda protege */
+      });
     // Escolhas manuais de versão são da busca ANTERIOR. Mantê-las fazia o filtro
     // parecer quebrado: marcar "só compatíveis", buscar de novo e continuar vendo
     // a versão escolhida antes, porque a escolha manual ganha do padrão.
@@ -790,6 +818,90 @@ export default function App() {
     }
   }
 
+  /**
+   * Formata bytes pra leitura humana. O tamanho importa aqui porque tem
+   * dependência de 5 GB no catálogo: saber ANTES de clicar muda a decisão.
+   */
+  function formataTamanho(bytes: number): string {
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  /**
+   * Faz a instalação em si. Extraído do handleInstallFromForge porque agora ele
+   * pode instalar mais de uma coisa: as dependências primeiro, o mod depois.
+   * A ordem não é estética — um mod que sobe antes da lib de que depende pode
+   * falhar no primeiro carregamento do servidor.
+   */
+  async function instalarDoCatalogo(
+    nome: string,
+    link: string,
+    registro: { id?: number; name: string; author?: string; version?: string; guid?: string }
+  ): Promise<boolean> {
+    const queueId = pushQueueItem(nome);
+    markQueueActive(queueId);
+    const result = await installArchiveWithConfirmFlow(
+      window.modManagerAPI.installForgeMod(queueId, link, nome, registro)
+    );
+    markQueueDone(queueId, result.success, tMsg(result.message));
+    pushToast(tMsg(result.message), result.success);
+    return result.success;
+  }
+
+  /** Executa a instalação do mod escolhido, opcionalmente com as dependências. */
+  async function executarInstalacao(
+    mod: ForgeCatalogMod,
+    version: { id: number; version: string; link: string },
+    deps: ModDependencyInfo[]
+  ) {
+    setInstallingModId(mod.id);
+    const previousKeys = new Set(mods.map(selectionKey));
+
+    for (const d of deps) {
+      if (!d.downloadLink) continue;
+      pushToast(t("deps.installingDependency", { name: d.name }), true);
+      await instalarDoCatalogo(d.name, d.downloadLink, {
+        id: d.id || undefined,
+        name: d.name,
+        version: d.version,
+        guid: d.guid
+      });
+    }
+
+    const ok = await instalarDoCatalogo(mod.name, version.link, {
+      id: mod.id,
+      name: mod.name,
+      author: mod.author,
+      version: version.version,
+      guid: mod.guid
+    });
+    setInstallingModId(null);
+
+    if (ok) {
+      setBrowseResults((anteriores) =>
+        anteriores.map((m) =>
+          m.id === mod.id ? { ...m, installed: true, installedVersion: version.version } : m
+        )
+      );
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+
+      // Recalcula os selos da página. Sem isto o que acabou de ser instalado
+      // continua marcado como pendente até o usuário buscar de novo — e a
+      // dependência recém-baixada some do disco mas não da tela.
+      const chaves = Object.keys(depsPorChave);
+      if (chaves.length > 0) {
+        void window.modManagerAPI
+          .fetchModDependenciesBatch(chaves)
+          .then((mapa) => setDepsPorChave((anterior) => ({ ...anterior, ...mapa })))
+          .catch(() => {
+            /* selo velho e melhor que travar a tela */
+          });
+      }
+    }
+  }
+
   async function handleInstallFromForge(mod: ForgeCatalogMod) {
     // Sem escolha explícita, cai na versão compatível apontada pela busca — e só
     // depois na mais nova. O contrário instalava a versão incompatível pra quem
@@ -801,33 +913,20 @@ export default function App() {
       return;
     }
     setInstallingModId(mod.id);
-    const previousKeys = new Set(mods.map(selectionKey));
-    const queueId = pushQueueItem(mod.name);
-    markQueueActive(queueId);
-    const result = await installArchiveWithConfirmFlow(
-      window.modManagerAPI.installForgeMod(queueId, version.link, mod.name, {
-        id: mod.id,
-        name: mod.name,
-        author: mod.author,
-        version: version.version,
-        guid: mod.guid
-      })
-    );
-    markQueueDone(queueId, result.success, tMsg(result.message));
+    // Pergunta à fonte o que ESTA versão exige. Falha de rede devolve lista
+    // vazia e a instalação segue: a checagem é auxílio, não pedágio.
+    const deps = await window.modManagerAPI.fetchModDependencies(mod.id, version.version);
     setInstallingModId(null);
-    pushToast(tMsg(result.message), result.success);
-    if (result.success) {
-      // Marca o resultado como instalado na hora. O "installed" vem calculado na
-      // busca, então sem isto o selo só aparecia depois de clicar em Buscar de
-      // novo — e o botão continuava dizendo "Instalar" logo após instalar.
-      setBrowseResults((anteriores) =>
-        anteriores.map((m) =>
-          m.id === mod.id ? { ...m, installed: true, installedVersion: version.version } : m
-        )
-      );
-      const updated = await refreshMods();
-      checkForgeForNewMods(previousKeys, updated);
+
+    // Só interrompe se houver algo a fazer. Dependência já satisfeita aparece no
+    // diálogo, mas sozinha não justifica abrir diálogo nenhum.
+    const acionaveis = deps.filter((d) => d.status !== "installed");
+    if (acionaveis.length > 0) {
+      setDepPrompt({ mod, version, deps });
+      return;
     }
+
+    await executarInstalacao(mod, version, []);
   }
 
   function startRename(mod: ModInfo) {
@@ -1531,6 +1630,27 @@ export default function App() {
                             </span>
                           );
                         })()}
+                        {(() => {
+                          // Selo de dependência. O tom segue a mesma regra do
+                          // diálogo: âmbar quando falta algo, cinza quando está
+                          // tudo satisfeito. Um selo sempre âmbar alarmaria à
+                          // toa — o usuário clicaria e o diálogo nem abriria.
+                          const vId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
+                          const v = mod.versions.find((x) => x.id === vId);
+                          const deps = v ? depsPorChave[`${mod.id}:${v.version}`] : undefined;
+                          if (!deps || deps.length === 0) return null;
+                          const pendentes = deps.filter((d) => d.status !== "installed").length;
+                          return (
+                            <span
+                              className={`meta-chip forge-chip-deps${pendentes > 0 ? " forge-chip-deps-pending" : ""}`}
+                              title={deps.map((d) => d.name).join(", ")}
+                            >
+                              {pendentes > 0
+                                ? t("browse.depsPending", { count: String(pendentes) })
+                                : t("browse.depsSatisfied", { count: String(deps.length) })}
+                            </span>
+                          );
+                        })()}
                         {mod.installed && (
                           <span className="meta-chip forge-chip-installed" title={t("browse.installedTitle")}>
                             {mod.installedVersion
@@ -1585,6 +1705,98 @@ export default function App() {
             )}
 
             <p className="compare-note">{t("browse.installNote")}</p>
+          </div>
+        </div>
+      )}
+
+      {depPrompt && (
+        <div className="modal-backdrop">
+          <div className="modal-box deps-modal">
+            <div className="modal-header">
+              <strong>{t("deps.title")}</strong>
+            </div>
+            <p className="compare-note">
+              {t("deps.intro", { name: `${depPrompt.mod.name} ${depPrompt.version.version}` })}
+            </p>
+            <ul className="deps-list">
+              {depPrompt.deps.map((d) => {
+                const satisfeita = d.status === "installed";
+                const detalhe =
+                  d.status === "missing"
+                    ? `${t("deps.missing")} · ${t("deps.willDownload", { version: d.version ?? "" })}`
+                    : d.status === "outdated"
+                      ? `${t("deps.installedAt", { version: d.installedVersion ?? "" })} · ${t("deps.willUpdate", { version: d.version ?? "" })}`
+                      : d.status === "unavailable"
+                        ? `${t("deps.missing")} · ${t("deps.noCompatible")}`
+                        : `${t("deps.installedAt", { version: d.installedVersion ?? "" })} · ${t("deps.satisfied")}`;
+                return (
+                  <li key={d.guid} className={`dep-row dep-${d.status}`}>
+                    <span className="dep-icon" aria-hidden="true" />
+                    <span className="dep-text">
+                      <span className="dep-name">{d.name}</span>
+                      <span className="dep-detail">
+                        {detalhe}
+                        {d.sizeBytes && !satisfeita ? ` · ${formataTamanho(d.sizeBytes)}` : ""}
+                      </span>
+                      {/* Quem mais usa a lib. Só aparece quando vai MUDAR algo:
+                          atualizar uma lib compartilhada pode tirar outro mod da
+                          versão que o autor dele testou, e o usuário merece
+                          saber disso antes de clicar. */}
+                      {d.status === "outdated" && d.usedBy && d.usedBy.length > 0 && (
+                        <span className="dep-usedby">
+                          {t("deps.alsoUsedBy", { mods: d.usedBy.join(", ") })}
+                        </span>
+                      )}
+                    </span>
+                    {!satisfeita && (
+                      <span className="dep-chip">
+                        {d.status === "missing"
+                          ? t("deps.chipMissing")
+                          : d.status === "outdated"
+                            ? t("deps.chipOutdated")
+                            : t("deps.chipUnavailable")}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {(() => {
+              // Só conta o que vai realmente ser baixado: dependência já
+              // satisfeita e a sem versão compatível não entram na conta.
+              const total = depPrompt.deps
+                .filter((d) => (d.status === "missing" || d.status === "outdated") && d.downloadLink)
+                .reduce((soma, d) => soma + (d.sizeBytes ?? 0), 0);
+              return total > 0 ? (
+                <p className="deps-total">{t("deps.total", { size: formataTamanho(total) })}</p>
+              ) : null;
+            })()}
+            <div className="confirm-structure-actions">
+              <button onClick={() => setDepPrompt(null)}>{t("confirm.abort")}</button>
+              <button
+                onClick={() => {
+                  const p = depPrompt;
+                  setDepPrompt(null);
+                  void executarInstalacao(p.mod, p.version, []);
+                }}
+              >
+                {t("deps.onlyThis")}
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  const p = depPrompt;
+                  setDepPrompt(null);
+                  void executarInstalacao(
+                    p.mod,
+                    p.version,
+                    p.deps.filter((d) => (d.status === "missing" || d.status === "outdated") && d.downloadLink)
+                  );
+                }}
+              >
+                {t("deps.installAll")}
+              </button>
+            </div>
           </div>
         </div>
       )}

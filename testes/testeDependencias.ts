@@ -157,5 +157,40 @@ check("data nao-array devolve vazio", resolveModDependencies({ data: { [CHAVE]: 
 check("entrada sem guid e ignorada", r([{ id: 1, name: "Sem GUID" }], []).length, 0);
 check("mod sem dependencia nenhuma devolve vazio", r([], []), []);
 
+// ---------------------------------------------------------------------------
+console.log("\nusedBy — quem mais depende da mesma lib");
+// ---------------------------------------------------------------------------
+// Caso real: Scorpion fixa CommonLib 3.0.3, ContentBackport fixa 3.0.4. Só uma
+// fica no disco, entao atualizar por causa de um pode tirar o outro da versao
+// que o autor dele testou.
+const comScorpion = r([COMMONLIB], [
+  { guid: "com.wtt.commonlib", name: "WTT-ServerCommonLib", version: "3.0.3" },
+  { guid: "com.acidphantasm.scorpion", name: "acidphantasm-scorpion", version: "1.1.1", requiresGuids: ["com.wtt.commonlib"] }
+])[0];
+check("lista quem ja instalado exige a lib", comScorpion.usedBy, ["acidphantasm-scorpion"]);
+check("e o status continua outdated", comScorpion.status, "outdated");
+
+const doisUsam = r([COMMONLIB], [
+  { guid: "com.wtt.commonlib", name: "lib", version: "3.0.3" },
+  { guid: "a", name: "Scorpion", requiresGuids: ["com.wtt.commonlib"] },
+  { guid: "b", name: "Eco-WW2-Pack", requiresGuids: ["COM.WTT.CommonLib"] }
+])[0];
+check("junta varios e ignora maiuscula no GUID exigido", doisUsam.usedBy, ["Scorpion", "Eco-WW2-Pack"]);
+
+check(
+  "ninguem usando deixa usedBy indefinido",
+  r([COMMONLIB], [{ guid: "com.wtt.commonlib", name: "lib", version: "3.0.3" }])[0].usedBy,
+  undefined
+);
+
+check(
+  "mod que exige outra coisa nao entra na lista",
+  r([COMMONLIB], [
+    { guid: "com.wtt.commonlib", name: "lib", version: "3.0.3" },
+    { guid: "x", name: "Outro", requiresGuids: ["com.outra.lib"] }
+  ])[0].usedBy,
+  undefined
+);
+
 console.log(`\n${ok} ok, ${fail} falhas`);
 process.exit(fail ? 1 : 0);

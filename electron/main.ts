@@ -28,6 +28,7 @@ import {
   installForgeModVersion,
   findForgeDownloadForName,
   fetchModDependencies,
+  fetchModDependenciesBatch,
   findForgeDownloadsForNames,
   checkAppUpdate,
   finalizeUnrecognizedInstall,
@@ -304,6 +305,27 @@ ipcMain.handle("find-forge-download-for-name", async (_event, name: string, sptV
  * a fonte de verdade, e mandar o renderer remontar isso abriria espaço pra
  * divergência silenciosa.
  */
+/**
+ * Versão em lote, para marcar a lista de resultados da busca de uma vez só.
+ * As chaves vêm do renderer no formato `id:versao`.
+ */
+ipcMain.handle("fetch-mod-dependencies-batch", async (_event, chaves: string[]) => {
+  try {
+    const sptPath = store.get("sptPath");
+    if (!sptPath || !Array.isArray(chaves) || chaves.length === 0) return {};
+    const instalados = scanMods(sptPath, getServerRoot()!).map((m) => ({
+      guid: m.guid,
+      name: m.name,
+      version: m.version,
+      requiresGuids: m.requiresGuids
+    }));
+    const sptVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath, getServerRoot() ?? undefined);
+    return await fetchModDependenciesBatch(chaves, sptVersion ?? undefined, instalados);
+  } catch {
+    return {};
+  }
+});
+
 ipcMain.handle("fetch-mod-dependencies", async (_event, modId: number | string, modVersion: string) => {
   try {
     const sptPath = store.get("sptPath");
@@ -311,7 +333,8 @@ ipcMain.handle("fetch-mod-dependencies", async (_event, modId: number | string, 
     const instalados = scanMods(sptPath, getServerRoot()!).map((m) => ({
       guid: m.guid,
       name: m.name,
-      version: m.version
+      version: m.version,
+      requiresGuids: m.requiresGuids
     }));
     const sptVersion = store.get("sptVersionOverride") ?? detectSptSemver(sptPath, getServerRoot() ?? undefined);
     return await fetchModDependencies(modId, modVersion, sptVersion ?? undefined, instalados);

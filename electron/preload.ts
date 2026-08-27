@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),
   fetchModDependencies: (modId: number | string, modVersion: string) =>
     ipcRenderer.invoke("fetch-mod-dependencies", modId, modVersion),
+  fetchModDependenciesBatch: (chaves: string[]) =>
+    ipcRenderer.invoke("fetch-mod-dependencies-batch", chaves),
   installForgeMod: (
     jobId: string,
     downloadLink: string,

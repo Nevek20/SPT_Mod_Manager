@@ -19,6 +19,8 @@ export interface ModInfo {
   packageId?: string; // partes instaladas do mesmo arquivo compartilham esse id
   packageSiblings?: { id: string; type: ModType }[];
   forgeName?: string; // nome publicado na Forge, gravado no registro na instalação — usado como rótulo da linha-pai na árvore
+  /** GUIDs que este mod exige, lidos do DLL. Vazio pra mod sem DLL (package.json). */
+  requiresGuids?: string[];
 }
 
 export interface InstanceConfig {

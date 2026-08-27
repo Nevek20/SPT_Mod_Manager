@@ -269,7 +269,25 @@ const pt: Dict = {
   "update.viewChangelog": "Changelog",
   "update.dismiss": "Agora não",
   "settings.language": "Idioma",
-  "credits.translations": "Traduções por"
+  "credits.translations": "Traduções por",
+  "deps.title": "Dependências",
+  "deps.intro": "{name} precisa de outros mods pra funcionar.",
+  "deps.missing": "não instalado",
+  "deps.willDownload": "baixa {version}",
+  "deps.installedAt": "instalado {version}",
+  "deps.willUpdate": "atualiza pra {version}",
+  "deps.satisfied": "serve",
+  "deps.noCompatible": "sem versão compatível",
+  "deps.chipMissing": "falta",
+  "deps.chipOutdated": "velho",
+  "deps.chipUnavailable": "indisponível",
+  "deps.total": "Total a baixar: {size}",
+  "deps.installAll": "Instalar todos",
+  "deps.onlyThis": "Só este mod",
+  "deps.installingDependency": "Instalando dependência: {name}",
+  "browse.depsPending": "{count} dependência(s)",
+  "browse.depsSatisfied": "{count} dependência(s) ok",
+  "deps.alsoUsedBy": "usado também por {mods}"
 };
 
 const en: Dict = {
@@ -498,7 +516,25 @@ const en: Dict = {
   "update.viewChangelog": "Changelog",
   "update.dismiss": "Not now",
   "settings.language": "Language",
-  "credits.translations": "Translations by"
+  "credits.translations": "Translations by",
+  "deps.title": "Dependencies",
+  "deps.intro": "{name} needs other mods to work.",
+  "deps.missing": "not installed",
+  "deps.willDownload": "downloads {version}",
+  "deps.installedAt": "installed {version}",
+  "deps.willUpdate": "updates to {version}",
+  "deps.satisfied": "works",
+  "deps.noCompatible": "no compatible version",
+  "deps.chipMissing": "missing",
+  "deps.chipOutdated": "old",
+  "deps.chipUnavailable": "unavailable",
+  "deps.total": "Total to download: {size}",
+  "deps.installAll": "Install all",
+  "deps.onlyThis": "Only this mod",
+  "deps.installingDependency": "Installing dependency: {name}",
+  "browse.depsPending": "{count} dependenc(y/ies)",
+  "browse.depsSatisfied": "{count} dependenc(y/ies) ok",
+  "deps.alsoUsedBy": "also used by {mods}"
 };
 
 /**
@@ -711,7 +747,25 @@ const zh: Dict = {
   "update.viewChangelog": "更新日志",
   "update.dismiss": "暂不",
   "settings.language": "语言",
-  "credits.translations": "翻译贡献者"
+  "credits.translations": "翻译贡献者",
+  "deps.title": "依赖",
+  "deps.intro": "「{name}」需要其他模组才能运行。",
+  "deps.missing": "未安装",
+  "deps.willDownload": "将下载 {version}",
+  "deps.installedAt": "已安装 {version}",
+  "deps.willUpdate": "将更新到 {version}",
+  "deps.satisfied": "可用",
+  "deps.noCompatible": "没有兼容的版本",
+  "deps.chipMissing": "缺少",
+  "deps.chipOutdated": "过旧",
+  "deps.chipUnavailable": "不可用",
+  "deps.total": "下载总量：{size}",
+  "deps.installAll": "全部安装",
+  "deps.onlyThis": "仅安装此模组",
+  "deps.installingDependency": "正在安装依赖：{name}",
+  "browse.depsPending": "{count} 个依赖",
+  "browse.depsSatisfied": "{count} 个依赖已满足",
+  "deps.alsoUsedBy": "{mods} 也在使用"
 };
 
 const ru: Dict = {
@@ -914,7 +968,25 @@ const ru: Dict = {
   "update.viewChangelog": "Список изменений",
   "update.dismiss": "Не сейчас",
   "settings.language": "Язык",
-  "credits.translations": "Переводы:"
+  "credits.translations": "Переводы:",
+  "deps.title": "Зависимости",
+  "deps.intro": "Для работы «{name}» нужны другие моды.",
+  "deps.missing": "не установлен",
+  "deps.willDownload": "будет загружен {version}",
+  "deps.installedAt": "установлен {version}",
+  "deps.willUpdate": "обновится до {version}",
+  "deps.satisfied": "подходит",
+  "deps.noCompatible": "нет совместимой версии",
+  "deps.chipMissing": "нет",
+  "deps.chipOutdated": "старый",
+  "deps.chipUnavailable": "недоступен",
+  "deps.total": "Всего к загрузке: {size}",
+  "deps.installAll": "Установить все",
+  "deps.onlyThis": "Только этот мод",
+  "deps.installingDependency": "Установка зависимости: {name}",
+  "browse.depsPending": "зависимостей: {count}",
+  "browse.depsSatisfied": "зависимостей: {count}, все на месте",
+  "deps.alsoUsedBy": "также используется: {mods}"
 };
 
 const fr: Dict = {
@@ -1117,7 +1189,25 @@ const fr: Dict = {
   "update.viewChangelog": "Journal des modifications",
   "update.dismiss": "Pas maintenant",
   "settings.language": "Langue",
-  "credits.translations": "Traductions par"
+  "credits.translations": "Traductions par",
+  "deps.title": "Dépendances",
+  "deps.intro": "« {name} » a besoin d'autres mods pour fonctionner.",
+  "deps.missing": "non installé",
+  "deps.willDownload": "télécharge {version}",
+  "deps.installedAt": "installé {version}",
+  "deps.willUpdate": "met à jour vers {version}",
+  "deps.satisfied": "convient",
+  "deps.noCompatible": "aucune version compatible",
+  "deps.chipMissing": "manquant",
+  "deps.chipOutdated": "ancien",
+  "deps.chipUnavailable": "indisponible",
+  "deps.total": "Total à télécharger : {size}",
+  "deps.installAll": "Tout installer",
+  "deps.onlyThis": "Ce mod uniquement",
+  "deps.installingDependency": "Installation de la dépendance : {name}",
+  "browse.depsPending": "{count} dépendance(s)",
+  "browse.depsSatisfied": "{count} dépendance(s) ok",
+  "deps.alsoUsedBy": "aussi utilisé par {mods}"
 };
 
 const ja: Dict = {
@@ -1320,7 +1410,25 @@ const ja: Dict = {
   "update.viewChangelog": "変更履歴",
   "update.dismiss": "後で",
   "settings.language": "言語",
-  "credits.translations": "翻訳"
+  "credits.translations": "翻訳",
+  "deps.title": "依存関係",
+  "deps.intro": "「{name}」の動作には他のMODが必要です。",
+  "deps.missing": "未インストール",
+  "deps.willDownload": "{version} をダウンロード",
+  "deps.installedAt": "{version} がインストール済み",
+  "deps.willUpdate": "{version} に更新",
+  "deps.satisfied": "問題なし",
+  "deps.noCompatible": "対応するバージョンがありません",
+  "deps.chipMissing": "不足",
+  "deps.chipOutdated": "旧版",
+  "deps.chipUnavailable": "利用不可",
+  "deps.total": "ダウンロード合計: {size}",
+  "deps.installAll": "すべてインストール",
+  "deps.onlyThis": "このMODのみ",
+  "deps.installingDependency": "依存関係をインストール中: {name}",
+  "browse.depsPending": "依存 {count} 件",
+  "browse.depsSatisfied": "依存 {count} 件 解決済み",
+  "deps.alsoUsedBy": "{mods} でも使用中"
 };
 
 const de: Dict = {
@@ -1523,7 +1631,25 @@ const de: Dict = {
   "update.viewChangelog": "Änderungsprotokoll",
   "update.dismiss": "Nicht jetzt",
   "settings.language": "Sprache",
-  "credits.translations": "Übersetzungen von"
+  "credits.translations": "Übersetzungen von",
+  "deps.title": "Abhängigkeiten",
+  "deps.intro": "„{name}“ braucht andere Mods, um zu funktionieren.",
+  "deps.missing": "nicht installiert",
+  "deps.willDownload": "lädt {version}",
+  "deps.installedAt": "installiert {version}",
+  "deps.willUpdate": "aktualisiert auf {version}",
+  "deps.satisfied": "passt",
+  "deps.noCompatible": "keine kompatible Version",
+  "deps.chipMissing": "fehlt",
+  "deps.chipOutdated": "alt",
+  "deps.chipUnavailable": "nicht verfügbar",
+  "deps.total": "Gesamt zum Download: {size}",
+  "deps.installAll": "Alle installieren",
+  "deps.onlyThis": "Nur dieser Mod",
+  "deps.installingDependency": "Abhängigkeit wird installiert: {name}",
+  "browse.depsPending": "{count} Abhängigkeit(en)",
+  "browse.depsSatisfied": "{count} Abhängigkeit(en) ok",
+  "deps.alsoUsedBy": "wird auch von {mods} genutzt"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

@@ -752,6 +752,9 @@ function readModMetadata(modPath: string, lado: LadoDoMod = "auto"): {
   guid?: string;
   declaredName?: string;
   sptVersion?: string;
+  /** GUIDs exigidos, lidos do DLL. Sobe até o ModInfo pra que a interface saiba
+   *  QUEM depende de uma lib sem ter que reler os DLLs a cada pergunta. */
+  requiresGuids?: string[];
 } {
   try {
     if (!fs.existsSync(modPath)) return {};
@@ -779,7 +782,16 @@ function readModMetadata(modPath: string, lado: LadoDoMod = "auto"): {
     for (const dll of findFilesRecursive(modPath, ".dll")) {
       const meta = readDllModMetadata(dll, lado);
       if (meta.version || meta.guid) {
-        return { version: meta.version, author: meta.author, guid: meta.guid, declaredName: meta.name, sptVersion: meta.sptVersion };
+        return {
+          version: meta.version,
+          author: meta.author,
+          guid: meta.guid,
+          declaredName: meta.name,
+          sptVersion: meta.sptVersion,
+          // Só as obrigatórias: dependência opcional não justifica dizer que o
+          // mod "usa" a lib, e viraria ruído na explicação.
+          requiresGuids: meta.dependencies?.map((d) => d.guid)
+        };
       }
     }
     return {};
@@ -1267,6 +1279,7 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       // metades de um pacote precisam concordar num rótulo só.
       forgeName: registryEntry?.forgeName,
       sptVersion: metadata.sptVersion,
+      requiresGuids: metadata.requiresGuids,
       packageId: registryEntry?.packageId,
       installedAt: registryEntry?.installedAt,
       linkedModName: resolveLinkedName(registryEntry?.linkedModId)
@@ -3166,6 +3179,16 @@ export interface ModDependencyInfo {
   installedName?: string;
   /** Profundidade na árvore: 0 é dependência direta, 1+ é dependência de dependência. */
   depth: number;
+  /**
+   * Mods JÁ INSTALADOS que também exigem esta dependência.
+   *
+   * Existe por causa de um conflito real do ecossistema: dois mods podem fixar
+   * versões diferentes da mesma lib (o Scorpion pede CommonLib 3.0.3, o
+   * ContentBackport pede 3.0.4), e só uma fica no disco. Atualizar pra
+   * satisfazer um pode tirar o outro da versão que o autor testou. Mostrar
+   * quem mais usa deixa a decisão com o usuário em vez de no escuro.
+   */
+  usedBy?: string[];
 }
 
 /**
@@ -3189,15 +3212,48 @@ export async function fetchModDependencies(
   modId: number | string,
   modVersion: string,
   sptVersion: string | undefined,
-  instalados: { guid?: string; name: string; version?: string }[]
+  instalados: { guid?: string; name: string; version?: string; requiresGuids?: string[] }[]
 ): Promise<ModDependencyInfo[]> {
-  const url = new URL(`${activeSource.apiBase}/mods/dependencies`);
-  url.searchParams.set("mods", `${modId}:${modVersion}`);
-  if (sptVersion) url.searchParams.set("spt_version", sptVersion);
+  const chave = `${modId}:${modVersion}`;
+  const mapa = await fetchModDependenciesBatch([chave], sptVersion, instalados);
+  return mapa[chave] ?? [];
+}
 
-  const budget = newForgeBudget(1);
-  const json = await forgeFetchJson(url.toString(), budget);
-  return resolveModDependencies(json, `${modId}:${modVersion}`, instalados);
+/**
+ * A mesma consulta, para vários mods de uma vez.
+ *
+ * O endpoint aceita as chaves separadas por vírgula e devolve uma entrada por
+ * chave, inclusive vazia para quem não tem dependência — verificado contra o
+ * sp-mod. Isso é o que torna viável marcar a lista inteira de resultados da
+ * busca: uma requisição por página em vez de uma por mod, que estouraria o
+ * limite de taxa e seria abuso do servidor da fonte.
+ *
+ * As chaves vêm no formato `id:versao`, porque o que um mod exige muda entre
+ * versões.
+ */
+export async function fetchModDependenciesBatch(
+  chaves: string[],
+  sptVersion: string | undefined,
+  instalados: { guid?: string; name: string; version?: string; requiresGuids?: string[] }[]
+): Promise<Record<string, ModDependencyInfo[]>> {
+  const out: Record<string, ModDependencyInfo[]> = {};
+  if (chaves.length === 0) return out;
+
+  // Fatia pra não montar uma URL absurda numa página cheia. 25 por vez é
+  // folgado pra uma página de busca e curto o bastante pra qualquer servidor.
+  const LOTE = 25;
+  const budget = newForgeBudget(Math.ceil(chaves.length / LOTE));
+  for (let i = 0; i < chaves.length; i += LOTE) {
+    const fatia = chaves.slice(i, i + LOTE);
+    const url = new URL(`${activeSource.apiBase}/mods/dependencies`);
+    url.searchParams.set("mods", fatia.join(","));
+    if (sptVersion) url.searchParams.set("spt_version", sptVersion);
+    const json = await forgeFetchJson(url.toString(), budget);
+    for (const chave of fatia) {
+      out[chave] = resolveModDependencies(json, chave, instalados);
+    }
+  }
+  return out;
 }
 
 /**
@@ -3208,7 +3264,7 @@ export async function fetchModDependencies(
 export function resolveModDependencies(
   json: any,
   chave: string,
-  instalados: { guid?: string; name: string; version?: string }[]
+  instalados: { guid?: string; name: string; version?: string; requiresGuids?: string[] }[]
 ): ModDependencyInfo[] {
   const raiz = json?.data?.[chave];
   if (!Array.isArray(raiz)) return [];
@@ -3217,8 +3273,16 @@ export function resolveModDependencies(
   // API à leitura do DLL sem heurística nenhuma — os dois falam o mesmo
   // "com.wtt.commonlib".
   const porGuid = new Map<string, { name: string; version?: string }>();
+  // Índice inverso: dado um GUID, quem já instalado o exige.
+  const dependentes = new Map<string, string[]>();
   for (const m of instalados) {
     if (m.guid) porGuid.set(m.guid.toLowerCase(), { name: m.name, version: m.version });
+    for (const req of m.requiresGuids ?? []) {
+      const chaveReq = req.toLowerCase();
+      const lista = dependentes.get(chaveReq) ?? [];
+      if (!lista.includes(m.name)) lista.push(m.name);
+      dependentes.set(chaveReq, lista);
+    }
   }
 
   const out: ModDependencyInfo[] = [];
@@ -3263,7 +3327,8 @@ export function resolveModDependencies(
         status,
         installedVersion: instalado?.version,
         installedName: instalado?.name,
-        depth
+        depth,
+        usedBy: dependentes.get(guid.toLowerCase())
       });
 
       if (Array.isArray(n?.dependencies) && n.dependencies.length > 0) {

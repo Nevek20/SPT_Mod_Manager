@@ -18,6 +18,8 @@ export interface ModDependencyInfo {
   installedVersion?: string;
   installedName?: string;
   depth: number;
+  /** Mods já instalados que também exigem esta dependência. */
+  usedBy?: string[];
 }
 
 export interface ModInfo {
@@ -202,6 +204,7 @@ export interface ModManagerAPI {
     sptVersion?: string
   ) => Promise<{ found: boolean; downloadLink?: string; version?: string; forgeName?: string }>;
   fetchModDependencies: (modId: number | string, modVersion: string) => Promise<ModDependencyInfo[]>;
+  fetchModDependenciesBatch: (chaves: string[]) => Promise<Record<string, ModDependencyInfo[]>>;
   installForgeMod: (
     jobId: string,
     downloadLink: string,
