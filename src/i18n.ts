@@ -1717,6 +1717,10 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
     en: (m) => `Mod enabled (${m[1]} package parts).`
   },
   {
+    pattern: /^Mod removido \((\d+) partes do pacote\)\.$/,
+    en: (m) => `Mod removed (${m[1]} package parts).`
+  },
+  {
     pattern: /^Mod desabilitado \(e (\d+) patcher\(s\) junto\)\.$/,
     en: (m) => `Mod disabled (along with ${m[1]} patcher(s)).`
   },

@@ -738,21 +738,34 @@ export default function App() {
   ) {
     setBrowseLoading(true);
     setBrowseError(null);
-    const response = await window.modManagerAPI.searchForgeMods({
-      query: browseQuery.trim() || undefined,
-      categorySlug: browseCategory || undefined,
-      sptVersionConstraint: onlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
-      // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o que
-      // permite ver a lista inteira e ainda saber o que serve na sua instância.
-      markVersion: sptVersionInput.trim() || undefined,
-      // Esconder é filtro LOCAL sobre a página que o servidor mandou, e a API não
-      // tem "só os que não tenho". Numa página de 24 quase tudo some pra quem já
-      // tem muita coisa — a página 1 vem por downloads, justamente os populares.
-      // Pedindo o máximo permitido, sobra lista depois de esconder.
-      perPage: hideInstalled ? 50 : undefined,
-      page
-    });
-    setBrowseLoading(false);
+    // O try/finally existe porque o setBrowseLoading(false) ficava DEPOIS do
+    // await: qualquer exceção (rede caindo, IPC rejeitando, limite de taxa da
+    // fonte) pulava a linha e deixava o campo de busca desabilitado pra sempre,
+    // até fechar e reabrir a janela. Erro tratado já voltava como
+    // { success: false }; o que faltava era cobrir o que NÃO volta.
+    let response: Awaited<ReturnType<typeof window.modManagerAPI.searchForgeMods>>;
+    try {
+      response = await window.modManagerAPI.searchForgeMods({
+        query: browseQuery.trim() || undefined,
+        categorySlug: browseCategory || undefined,
+        sptVersionConstraint: onlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
+        // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o
+        // que permite ver a lista inteira e ainda saber o que serve na sua
+        // instância.
+        markVersion: sptVersionInput.trim() || undefined,
+        // Esconder é filtro LOCAL sobre a página que o servidor mandou, e a API
+        // não tem "só os que não tenho". Numa página de 24 quase tudo some pra
+        // quem já tem muita coisa — a página 1 vem por downloads, justamente os
+        // populares. Pedindo o máximo permitido, sobra lista depois de esconder.
+        perPage: hideInstalled ? 50 : undefined,
+        page
+      });
+    } catch (err) {
+      setBrowseError(String(err instanceof Error ? err.message : err));
+      return;
+    } finally {
+      setBrowseLoading(false);
+    }
     if (!response.success || !response.result) {
       setBrowseError(tMsg(response.message) || t("toast.forgeSearchFailed"));
       return;

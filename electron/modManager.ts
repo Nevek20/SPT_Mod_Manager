@@ -1997,7 +1997,24 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
 }
 
 // --- Desinstalar ---
-export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
+/**
+ * Remove um mod. Quando ele é parte de um pacote, as outras partes saem junto.
+ *
+ * A cascata existe pela mesma razão do toggleMod: meio pacote no disco não
+ * funciona, e ficava pior aqui — desabilitar levava as duas metades, remover
+ * levava só uma, então a linha-pai sumia da lista e a metade órfã reaparecia
+ * sozinha na varredura seguinte. Era assimetria pura entre duas ações que o
+ * usuário lê como equivalentes.
+ *
+ * `jaRemovidos` corta a recursão: cada parte, ao ser removida, olharia as
+ * irmãs dela e voltaria pra esta aqui.
+ */
+export function uninstallMod(
+  clientRoot: string,
+  serverRoot: string,
+  mod: ModInfo,
+  jaRemovidos?: Set<string>
+): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
     return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser removido pelo Manager." };
   }
@@ -2091,7 +2108,49 @@ export function uninstallMod(clientRoot: string, serverRoot: string, mod: ModInf
     removeFromRegistry(clientRoot, orphanEntry.id);
   }
 
+  // As outras partes do pacote. Igual ao toggleMod, o packageSiblings do scan
+  // ganha do registro quando existe: num pacote inferido os nomes das pastas
+  // podem diferir, e num pacote reunido pela fonte os packageId gravados podem
+  // estar divergentes.
+  //
+  // A consulta vem ANTES de apagar o registro deste mod: o findPackageSiblings
+  // acha as irmãs pelo packageId da entrada DELE, então limpar primeiro deixava
+  // a busca sem âncora e devolvia lista vazia.
+  const irmasDoRegistro = mod.packageSiblings?.length
+    ? mod.packageSiblings
+    : findPackageSiblings(clientRoot, mod.id, mod.type).map((r) => ({ id: r.id, type: r.type }));
+
   removeFromRegistry(clientRoot, mod.id, mod.type);
+
+  const vistos = jaRemovidos ?? new Set<string>();
+  vistos.add(`${mod.type}:${mod.id}`);
+  let partesRemovidas = 0;
+  for (const irma of irmasDoRegistro) {
+    const chave = `${irma.type}:${irma.id}`;
+    if (vistos.has(chave)) continue;
+    // A parte irmã pode estar habilitada ou desabilitada, e o ModInfo que chegou
+    // aqui só descreve esta. Descobre em que pasta ela está antes de remover.
+    const habilitada = [true, false].find((e) =>
+      fs.existsSync(resolveModPath(clientRoot, serverRoot, { id: irma.id, type: irma.type, enabled: e }))
+    );
+    if (habilitada === undefined) {
+      // Já não está no disco: limpa o registro pra não deixar fantasma.
+      vistos.add(chave);
+      removeFromRegistry(clientRoot, irma.id, irma.type);
+      continue;
+    }
+    const r = uninstallMod(
+      clientRoot,
+      serverRoot,
+      { ...mod, id: irma.id, type: irma.type, enabled: habilitada, packageSiblings: undefined, manifestOnly: false },
+      vistos
+    );
+    if (r.success) partesRemovidas++;
+  }
+
+  if (partesRemovidas > 0) {
+    return { success: true, message: `Mod removido (${partesRemovidas + 1} partes do pacote).` };
+  }
   return {
     success: true,
     message:
