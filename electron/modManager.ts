@@ -2229,6 +2229,21 @@ function cleanup(tmpDir: string) {
  * alguns níveis de profundidade) por uma pasta que tenha "user" e/ou "BepInEx" como
  * filhos diretos, em vez de olhar só o nível mais raso do zip extraído.
  */
+/**
+ * Acha o nível do arquivo extraído a partir do qual copiar.
+ *
+ * A regra óbvia — desce até achar `user` ou `BepInEx` — descartava em silêncio
+ * qualquer arquivo solto que estivesse ACIMA desse nível. O SVM é o caso real: o
+ * .zip tem `SPT_Runtime/user/mods/...` e um `Greed.exe` na raiz, ao lado. A
+ * busca descia até a SPT_Runtime, o mod instalava certo, e o executável ficava
+ * fora do mundo do instalador. Ninguém via erro, porque ninguém sabia que ele
+ * existia.
+ *
+ * Então: se há arquivo solto neste nível e existe um destino de fusão mais
+ * abaixo, a fusão começa AQUI, e o flattenWrapperDirs (que já sabe desembrulhar
+ * uma pasta como SPT_Runtime) resolve o resto. Sem arquivo solto, desce como
+ * antes.
+ */
 function findMergeRoot(dir: string, depth = 0): string | null {
   if (depth > 5) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -2237,13 +2252,18 @@ function findMergeRoot(dir: string, depth = 0): string | null {
   if (hasUser || hasBepInEx) return dir;
 
   for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const found = findMergeRoot(path.join(dir, entry.name), depth + 1);
-      if (found) return found;
-    }
+    if (!entry.isDirectory()) continue;
+    const found = findMergeRoot(path.join(dir, entry.name), depth + 1);
+    if (!found) continue;
+    // Achou mais abaixo. Se aqui em cima sobrou arquivo solto, ele pertence ao
+    // mod e tem que vir junto — só dá pra garantir isso começando deste nível.
+    return entries.some((e) => e.isFile()) ? dir : found;
   }
   return null;
 }
+
+/** Exportado só para teste: a regra acima é sutil e vale travar por escrito. */
+export const _findMergeRoot = findMergeRoot;
 
 /**
  * Confere, arquivo por arquivo, que tudo que existia em src também existe em dest
