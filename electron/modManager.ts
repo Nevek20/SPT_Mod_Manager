@@ -2591,8 +2591,38 @@ interface ForgeMatch {
   modId: number; // id numérico da Forge — sempre existe, mesmo quando guid é null
   latestVersion?: string;
   latestVersionLink?: string;
+  /** Todas as versões publicadas. Restaurar uma lista precisa de uma versão
+   *  ESPECÍFICA, não da mais nova, então a lista inteira tem que chegar lá. */
+  versions?: { version?: string; link?: string }[];
   forgeName?: string;
   confidence: "exact" | "derived";
+}
+
+/**
+ * Qual versão baixar ao restaurar uma lista importada.
+ *
+ * A versão que a lista registrou GANHA da mais recente. Restaurar é reproduzir
+ * uma instalação que funcionava, não atualizar tudo: quem exportou com o SAIN
+ * 4.4.3 e recebe o 4.5.0 pode ter a combinação inteira quebrada. Isso era um
+ * bug relatado — a versão estava gravada no arquivo exportado e simplesmente
+ * não era lida de volta na hora de restaurar.
+ *
+ * Se a versão pedida não existe mais na fonte, cai na mais recente em vez de
+ * não instalar nada: meia restauração é melhor que nenhuma, e a versão que
+ * entrou aparece na fila pro usuário conferir.
+ */
+export function escolheVersaoParaRestaurar(
+  info: { versions?: { version?: string; link?: string }[]; latestVersion?: string; latestVersionLink?: string },
+  versaoPedida?: string
+): { version?: string; link: string } | null {
+  if (versaoPedida) {
+    const exata = info.versions?.find((v) => v.version === versaoPedida && v.link);
+    if (exata?.link) return { version: exata.version, link: exata.link };
+  }
+  if (info.latestVersionLink) return { version: info.latestVersion, link: info.latestVersionLink };
+  // Sem link da mais recente, aceita qualquer uma que tenha link.
+  const qualquer = info.versions?.find((v) => v.link);
+  return qualquer?.link ? { version: qualquer.version, link: qualquer.link } : null;
 }
 
 function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
@@ -2603,6 +2633,7 @@ function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
     modId: Number(entry.id),
     latestVersion: latest?.version,
     latestVersionLink: latest?.link,
+    versions: versions.map((v: any) => ({ version: v?.version, link: v?.link })),
     forgeName: typeof entry.name === "string" ? entry.name : undefined,
     confidence
   };
@@ -3425,7 +3456,7 @@ export function resolveModDependencies(
 }
 
 export async function findForgeDownloadsForNames(
-  entries: { name: string; guid?: string }[],
+  entries: { name: string; guid?: string; version?: string }[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
 ): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>> {
@@ -3438,14 +3469,15 @@ export async function findForgeDownloadsForNames(
   );
   const out: Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }> = {};
   const budget = newForgeBudget(entries.length);
-  for (const { name } of entries) {
+  for (const { name, version: versaoPedida } of entries) {
     const info = matches.get(name);
     if (!info) continue;
 
-    if (info.latestVersionLink) {
+    const escolhida = escolheVersaoParaRestaurar(info, versaoPedida);
+    if (escolhida) {
       out[name] = {
-        downloadLink: info.latestVersionLink,
-        version: info.latestVersion,
+        downloadLink: escolhida.link,
+        version: escolhida.version,
         forgeName: info.forgeName,
         guid: info.identifier
       };

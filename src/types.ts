@@ -168,6 +168,9 @@ export interface ModManagerAPI {
     message: string;
     comparison?: ModListComparison;
     guidByName?: Record<string, string>;
+    /** Versão de cada mod na lista exportada, pra restaurar a instalação que a
+     *  pessoa tinha em vez de puxar sempre a mais recente. */
+    versionByName?: Record<string, string>;
   }>;
   getSptVersion: () => Promise<string | undefined>;
   detectConflicts: () => Promise<ConflictReport>;
@@ -197,7 +200,7 @@ export interface ModManagerAPI {
   onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   findForgeDownloadsForNames: (
-    entries: { name: string; guid?: string }[]
+    entries: { name: string; guid?: string; version?: string }[]
   ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>>;
   findForgeDownloadForName: (
     name: string,

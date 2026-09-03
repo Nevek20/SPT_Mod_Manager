@@ -537,6 +537,11 @@ export default function App() {
         next.delete(key);
         return next;
       });
+      // Remover uma parte leva as irmãs junto, e a filtragem acima só conhece a
+      // que foi clicada — sem re-escanear, a outra metade continuava na lista
+      // depois de já ter saído do disco. O caminho em lote já fazia isto; o
+      // individual não, e a diferença só aparecia em mod de duas partes.
+      if (mod.packageId || mod.packageSiblings?.length) await refreshMods();
     }
     setMutating(false);
   }
@@ -579,8 +584,9 @@ export default function App() {
         // a linha de progresso pra fora da área visível do painel.
         setLookupInProgress(true);
         const guidByName = result.guidByName ?? {};
+        const versionByName = result.versionByName ?? {};
         const found = await window.modManagerAPI.findForgeDownloadsForNames(
-          targets.map((name) => ({ name, guid: guidByName[name] }))
+          targets.map((name) => ({ name, guid: guidByName[name], version: versionByName[name] }))
         );
         setLookupInProgress(false);
         setForgeProgress(null);

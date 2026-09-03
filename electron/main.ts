@@ -279,7 +279,7 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   return { success: false };
 });
 
-ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string }[]) => {
+ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string; version?: string }[]) => {
   try {
     return await findForgeDownloadsForNames(
       entries,
@@ -482,17 +482,22 @@ ipcMain.handle("import-mod-list", async () => {
     // Repassa os GUIDs da lista (quando existirem) pra que a restauração case por
     // identificador exato em vez de tentar adivinhar pelo nome da pasta.
     const guidByName: Record<string, string> = {};
-    for (const entry of parsed.mods as { name?: string; guid?: string }[]) {
-      if (typeof entry?.name === "string" && typeof entry?.guid === "string") {
-        guidByName[entry.name] = entry.guid;
-      }
+    // A versão também: restaurar é reproduzir a instalação que a pessoa tinha,
+    // não atualizar tudo pro mais novo. O dado já estava sendo exportado e só
+    // não era lido de volta.
+    const versionByName: Record<string, string> = {};
+    for (const entry of parsed.mods as { name?: string; guid?: string; version?: string }[]) {
+      if (typeof entry?.name !== "string") continue;
+      if (typeof entry.guid === "string") guidByName[entry.name] = entry.guid;
+      if (typeof entry.version === "string") versionByName[entry.name] = entry.version;
     }
     const comparison = compareModList(sptPath, getServerRoot()!, names);
     return {
       success: true,
       message: `Comparado com ${names.length} mod(s) da lista importada.`,
       comparison,
-      guidByName
+      guidByName,
+      versionByName
     };
   } catch (err) {
     return { success: false, message: "Erro ao ler o arquivo: " + (err as Error).message };
