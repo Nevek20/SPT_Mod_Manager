@@ -238,7 +238,13 @@ ipcMain.handle(
     params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; perPage?: number; sort?: string; page?: number }
   ) => {
     try {
-      const result = await searchForgeMods({ ...params, sptPath: store.get("sptPath") ?? undefined });
+      const result = await searchForgeMods({
+        ...params,
+        sptPath: store.get("sptPath") ?? undefined,
+        // A marcação de "já instalado" confere as pastas no disco, e numa
+        // instalação dividida as de servidor ficam noutra raiz.
+        serverRoot: getServerRoot() ?? undefined
+      });
       return { success: true, result };
     } catch (err: any) {
       return { success: false, message: err?.message || "Falha ao buscar mods na Forge." };

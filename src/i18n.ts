@@ -287,7 +287,8 @@ const pt: Dict = {
   "deps.installingDependency": "Instalando dependência: {name}",
   "browse.depsPending": "{count} dependência(s)",
   "browse.depsSatisfied": "{count} dependência(s) ok",
-  "deps.alsoUsedBy": "usado também por {mods}"
+  "deps.alsoUsedBy": "usado também por {mods}",
+  "browse.depsOutdated": "{count} pra atualizar"
 };
 
 const en: Dict = {
@@ -534,7 +535,8 @@ const en: Dict = {
   "deps.installingDependency": "Installing dependency: {name}",
   "browse.depsPending": "{count} dependenc(y/ies)",
   "browse.depsSatisfied": "{count} dependenc(y/ies) ok",
-  "deps.alsoUsedBy": "also used by {mods}"
+  "deps.alsoUsedBy": "also used by {mods}",
+  "browse.depsOutdated": "{count} to update"
 };
 
 /**
@@ -765,7 +767,8 @@ const zh: Dict = {
   "deps.installingDependency": "正在安装依赖：{name}",
   "browse.depsPending": "{count} 个依赖",
   "browse.depsSatisfied": "{count} 个依赖已满足",
-  "deps.alsoUsedBy": "{mods} 也在使用"
+  "deps.alsoUsedBy": "{mods} 也在使用",
+  "browse.depsOutdated": "{count} 个待更新"
 };
 
 const ru: Dict = {
@@ -986,7 +989,8 @@ const ru: Dict = {
   "deps.installingDependency": "Установка зависимости: {name}",
   "browse.depsPending": "зависимостей: {count}",
   "browse.depsSatisfied": "зависимостей: {count}, все на месте",
-  "deps.alsoUsedBy": "также используется: {mods}"
+  "deps.alsoUsedBy": "также используется: {mods}",
+  "browse.depsOutdated": "обновить: {count}"
 };
 
 const fr: Dict = {
@@ -1207,7 +1211,8 @@ const fr: Dict = {
   "deps.installingDependency": "Installation de la dépendance : {name}",
   "browse.depsPending": "{count} dépendance(s)",
   "browse.depsSatisfied": "{count} dépendance(s) ok",
-  "deps.alsoUsedBy": "aussi utilisé par {mods}"
+  "deps.alsoUsedBy": "aussi utilisé par {mods}",
+  "browse.depsOutdated": "{count} à mettre à jour"
 };
 
 const ja: Dict = {
@@ -1428,7 +1433,8 @@ const ja: Dict = {
   "deps.installingDependency": "依存関係をインストール中: {name}",
   "browse.depsPending": "依存 {count} 件",
   "browse.depsSatisfied": "依存 {count} 件 解決済み",
-  "deps.alsoUsedBy": "{mods} でも使用中"
+  "deps.alsoUsedBy": "{mods} でも使用中",
+  "browse.depsOutdated": "更新 {count} 件"
 };
 
 const de: Dict = {
@@ -1649,7 +1655,8 @@ const de: Dict = {
   "deps.installingDependency": "Abhängigkeit wird installiert: {name}",
   "browse.depsPending": "{count} Abhängigkeit(en)",
   "browse.depsSatisfied": "{count} Abhängigkeit(en) ok",
-  "deps.alsoUsedBy": "wird auch von {mods} genutzt"
+  "deps.alsoUsedBy": "wird auch von {mods} genutzt",
+  "browse.depsOutdated": "{count} zu aktualisieren"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

@@ -17,7 +17,8 @@
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "electron:dev": "npm run build && electron .",
     "electron:build": "npm run build && electron-builder",
-    "teste": "tsx testes/testeArvore.ts && tsx testes/testePeVersion.ts && tsx testes/testeCache.ts && tsx testes/testeDeteccao.ts && tsx testes/testeCompat.ts && tsx testes/testeJson.ts && tsx testes/testeMetadata.ts && tsx testes/testeDependencias.ts && tsx testes/testeRemocaoPacote.ts && tsx testes/verificaTraducoes.ts"
+    "teste": "tsx testes/testeArvore.ts && tsx testes/testePeVersion.ts && tsx testes/testeCache.ts && tsx testes/testeDeteccao.ts && tsx testes/testeCompat.ts && tsx testes/testeJson.ts && tsx testes/testeMetadata.ts && tsx testes/testeDependencias.ts && tsx testes/testeRemocaoPacote.ts && tsx testes/testeMarcacaoInstalado.ts && tsx testes/verificaTraducoes.ts",
+    "preversion": "npm run teste"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

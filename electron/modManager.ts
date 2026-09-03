@@ -2121,6 +2121,9 @@ export function uninstallMod(
     : findPackageSiblings(clientRoot, mod.id, mod.type).map((r) => ({ id: r.id, type: r.type }));
 
   removeFromRegistry(clientRoot, mod.id, mod.type);
+  // O casamento com a fonte é chaveado pelo nome da pasta, então some junto com
+  // ela — senão o catálogo continua achando que este mod está instalado.
+  forgetForgeMatch(clientRoot, mod.id);
 
   const vistos = jaRemovidos ?? new Set<string>();
   vistos.add(`${mod.type}:${mod.id}`);
@@ -2137,6 +2140,7 @@ export function uninstallMod(
       // Já não está no disco: limpa o registro pra não deixar fantasma.
       vistos.add(chave);
       removeFromRegistry(clientRoot, irma.id, irma.type);
+      forgetForgeMatch(clientRoot, irma.id);
       continue;
     }
     const r = uninstallMod(
@@ -2931,6 +2935,27 @@ export function cachedIdFor(entry: MatchCacheEntry | undefined, sourceKey: strin
   return LEGACY_ID_SOURCES.has(sourceKey) ? entry.ids[LEGACY_SOURCE_KEY] : undefined;
 }
 
+/**
+ * Esquece o casamento gravado pra uma pasta de mod.
+ *
+ * O cache é chaveado pelo nome da PASTA, e sobrevivia à remoção do mod. Como o
+ * catálogo usa esse casamento pra decidir se você já tem um mod, um mod
+ * removido continuava aparecendo como instalado, com o botão dizendo
+ * "Reinstalar". A solução que a comunidade achou era apagar a linha do
+ * .spt-mod-manager-forge-match.json na mão — o que confirma o diagnóstico e
+ * indica onde limpar.
+ */
+export function forgetForgeMatch(root: string, folderName: string): void {
+  try {
+    const cache = loadForgeMatchCache(root);
+    if (!(folderName in cache)) return;
+    delete cache[folderName];
+    saveForgeMatchCache(root, cache);
+  } catch {
+    // cache é otimização: falhar aqui não pode derrubar a remoção do mod
+  }
+}
+
 export function saveForgeMatchCache(root: string, cache: Record<string, MatchCacheEntry>): void {
   try {
     fs.writeFileSync(path.join(root, FORGE_MATCH_CACHE_FILE), JSON.stringify(cache, null, 2), "utf-8");
@@ -3620,19 +3645,51 @@ export interface ForgeCatalogVersion {
  * numa checagem de atualização, e o forgeGuid do registro resolve quem foi
  * instalado pelo próprio browse (que nem precisa de checagem pra saber a origem).
  */
-export function installedForgeIds(sptPath: string): Map<string, string | undefined> {
+export function installedForgeIds(sptPath: string, serverRoot?: string): Map<string, string | undefined> {
   const porId = new Map<string, string | undefined>();
   const registro = loadRegistry(sptPath);
   const versaoPorPasta = new Map(registro.map((e) => [e.id, e.forgeVersion]));
 
+  // O DISCO manda. As duas fontes abaixo (cache de casamento e registro) são
+  // anotações do app e ficam para trás quando a pasta some — seja porque uma
+  // remoção antiga não as limpou, seja porque o usuário apagou a pasta na mão.
+  // Sem esta conferência, o catálogo dizia "Reinstalar" pra mod que não existe
+  // mais, e a única saída era editar o .spt-mod-manager-forge-match.json.
+  //
+  // Procura nas quatro pastas possíveis, porque um mod desabilitado continua
+  // instalado: cliente e servidor, habilitado e desabilitado.
+  const raizServidor = serverRoot ?? sptPath;
+  const existeNoDisco = (pasta: string): boolean => {
+    if (!pasta) return false;
+    for (const tipo of ["server", "client"] as const) {
+      for (const habilitado of [true, false]) {
+        if (fs.existsSync(resolveModPath(sptPath, raizServidor, { id: pasta, type: tipo, enabled: habilitado }))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // Uma pasta é conferida uma vez só: numa instância grande isso é a diferença
+  // entre algumas dezenas de statSync e algumas centenas.
+  const cacheExistencia = new Map<string, boolean>();
+  const temPasta = (pasta: string): boolean => {
+    const guardado = cacheExistencia.get(pasta);
+    if (guardado !== undefined) return guardado;
+    const r = existeNoDisco(pasta);
+    cacheExistencia.set(pasta, r);
+    return r;
+  };
+
   const cache = loadForgeMatchCache(sptPath);
   for (const [folderName, entry] of Object.entries(cache)) {
     const id = cachedIdFor(entry, activeSource.key);
-    if (id) porId.set(id, versaoPorPasta.get(folderName));
+    if (id && temPasta(folderName)) porId.set(id, versaoPorPasta.get(folderName));
   }
 
   for (const entrada of registro) {
-    if (entrada.forgeId && entrada.forgeSourceKey === activeSource.key) {
+    if (entrada.forgeId && entrada.forgeSourceKey === activeSource.key && temPasta(entrada.id)) {
       porId.set(String(entrada.forgeId), entrada.forgeVersion);
     }
   }
@@ -3720,6 +3777,9 @@ export async function searchForgeMods(params: {
   perPage?: number;
   /** Raiz da instância, pra marcar o que já está instalado. Sem ela, nada é marcado. */
   sptPath?: string;
+  /** Raiz do servidor, quando a instalação é dividida. A marcação confere as
+   *  pastas no disco, e num split as de servidor ficam noutra raiz. */
+  serverRoot?: string;
 }): Promise<ForgeSearchResult> {
   const url = new URL(`${activeSource.apiBase}/mods`);
   url.searchParams.set("include", "category,versions");
@@ -3754,7 +3814,7 @@ export async function searchForgeMods(params: {
   }
 
   if (params.sptPath) {
-    const instalados = installedForgeIds(params.sptPath);
+    const instalados = installedForgeIds(params.sptPath, params.serverRoot);
     for (const mod of mods) {
       const chave = String(mod.id);
       if (!instalados.has(chave)) continue;

@@ -530,6 +530,7 @@ export default function App() {
     pushToast(tMsg(result.message), result.success);
     if (result.success) {
       const key = selectionKey(mod);
+      forgetForgeStatus([mod.name]);
       setMods((prev) => prev.filter((m) => selectionKey(m) !== key));
       setSelectedKeys((prev) => {
         const next = new Set(prev);
@@ -653,6 +654,33 @@ export default function App() {
     setCheckingConflicts(false);
     const total = report.clientFileConflicts.length + report.duplicateServerNames.length;
     pushToast(total === 0 ? t("toast.noConflictsFound") : t("toast.conflictsFound", { count: total }), total === 0);
+  }
+
+  /**
+   * Apaga o que a última verificação disse sobre estes mods.
+   *
+   * O mapa de status só era PREENCHIDO, nunca esvaziado — e é persistido no
+   * disco. Então, depois de atualizar um mod, o número da versão mudava (isso
+   * vem do disco) mas a etiqueta "atualização disponível" continuava ali, e
+   * voltava até depois de fechar o app. Mesma história pra mod removido.
+   *
+   * A escolha aqui é limpar em vez de reconsultar a fonte: aviso ausente é
+   * melhor que aviso errado, e ele reaparece sozinho na próxima verificação.
+   * Reconsultar custaria uma requisição num momento em que o usuário só queria
+   * remover ou atualizar algo.
+   */
+  function forgetForgeStatus(nomes: string[]) {
+    if (nomes.length === 0) return;
+    setForgeStatusByName((anterior) => {
+      const proximo = new Map(anterior);
+      let mudou = false;
+      for (const nome of nomes) {
+        if (proximo.delete(nome)) mudou = true;
+      }
+      if (!mudou) return anterior;
+      persistForgeStatus(proximo);
+      return proximo;
+    });
   }
 
   function persistForgeStatus(map: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>) {
@@ -826,6 +854,8 @@ export default function App() {
     setUpdatingModName(null);
     pushToast(tMsg(result.message), result.success);
     if (result.success) {
+      // A etiqueta antiga fala da versão que acabou de sair do disco.
+      forgetForgeStatus([modName]);
       const updated = await refreshMods();
       checkForgeForNewMods(previousKeys, updated);
     }
@@ -1001,6 +1031,9 @@ export default function App() {
     }
 
     if (action === "remove") {
+      // Mesma limpeza do handleUninstall: sem isto a etiqueta de atualização
+      // sobrevive ao mod e volta até depois de fechar o app.
+      forgetForgeStatus(selectedMods.filter((m) => succeededKeys.has(selectionKey(m))).map((m) => m.name));
       setMods((prev) => prev.filter((m) => !succeededKeys.has(selectionKey(m))));
     } else {
       setMods((prev) => prev.map((m) => (succeededKeys.has(selectionKey(m)) ? { ...m, enabled: action === "enable" } : m)));
@@ -1652,15 +1685,30 @@ export default function App() {
                           const v = mod.versions.find((x) => x.id === vId);
                           const deps = v ? depsPorChave[`${mod.id}:${v.version}`] : undefined;
                           if (!deps || deps.length === 0) return null;
-                          const pendentes = deps.filter((d) => d.status !== "installed").length;
+                          // Faltando e desatualizada são situações diferentes e
+                          // precisam de rótulos diferentes: "1 dependência" lido
+                          // sobre uma lib que você TEM, só numa versão antiga,
+                          // parece erro do app.
+                          const faltando = deps.filter((d) => d.status === "missing" || d.status === "unavailable").length;
+                          const desatualizadas = deps.filter((d) => d.status === "outdated").length;
+                          const classe =
+                            faltando > 0
+                              ? " forge-chip-deps-pending"
+                              : desatualizadas > 0
+                                ? " forge-chip-deps-outdated"
+                                : "";
+                          const rotulo =
+                            faltando > 0
+                              ? t("browse.depsPending", { count: String(faltando) })
+                              : desatualizadas > 0
+                                ? t("browse.depsOutdated", { count: String(desatualizadas) })
+                                : t("browse.depsSatisfied", { count: String(deps.length) });
                           return (
                             <span
-                              className={`meta-chip forge-chip-deps${pendentes > 0 ? " forge-chip-deps-pending" : ""}`}
-                              title={deps.map((d) => d.name).join(", ")}
+                              className={`meta-chip forge-chip-deps${classe}`}
+                              title={deps.map((d) => `${d.name}${d.status === "outdated" ? ` (${d.installedVersion} → ${d.version})` : ""}`).join(", ")}
                             >
-                              {pendentes > 0
-                                ? t("browse.depsPending", { count: String(pendentes) })
-                                : t("browse.depsSatisfied", { count: String(deps.length) })}
+                              {rotulo}
                             </span>
                           );
                         })()}

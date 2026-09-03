@@ -153,5 +153,36 @@ console.log("\nirma ja ausente do disco nao quebra");
   fs.rmSync(raiz, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+console.log("\ncache de casamento com a fonte sai junto");
+// ---------------------------------------------------------------------------
+// Relato da comunidade: mod removido continuava aparecendo como instalado no
+// catalogo, com o botao dizendo "Reinstalar". A solucao que acharam era apagar
+// a linha do .spt-mod-manager-forge-match.json na mao.
+{
+  const { raiz, server } = montaInstancia();
+  const arquivoCache = path.join(raiz, ".spt-mod-manager-forge-match.json");
+  fs.writeFileSync(
+    arquivoCache,
+    JSON.stringify({
+      "WTT-ClientCommonLib": { ids: { "sp-mod": "2310" } },
+      "WTT-ServerCommonLib": { ids: { "sp-mod": "2310" } },
+      OutroMod: { ids: { "sp-mod": "999" } }
+    })
+  );
+  uninstallMod(raiz, server, { ...base, packageSiblings: [{ id: "WTT-ServerCommonLib", type: "server" }] });
+  const restante = JSON.parse(fs.readFileSync(arquivoCache, "utf-8"));
+  check("as duas partes saem do cache", Object.keys(restante).sort(), ["OutroMod"]);
+  fs.rmSync(raiz, { recursive: true, force: true });
+}
+
+{
+  // Sem arquivo de cache nenhum, a remocao nao pode quebrar.
+  const { raiz, server } = montaInstancia();
+  const r = uninstallMod(raiz, server, { ...base, packageSiblings: [{ id: "WTT-ServerCommonLib", type: "server" }] });
+  check("sem cache no disco, segue normal", r.success, true);
+  fs.rmSync(raiz, { recursive: true, force: true });
+}
+
 console.log(`\n${ok} ok, ${fail} falhas`);
 process.exit(fail ? 1 : 0);

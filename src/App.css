@@ -1418,6 +1418,16 @@ h2 {
   color: var(--accent);
   opacity: 0.85;
 }
+
+/* Dependência desatualizada fica no cinza do "velho" do diálogo: você TEM a
+   lib, só numa versão antiga. O âmbar continua reservado pro que falta de
+   verdade, senão as duas situações se confundem — que foi exatamente o que
+   aconteceu com o selo antigo. */
+.forge-chip-deps-outdated {
+  color: var(--text-dim);
+  border-color: #3a4252;
+  background: rgba(154, 162, 176, 0.12);
+}
 /*
 ⣿⣿⣿⣿⡟⣶⣾⣿⣾⣧⣮⣡⡃⠀⠀⡐⣀⣀⣾⣿⣿⣿⣿⣿⣿⣵⣋⡀⠛⣻⢿⣿⡿⣿⣇
 ⣿⣿⣿⣿⠉⠋⢁⣈⡽⠼⠒⠛⠛⠛⠉⠉⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣯⣾⢋⣅⣿⠙
@@ -1430,4 +1440,6 @@ h2 {
 ⣧⣿⣿⣿⣿⣿⣶⣿⣿⣿⣿⣿⣿⣏⣥⣴⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⢀⣴⣿⣿⣿⣦⣄⠀
 
 WOW TATIKAWA HIIIIIIII!!!!!
+
+i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot of things... sorry folks.........
 */
