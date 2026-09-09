@@ -28,6 +28,63 @@ type OriginFilter = "all" | "manual" | "manager";
 type SortField = "name" | "status" | "origin" | "installedAt" | "forge";
 type SortDirection = "asc" | "desc";
 
+/**
+ * Miniatura de um mod no catálogo, com nova tentativa em caso de falha.
+ *
+ * Uma página abre 24 requisições de imagem de uma vez pro mesmo servidor, e
+ * parte delas volta com erro por limite de taxa. Antes o app desistia na
+ * primeira falha e mostrava o quadrado cinza, que é exatamente o mesmo
+ * desenho de um mod SEM miniatura — então o usuário não tinha como saber que
+ * a imagem existia e não carregou.
+ *
+ * A espera dobra a cada tentativa e leva um sorteio junto: sem ele, as imagens
+ * que falharam juntas tentariam de novo todas no mesmo instante, reproduzindo
+ * a rajada que causou o problema.
+ */
+function ForgeThumb({ src }: { src?: string }) {
+  const [tentativa, setTentativa] = useState(0);
+  const [desistiu, setDesistiu] = useState(false);
+  const [carregou, setCarregou] = useState(false);
+  const MAX_TENTATIVAS = 3;
+
+  useEffect(() => {
+    setTentativa(0);
+    setDesistiu(false);
+    setCarregou(false);
+  }, [src]);
+
+  if (!src || desistiu) return <div className="forge-mod-thumb forge-mod-thumb-placeholder" />;
+
+  return (
+    <>
+      {/* O placeholder fica por baixo até a imagem carregar. Sem isso, o
+          <img> em falha desenha o ícone de papel rasgado do navegador, que é
+          mais feio que o quadrado cinza e ainda por cima aparece durante as
+          tentativas, quando ainda pode dar certo. */}
+      {!carregou && <div className="forge-mod-thumb forge-mod-thumb-placeholder" />}
+      <img
+        // A chave inclui a tentativa pra forçar o React a recriar o elemento:
+        // reatribuir o mesmo src num <img> que já falhou não dispara pedido novo.
+        key={tentativa}
+        src={src}
+        alt=""
+        className={`forge-mod-thumb${carregou ? "" : " forge-mod-thumb-carregando"}`}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setCarregou(true)}
+        onError={() => {
+          if (tentativa + 1 >= MAX_TENTATIVAS) {
+            setDesistiu(true);
+            return;
+          }
+          const espera = 400 * 2 ** tentativa + Math.random() * 300;
+          window.setTimeout(() => setTentativa((n) => n + 1), espera);
+        }}
+      />
+    </>
+  );
+}
+
 function selectionKey(mod: ModInfo): string {
   return `${mod.type}:${mod.id}`;
 }
@@ -114,6 +171,7 @@ export default function App() {
   } | null>(null);
   const [browseQuery, setBrowseQuery] = useState("");
   const [browseCategory, setBrowseCategory] = useState("");
+  const [browseSort, setBrowseSort] = useState<"-downloads" | "-updated_at" | "-created_at" | "name">("-downloads");
   const [modSources, setModSources] = useState<ModSourceInfo[]>([]);
   const [activeSourceKey, setActiveSourceKey] = useState("");
   const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
@@ -561,6 +619,16 @@ export default function App() {
     pushToast(tMsg(result.message), result.success);
   }
 
+  /**
+   * Abre a página do mod na fonte. O endereço é resolvido lá no processo
+   * principal, porque a URL precisa do slug e o registro só guarda o id.
+   */
+  function handleOpenModPage(modId: number) {
+    void window.modManagerAPI.openForgeModPage(modId).then((r) => {
+      if (!r.success && r.message) pushToast(tMsg(r.message), false);
+    });
+  }
+
   async function handleImportList() {
     const result = await window.modManagerAPI.importModList();
     pushToast(tMsg(result.message), result.success);
@@ -605,7 +673,12 @@ export default function App() {
           markQueueActive(queueId);
           const installResult = await installArchiveWithConfirmFlow(
             window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
+              // Os mesmos campos que a instalação pelo catálogo grava. Faltavam
+              // author e id aqui, então mod restaurado por lista aparecia sem
+              // autor e sem vínculo por id — só o nome da pasta na interface.
+              id: lookup.modId,
               name: lookup.forgeName,
+              author: lookup.author,
               version: lookup.version,
               // Grava o identificador da Forge: a partir daqui esse mod é reconhecido
               // por ID exato, sem depender de casamento por nome.
@@ -768,7 +841,10 @@ export default function App() {
   async function runForgeSearch(
     page: number,
     onlyCompatible = browseOnlyCompatible,
-    hideInstalled = browseHideInstalled
+    hideInstalled = browseHideInstalled,
+    // Vem por parâmetro porque quem troca o seletor precisa buscar com o valor
+    // novo, e o estado do React só reflete isso no render seguinte.
+    sort = browseSort
   ) {
     setBrowseLoading(true);
     setBrowseError(null);
@@ -782,6 +858,7 @@ export default function App() {
       response = await window.modManagerAPI.searchForgeMods({
         query: browseQuery.trim() || undefined,
         categorySlug: browseCategory || undefined,
+        sort,
         sptVersionConstraint: onlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
         // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o
         // que permite ver a lista inteira e ainda saber o que serve na sua
@@ -907,15 +984,20 @@ export default function App() {
     setInstallingModId(mod.id);
     const previousKeys = new Set(mods.map(selectionKey));
 
+    // Guarda o que realmente entrou, pra marcar as linhas depois. Sem isto, a
+    // dependência baixada junto continuava com o botão "Instalar" até o usuário
+    // buscar de novo — o mod estava no disco e a tela dizia que não.
+    const depsInstaladas = new Map<number, string | undefined>();
     for (const d of deps) {
       if (!d.downloadLink) continue;
       pushToast(t("deps.installingDependency", { name: d.name }), true);
-      await instalarDoCatalogo(d.name, d.downloadLink, {
+      const okDep = await instalarDoCatalogo(d.name, d.downloadLink, {
         id: d.id || undefined,
         name: d.name,
         version: d.version,
         guid: d.guid
       });
+      if (okDep && d.id) depsInstaladas.set(d.id, d.version);
     }
 
     const ok = await instalarDoCatalogo(mod.name, version.link, {
@@ -927,11 +1009,17 @@ export default function App() {
     });
     setInstallingModId(null);
 
-    if (ok) {
+    // As dependências são marcadas mesmo que o mod principal falhe: elas
+    // entraram, e a tela tem que dizer a verdade sobre cada uma.
+    if (ok || depsInstaladas.size > 0) {
       setBrowseResults((anteriores) =>
-        anteriores.map((m) =>
-          m.id === mod.id ? { ...m, installed: true, installedVersion: version.version } : m
-        )
+        anteriores.map((m) => {
+          if (ok && m.id === mod.id) return { ...m, installed: true, installedVersion: version.version };
+          if (depsInstaladas.has(m.id)) {
+            return { ...m, installed: true, installedVersion: depsInstaladas.get(m.id) };
+          }
+          return m;
+        })
       );
       const updated = await refreshMods();
       checkForgeForNewMods(previousKeys, updated);
@@ -1063,6 +1151,7 @@ export default function App() {
     onToggle: handleToggle,
     onUninstall: handleUninstall,
     onOpenFolder: handleOpenFolder,
+    onOpenModPage: handleOpenModPage,
     onReinstall: handleReinstall,
     onRenameStart: startRename,
     onRenameCancel: cancelRename,
@@ -1563,57 +1652,79 @@ export default function App() {
                 onChange={(e) => setBrowseQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") runForgeSearch(1); }}
               />
-              <select
-                value={activeSourceKey}
-                onChange={(e) => handleChangeSource(e.target.value)}
-                disabled={browseLoading}
-                title={t("browse.sourceTitle")}
-              >
-                {modSources.map((src) => (
-                  <option key={src.key} value={src.key}>{src.label}</option>
-                ))}
-              </select>
-              <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title={t("browse.categoryFilterTitle")}>
-                <option value="">{t("browse.allCategories")}</option>
-                {browseCategories.map((c) => (
-                  <option key={c.slug} value={c.slug}>{c.title}</option>
-                ))}
-              </select>
-              <label className="forge-browse-checkbox" title={t("browse.compatibleOnlyTitle")}>
-                <input
-                  type="checkbox"
-                  checked={browseOnlyCompatible}
-                  onChange={(e) => {
-                    setBrowseOnlyCompatible(e.target.checked);
-                    // Refaz a busca na hora. Este filtro é do servidor (muda a
-                    // consulta), então sem isto ele só valia no próximo clique em
-                    // Buscar — e ficava incoerente com o de esconder instalados,
-                    // que é local e responde na hora.
-                    if (browseResults.length > 0 || browseQuery.trim()) runForgeSearch(1, e.target.checked);
-                  }}
-                  disabled={!sptVersionInput.trim() || browseLoading}
-                />
-                {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
-              </label>
-              <label className="forge-browse-checkbox" title={t("browse.hideInstalledTitle")}>
-                <input
-                  type="checkbox"
-                  checked={browseHideInstalled}
-                  onChange={(e) => {
-                    setBrowseHideInstalled(e.target.checked);
-                    // Refaz a busca porque o tamanho da página muda junto: sem
-                    // isso, esconder numa página de 24 deixaria quase nada.
-                    if (browseResults.length > 0 || browseQuery.trim()) {
-                      runForgeSearch(1, browseOnlyCompatible, e.target.checked);
-                    }
-                  }}
-                  disabled={browseLoading}
-                />
-                {t("browse.hideInstalled")}
-              </label>
               <button onClick={() => runForgeSearch(1)} disabled={browseLoading} className="primary">
                 {browseLoading ? t("browse.searching") : t("browse.searchButton")}
               </button>
+              {/* Fileira própria: sem ela, cada filtro novo empurrava o botão
+                  de buscar pra linha de baixo sozinho, parecendo defeito. */}
+              <div className="forge-browse-filters">
+                <select
+                  value={activeSourceKey}
+                  onChange={(e) => handleChangeSource(e.target.value)}
+                  disabled={browseLoading}
+                  title={t("browse.sourceTitle")}
+                >
+                  {modSources.map((src) => (
+                    <option key={src.key} value={src.key}>{src.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={browseSort}
+                  onChange={(e) => {
+                    const valor = e.target.value as typeof browseSort;
+                    setBrowseSort(valor);
+                    // Refaz a busca na hora: ordenar é do servidor, então a lista
+                    // atual não serve. Volta pra página 1 porque a ordem mudou e a
+                    // página 3 da ordem antiga não quer dizer nada na nova.
+                    runForgeSearch(1, undefined, undefined, valor);
+                  }}
+                  title={t("browse.sortTitle")}
+                  disabled={browseLoading}
+                >
+                  <option value="-downloads">{t("browse.sortDownloads")}</option>
+                  <option value="-updated_at">{t("browse.sortUpdated")}</option>
+                  <option value="-created_at">{t("browse.sortCreated")}</option>
+                  <option value="name">{t("browse.sortName")}</option>
+                </select>
+                <select value={browseCategory} onChange={(e) => setBrowseCategory(e.target.value)} title={t("browse.categoryFilterTitle")}>
+                  <option value="">{t("browse.allCategories")}</option>
+                  {browseCategories.map((c) => (
+                    <option key={c.slug} value={c.slug}>{c.title}</option>
+                  ))}
+                </select>
+                <label className="forge-browse-checkbox" title={t("browse.compatibleOnlyTitle")}>
+                  <input
+                    type="checkbox"
+                    checked={browseOnlyCompatible}
+                    onChange={(e) => {
+                      setBrowseOnlyCompatible(e.target.checked);
+                      // Refaz a busca na hora. Este filtro é do servidor (muda a
+                      // consulta), então sem isto ele só valia no próximo clique em
+                      // Buscar — e ficava incoerente com o de esconder instalados,
+                      // que é local e responde na hora.
+                      if (browseResults.length > 0 || browseQuery.trim()) runForgeSearch(1, e.target.checked);
+                    }}
+                    disabled={!sptVersionInput.trim() || browseLoading}
+                  />
+                  {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
+                </label>
+                <label className="forge-browse-checkbox" title={t("browse.hideInstalledTitle")}>
+                  <input
+                    type="checkbox"
+                    checked={browseHideInstalled}
+                    onChange={(e) => {
+                      setBrowseHideInstalled(e.target.checked);
+                      // Refaz a busca porque o tamanho da página muda junto: sem
+                      // isso, esconder numa página de 24 deixaria quase nada.
+                      if (browseResults.length > 0 || browseQuery.trim()) {
+                        runForgeSearch(1, browseOnlyCompatible, e.target.checked);
+                      }
+                    }}
+                    disabled={browseLoading}
+                  />
+                  {t("browse.hideInstalled")}
+                </label>
+              </div>
             </div>
             <p className="browse-source-note">{t("browse.sourceNote")}</p>
 
@@ -1639,20 +1750,7 @@ export default function App() {
                 const selectedId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
                 return (
                   <div key={mod.id} className="forge-mod-card">
-                    {mod.thumbnail ? (
-                      <img
-                        src={mod.thumbnail}
-                        alt=""
-                        className="forge-mod-thumb"
-                        loading="lazy"
-                        decoding="async"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                          e.currentTarget.nextElementSibling?.classList.remove("forge-mod-thumb-hidden");
-                        }}
-                      />
-                    ) : null}
-                    <div className={`forge-mod-thumb forge-mod-thumb-placeholder ${mod.thumbnail ? "forge-mod-thumb-hidden" : ""}`} />
+                    <ForgeThumb src={mod.thumbnail} />
                     <div className="forge-mod-info">
                       <div className="forge-mod-title-row">
                         <a
@@ -1671,7 +1769,14 @@ export default function App() {
                           {mod.name}
                         </a>
                         {mod.category && <span className="meta-chip">{mod.category}</span>}
-                        {mod.fikaCompatible && <span className="meta-chip forge-chip-update" title={t("browse.fikaCompatibleTitle")}>Fika</span>}
+                        {mod.fikaCompatible && (
+                          <span className="meta-chip forge-chip-fika" title={t("browse.fikaCompatibleTitle")}>
+                            {/* U+FE0E força o desenho monocromático: sem ele o
+                                sistema escolhe o emoji colorido, que brigaria
+                                com o resto da barra. */}
+                            Fika&#x2615;&#xFE0E;
+                          </span>
+                        )}
                         {(() => {
                           const selectedId = selectedVersionByModId.get(mod.id) ?? mod.compatibleVersionId ?? mod.versions[0]?.id;
                           const selected = mod.versions.find((v) => v.id === selectedId);
@@ -1902,6 +2007,7 @@ function ModList({
   onToggle,
   onUninstall,
   onOpenFolder,
+  onOpenModPage,
   onReinstall,
   onRenameStart,
   onRenameCancel,
@@ -1922,6 +2028,7 @@ function ModList({
   onToggle: (mod: ModInfo) => void;
   onUninstall: (mod: ModInfo) => void;
   onOpenFolder: (mod: ModInfo) => void;
+  onOpenModPage: (modId: number) => void;
   onReinstall: (mod: ModInfo) => void;
   onRenameStart: (mod: ModInfo) => void;
   onRenameCancel: () => void;
@@ -2102,6 +2209,19 @@ function ModList({
                   {!mod.manifestOnly && (
                     <button onClick={() => { onToggle(mod); onSetOpenMenuKey(null); }}>
                       {mod.enabled ? t("bulk.disable") : t("bulk.enable")}
+                    </button>
+                  )}
+                  {mod.forgeModId !== undefined && (
+                    <button
+                      onClick={() => {
+                        const id = mod.forgeModId!;
+                        onSetOpenMenuKey(null);
+                        // O endereço é resolvido pela fonte no clique, então
+                        // pode falhar (rede fora, mod removido do catálogo).
+                        onOpenModPage(id);
+                      }}
+                    >
+                      {t("modlist.openModPage")}
                     </button>
                   )}
                   {!mod.manifestOnly && (

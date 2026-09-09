@@ -288,7 +288,13 @@ const pt: Dict = {
   "browse.depsPending": "{count} dependência(s)",
   "browse.depsSatisfied": "{count} dependência(s) ok",
   "deps.alsoUsedBy": "usado também por {mods}",
-  "browse.depsOutdated": "{count} pra atualizar"
+  "browse.depsOutdated": "{count} pra atualizar",
+  "modlist.openModPage": "Abrir página do mod",
+  "browse.sortTitle": "Ordenar os resultados",
+  "browse.sortDownloads": "Mais baixados",
+  "browse.sortUpdated": "Atualizados recentemente",
+  "browse.sortCreated": "Adicionados recentemente",
+  "browse.sortName": "Nome (A-Z)"
 };
 
 const en: Dict = {
@@ -536,7 +542,13 @@ const en: Dict = {
   "browse.depsPending": "{count} dependenc(y/ies)",
   "browse.depsSatisfied": "{count} dependenc(y/ies) ok",
   "deps.alsoUsedBy": "also used by {mods}",
-  "browse.depsOutdated": "{count} to update"
+  "browse.depsOutdated": "{count} to update",
+  "modlist.openModPage": "Open mod page",
+  "browse.sortTitle": "Sort the results",
+  "browse.sortDownloads": "Most downloaded",
+  "browse.sortUpdated": "Recently updated",
+  "browse.sortCreated": "Recently added",
+  "browse.sortName": "Name (A-Z)"
 };
 
 /**
@@ -768,7 +780,13 @@ const zh: Dict = {
   "browse.depsPending": "{count} 个依赖",
   "browse.depsSatisfied": "{count} 个依赖已满足",
   "deps.alsoUsedBy": "{mods} 也在使用",
-  "browse.depsOutdated": "{count} 个待更新"
+  "browse.depsOutdated": "{count} 个待更新",
+  "modlist.openModPage": "打开模组页面",
+  "browse.sortTitle": "结果排序",
+  "browse.sortDownloads": "下载最多",
+  "browse.sortUpdated": "最近更新",
+  "browse.sortCreated": "最近添加",
+  "browse.sortName": "名称 (A-Z)"
 };
 
 const ru: Dict = {
@@ -990,7 +1008,13 @@ const ru: Dict = {
   "browse.depsPending": "зависимостей: {count}",
   "browse.depsSatisfied": "зависимостей: {count}, все на месте",
   "deps.alsoUsedBy": "также используется: {mods}",
-  "browse.depsOutdated": "обновить: {count}"
+  "browse.depsOutdated": "обновить: {count}",
+  "modlist.openModPage": "Открыть страницу мода",
+  "browse.sortTitle": "Сортировка результатов",
+  "browse.sortDownloads": "Больше загрузок",
+  "browse.sortUpdated": "Недавно обновлённые",
+  "browse.sortCreated": "Недавно добавленные",
+  "browse.sortName": "По названию (A-Z)"
 };
 
 const fr: Dict = {
@@ -1212,7 +1236,13 @@ const fr: Dict = {
   "browse.depsPending": "{count} dépendance(s)",
   "browse.depsSatisfied": "{count} dépendance(s) ok",
   "deps.alsoUsedBy": "aussi utilisé par {mods}",
-  "browse.depsOutdated": "{count} à mettre à jour"
+  "browse.depsOutdated": "{count} à mettre à jour",
+  "modlist.openModPage": "Ouvrir la page du mod",
+  "browse.sortTitle": "Trier les résultats",
+  "browse.sortDownloads": "Plus téléchargés",
+  "browse.sortUpdated": "Mis à jour récemment",
+  "browse.sortCreated": "Ajoutés récemment",
+  "browse.sortName": "Nom (A-Z)"
 };
 
 const ja: Dict = {
@@ -1434,7 +1464,13 @@ const ja: Dict = {
   "browse.depsPending": "依存 {count} 件",
   "browse.depsSatisfied": "依存 {count} 件 解決済み",
   "deps.alsoUsedBy": "{mods} でも使用中",
-  "browse.depsOutdated": "更新 {count} 件"
+  "browse.depsOutdated": "更新 {count} 件",
+  "modlist.openModPage": "MOD のページを開く",
+  "browse.sortTitle": "結果の並び替え",
+  "browse.sortDownloads": "ダウンロード数順",
+  "browse.sortUpdated": "最近更新された順",
+  "browse.sortCreated": "最近追加された順",
+  "browse.sortName": "名前順 (A-Z)"
 };
 
 const de: Dict = {
@@ -1656,7 +1692,13 @@ const de: Dict = {
   "browse.depsPending": "{count} Abhängigkeit(en)",
   "browse.depsSatisfied": "{count} Abhängigkeit(en) ok",
   "deps.alsoUsedBy": "wird auch von {mods} genutzt",
-  "browse.depsOutdated": "{count} zu aktualisieren"
+  "browse.depsOutdated": "{count} zu aktualisieren",
+  "modlist.openModPage": "Mod-Seite öffnen",
+  "browse.sortTitle": "Ergebnisse sortieren",
+  "browse.sortDownloads": "Meiste Downloads",
+  "browse.sortUpdated": "Kürzlich aktualisiert",
+  "browse.sortCreated": "Kürzlich hinzugefügt",
+  "browse.sortName": "Name (A-Z)"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };
@@ -1726,6 +1768,17 @@ const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   {
     pattern: /^Mod removido \((\d+) partes do pacote\)\.$/,
     en: (m) => `Mod removed (${m[1]} package parts).`
+  },
+  {
+    pattern: /^Mod atualizado \((\d+) pasta\(s\) da versão anterior removida\(s\)\)\.$/,
+    en: (m) => `Mod updated (${m[1]} folder(s) from the previous version removed).`
+  },
+  { pattern: /^Mod atualizado \(continua desabilitado\)\.$/, en: () => "Mod updated (still disabled)." },
+  { pattern: /^Não achei a página desse mod na fonte\.$/, en: () => "Couldn't find this mod's page on the source." },
+  { pattern: /^Endereço fora da fonte ativa\.$/, en: () => "Address is outside the active source." },
+  {
+    pattern: /^A pasta da instância não existe mais: (.+)\. Escolha a instância de novo em "Trocar instância"\.$/,
+    en: (m) => `The instance folder no longer exists: ${m[1]}. Pick the instance again under "Change instance".`
   },
   {
     pattern: /^Mod desabilitado \(e (\d+) patcher\(s\) junto\)\.$/,

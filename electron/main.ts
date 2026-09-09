@@ -29,6 +29,9 @@ import {
   findForgeDownloadForName,
   fetchModDependencies,
   fetchModDependenciesBatch,
+  resolveForgeModPageUrl,
+  type ForgeSort,
+  findPreviousInstall,
   findForgeDownloadsForNames,
   checkAppUpdate,
   finalizeUnrecognizedInstall,
@@ -90,6 +93,22 @@ function createWindow() {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+  }
+
+  // O Menu.setApplicationMenu(null) lá embaixo tira a barra de menu, e junto
+  // vai o atalho do DevTools — não era intencional, é efeito colateral. Aqui ele
+  // volta, mas só fora do app empacotado: em desenvolvimento o console é a
+  // única forma de ver erro de política de conteúdo, requisição bloqueada e
+  // afins, que não aparecem em lugar nenhum da interface.
+  if (!app.isPackaged) {
+    mainWindow.webContents.on("before-input-event", (event, input) => {
+      const abrir =
+        input.key === "F12" ||
+        (input.control && input.shift && input.key.toLowerCase() === "i");
+      if (!abrir) return;
+      mainWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+    });
   }
 }
 
@@ -235,7 +254,17 @@ ipcMain.handle(
   "search-forge-mods",
   async (
     _event,
-    params: { query?: string; categorySlug?: string; sptVersionConstraint?: string; markVersion?: string; perPage?: number; sort?: string; page?: number }
+    params: {
+      query?: string;
+      categorySlug?: string;
+      sptVersionConstraint?: string;
+      markVersion?: string;
+      perPage?: number;
+      // Chega como texto do renderer; o searchForgeMods só aceita o que está na
+      // lista fechada e ignora o resto.
+      sort?: ForgeSort;
+      page?: number;
+    }
   ) => {
     try {
       const result = await searchForgeMods({
@@ -253,6 +282,19 @@ ipcMain.handle(
 );
 
 ipcMain.handle("get-forge-categories", () => getForgeCategories());
+
+/**
+ * Abre a página de um mod instalado na fonte. O endereço é resolvido pela API
+ * na hora, porque a URL precisa do slug e o registro só guarda o id.
+ */
+ipcMain.handle("open-forge-mod-page", async (_event, modId: number) => {
+  const destino = await resolveForgeModPageUrl(modId);
+  if (!destino) return { success: false, message: "Não achei a página desse mod na fonte." };
+  // Mesma allowlist do resto: só abre o que pertence à fonte ativa.
+  if (!destino.startsWith(getModSource().siteUrl)) return { success: false, message: "Endereço fora da fonte ativa." };
+  shell.openExternal(destino);
+  return { success: true };
+});
 
 ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
 
@@ -361,6 +403,13 @@ ipcMain.handle(
   ) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+
+    // O que já existe deste mesmo mod, pra instalação saber que é atualização.
+    // Montado no processo principal e não no renderer pelo mesmo motivo da
+    // checagem de dependências: o scan é a fonte de verdade, e pedir ao
+    // renderer que remonte isso abriria espaço pra divergência silenciosa.
+    const previous = findPreviousInstall(sptPath, getServerRoot()!, forgeInfo ?? {});
+
     return installForgeModVersion(
       sptPath,
       getServerRoot()!,
@@ -369,7 +418,7 @@ ipcMain.handle(
       (receivedBytes, totalBytes) => {
         mainWindow?.webContents.send("download-progress", { jobId, receivedBytes, totalBytes });
       },
-      forgeInfo
+      { ...forgeInfo, previous }
     );
   }
 );

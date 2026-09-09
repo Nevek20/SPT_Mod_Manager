@@ -755,20 +755,26 @@ h2 {
   margin-bottom: 12px;
 }
 
+/* Duas fileiras deliberadas: busca + botão em cima, filtros embaixo.
+   Antes era tudo numa fileira só com quebra automática, e cada filtro novo
+   empurrava o botão pra linha de baixo sozinho, o que parecia defeito. Agora a
+   separação está no HTML, então acrescentar filtro não desarruma nada. */
 .forge-browse-controls input[type="text"] {
-  flex: 1 1 100%;
+  flex: 1 1 260px;
   min-width: 220px;
 }
 
-/* O botão vai pro fim da linha dos filtros, longe deles, pra não parecer só mais
-   um controle da fileira. */
-.forge-browse-controls > button {
-  margin-left: auto;
+.forge-browse-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-basis: 100%;
 }
 
 .forge-browse-controls select {
   flex: 0 1 auto;
-  min-width: 130px;
+  min-width: 120px;
 }
 
 .forge-browse-checkbox {
@@ -809,10 +815,6 @@ h2 {
 
 .forge-mod-thumb-placeholder {
   background: linear-gradient(135deg, var(--bg-panel), var(--border-soft));
-}
-
-.forge-mod-thumb-hidden {
-  display: none;
 }
 
 .forge-mod-info {
@@ -1280,6 +1282,17 @@ h2 {
   color: var(--ok);
 }
 
+/* Fika reusava o verde do "Instalado", e as duas etiquetas dizem coisas de
+   naturezas diferentes: uma é característica do MOD, a outra é o estado da SUA
+   instalação. Com a mesma cor lado a lado, o olho lia as duas como o mesmo tipo
+   de informação. O verde fica com o estado; a característica vai pro neutro. */
+.forge-chip-fika {
+  border-color: #3a4252;
+  color: var(--text-dim);
+  /* Espaço antes do símbolo sem precisar de nó de texto separado no JSX. */
+  letter-spacing: 0.04em;
+}
+
 /* Versão do mod feita pra outra versão do SPT. Só aparece com o filtro "só
    compatíveis" desligado — com ele ligado, esses nem vêm na resposta. */
 .forge-chip-incompatible {
@@ -1443,3 +1456,11 @@ WOW TATIKAWA HIIIIIIII!!!!!
 
 i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot of things... sorry folks.........
 */
+/* Enquanto a imagem não carregou ela fica fora de vista, com o placeholder por
+   baixo. Um <img> em falha desenha o ícone de papel rasgado do navegador, e
+   durante as tentativas isso apareceria numa imagem que ainda pode dar certo. */
+.forge-mod-thumb-carregando {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}

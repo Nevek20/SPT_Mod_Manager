@@ -41,6 +41,9 @@ export interface ModInfo {
   guid?: string; // GUID declarado pelo mod (SPT 4.0) — casamento exato com a Forge
   linkedModName?: string;
   forgeName?: string; // nome publicado na Forge, gravado no registro na instalação
+  /** Página deste mod na fonte ativa, quando o app conhece o id dele lá. */
+  /** Id deste mod na fonte ativa, quando o app o conhece. Abre a página dele. */
+  forgeModId?: number;
 }
 
 export interface ModSourceInfo {
@@ -187,21 +190,25 @@ export interface ModManagerAPI {
     sptVersion: string
   ) => Promise<{ success: boolean; result?: ForgeUpdateCheckResult; message?: string }>;
   searchForgeMods: (params: {
+    /** Ordenação aceita pela fonte. "-" inverte o sentido. */
+    sort?: "-downloads" | "-updated_at" | "-created_at" | "name";
     query?: string;
     categorySlug?: string;
     sptVersionConstraint?: string;
     markVersion?: string;
     perPage?: number;
-    sort?: string;
     page?: number;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
   onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
+  openForgeModPage: (modId: number) => Promise<{ success: boolean; message?: string }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string; version?: string }[]
-  ) => Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>>;
+  ) => Promise<
+    Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string; author?: string; modId?: number }>
+  >;
   findForgeDownloadForName: (
     name: string,
     sptVersion?: string

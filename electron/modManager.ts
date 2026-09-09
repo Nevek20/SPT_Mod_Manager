@@ -371,6 +371,16 @@ export interface ForgeInstallInfo {
   author?: string;
   version?: string;
   guid?: string;
+  /**
+   * O que já estava instalado deste mesmo mod, quando isto é uma ATUALIZAÇÃO.
+   *
+   * Sem essa informação, instalar por cima é escrever às cegas, e dois problemas
+   * relatados vinham daí: um mod desabilitado voltava habilitado (a instalação
+   * sempre grava nas pastas de ativos), e um mod que mudou o nome da pasta entre
+   * versões ficava instalado DUAS VEZES, com a pasta antiga intacta ao lado da
+   * nova — o servidor carrega as duas e o usuário culpa o mod.
+   */
+  previous?: { id: string; type: ModType; enabled: boolean }[];
 }
 
 export interface ModDependency {
@@ -1278,6 +1288,17 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       // ter renomeado), e este aqui serve pra linha-pai da árvore, onde as duas
       // metades de um pacote precisam concordar num rótulo só.
       forgeName: registryEntry?.forgeName,
+      // Id deste mod na fonte ATIVA. Serve pra abrir a página dele; o endereço
+      // em si não é montado aqui porque a URL precisa do slug ("/mod/902/
+      // bigbrain") e o registro não guarda slug — sem ele a fonte devolve 404.
+      // Quem resolve isso é o openForgeModPage, perguntando à API na hora.
+      //
+      // Só vale quando o id gravado é DESTA fonte: ids não são intercambiáveis,
+      // e o da outra levaria a um mod diferente.
+      forgeModId:
+        registryEntry?.forgeId && registryEntry.forgeSourceKey === activeSource.key
+          ? registryEntry.forgeId
+          : undefined,
       sptVersion: metadata.sptVersion,
       requiresGuids: metadata.requiresGuids,
       packageId: registryEntry?.packageId,
@@ -1820,13 +1841,147 @@ function performMerge(
       ...forgeFields
     });
   }
+  // --- Reconciliação com o que já estava instalado -------------------------
+  //
+  // Só roda em ATUALIZAÇÃO (quando o chamador diz o que existia antes). Resolve
+  // dois problemas relatados que têm a mesma raiz: a instalação escrevia sem
+  // olhar o estado anterior.
+  const reconciliado = reconciliarComAnterior(
+    clientRoot,
+    serverRoot,
+    forgeInfo?.previous ?? [],
+    [
+      ...serverModNames.map((id) => ({ id, type: "server" as ModType })),
+      ...clientModNames.map((id) => ({ id, type: "client" as ModType }))
+    ]
+  );
+
   if (skippedCoreFiles.length > 0) {
     return {
       success: true,
       message: `Mod instalado. ${skippedCoreFiles.length} arquivo(s) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação.`
     };
   }
+  if (reconciliado.pastasAntigasRemovidas > 0) {
+    return {
+      success: true,
+      message: `Mod atualizado (${reconciliado.pastasAntigasRemovidas} pasta(s) da versão anterior removida(s)).`
+    };
+  }
+  if (reconciliado.mantidasDesabilitadas > 0) {
+    return { success: true, message: "Mod atualizado (continua desabilitado)." };
+  }
   return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
+}
+
+/**
+ * Depois de instalar por cima, acerta o que a cópia não sabia fazer.
+ *
+ * Duas coisas, ambas vindas de relato:
+ *
+ * 1. Pasta que mudou de nome entre versões. A cópia cria a pasta nova e a antiga
+ *    fica lá, então o mod passa a existir duas vezes e o servidor carrega as
+ *    duas. O sintoma não aponta pro Manager: o usuário vê o jogo estranho e
+ *    culpa o mod.
+ *
+ * 2. Estado habilitado. A cópia sempre escreve nas pastas de ativos, então
+ *    atualizar um mod desabilitado o trazia de volta ligado — quem mantém mods
+ *    desligados pra alternar entre perfis via isso acontecer toda vez.
+ *
+ * A correspondência entre antes e depois é por TIPO, não por nome de pasta:
+ * quando o nome muda é justamente o caso 1, e usar o nome como chave perderia
+ * exatamente o que queremos resolver.
+ */
+/**
+ * O que já está instalado deste mesmo mod, no formato que a instalação espera.
+ *
+ * Mora aqui, e não no main, porque cruza duas leituras que vivem neste arquivo:
+ * o scan (o que está no disco) e o registro (o que o app instalou, que é onde o
+ * id numérico da fonte fica gravado). Expor o registro inteiro pra fora só pra
+ * isto aumentaria a superfície sem ganho.
+ *
+ * A identificação é por id da fonte ou guid. Nome de pasta não serve: o caso
+ * que mais importa é justamente o do mod que mudou de pasta entre versões.
+ */
+export function findPreviousInstall(
+  clientRoot: string,
+  serverRoot: string,
+  forgeInfo: { id?: number; guid?: string }
+): { id: string; type: ModType; enabled: boolean }[] {
+  if (forgeInfo.id === undefined && !forgeInfo.guid) return [];
+  try {
+    const doRegistro = new Set(
+      loadRegistry(clientRoot)
+        .filter((e) => forgeInfo.id !== undefined && e.forgeId === forgeInfo.id)
+        .map((e) => `${e.type}:${e.id}`)
+    );
+    const guid = forgeInfo.guid?.toLowerCase();
+    return scanMods(clientRoot, serverRoot)
+      .filter((m) => doRegistro.has(`${m.type}:${m.id}`) || (guid !== undefined && m.guid?.toLowerCase() === guid))
+      .map((m) => ({ id: m.id, type: m.type, enabled: m.enabled }));
+  } catch {
+    // Sem o estado anterior a instalação segue como antes: escreve por cima e
+    // mantém tudo ligado. Pior que o ideal, melhor que não instalar.
+    return [];
+  }
+}
+
+export function reconciliarComAnterior(
+  clientRoot: string,
+  serverRoot: string,
+  anteriores: { id: string; type: ModType; enabled: boolean }[],
+  novos: { id: string; type: ModType }[]
+): { pastasAntigasRemovidas: number; mantidasDesabilitadas: number } {
+  let pastasAntigasRemovidas = 0;
+  let mantidasDesabilitadas = 0;
+  if (anteriores.length === 0) return { pastasAntigasRemovidas, mantidasDesabilitadas };
+
+  const novosPorTipo = new Map<ModType, string[]>();
+  for (const n of novos) {
+    novosPorTipo.set(n.type, [...(novosPorTipo.get(n.type) ?? []), n.id]);
+  }
+
+  for (const anterior of anteriores) {
+    const idsNovos = novosPorTipo.get(anterior.type) ?? [];
+    if (idsNovos.length === 0) continue; // esta metade não veio no pacote novo
+
+    // O estado anterior vale pra esta metade: se estava desligada, volta a ficar.
+    if (!anterior.enabled) {
+      for (const idNovo of idsNovos) {
+        const origem = resolveModPath(clientRoot, serverRoot, { id: idNovo, type: anterior.type, enabled: true });
+        const destino = resolveModPath(clientRoot, serverRoot, { id: idNovo, type: anterior.type, enabled: false });
+        if (!fs.existsSync(origem)) continue;
+        try {
+          ensureDir(path.dirname(destino));
+          // Já existir no destino significa sobra de uma instalação anterior:
+          // a versão nova é a que vale.
+          if (fs.existsSync(destino)) fs.rmSync(destino, { recursive: true, force: true });
+          fs.renameSync(origem, destino);
+          mantidasDesabilitadas++;
+        } catch {
+          // Não conseguir desabilitar não pode invalidar a instalação: o mod
+          // está lá e funcionando, só ligado.
+        }
+      }
+    }
+
+    // Pasta antiga com nome diferente da nova: sobra da versão anterior.
+    if (idsNovos.includes(anterior.id)) continue;
+    for (const habilitado of [true, false]) {
+      const antiga = resolveModPath(clientRoot, serverRoot, { id: anterior.id, type: anterior.type, enabled: habilitado });
+      if (!fs.existsSync(antiga)) continue;
+      try {
+        fs.rmSync(antiga, { recursive: true, force: true });
+        removeFromRegistry(clientRoot, anterior.id, anterior.type);
+        forgetForgeMatch(clientRoot, anterior.id);
+        pastasAntigasRemovidas++;
+      } catch {
+        // Melhor deixar a pasta antiga do que abortar uma atualização que deu certo.
+      }
+    }
+  }
+
+  return { pastasAntigasRemovidas, mantidasDesabilitadas };
 }
 
 /**
@@ -2615,6 +2770,9 @@ interface ForgeMatch {
    *  ESPECÍFICA, não da mais nova, então a lista inteira tem que chegar lá. */
   versions?: { version?: string; link?: string }[];
   forgeName?: string;
+  /** Autor publicado. A resposta já trazia (owner.name) e era descartada, então
+   *  mod restaurado por lista aparecia sem autor na interface. */
+  forgeAuthor?: string;
   confidence: "exact" | "derived";
 }
 
@@ -2655,6 +2813,7 @@ function toForgeMatch(entry: any, confidence: "exact" | "derived"): ForgeMatch {
     latestVersionLink: latest?.link,
     versions: versions.map((v: any) => ({ version: v?.version, link: v?.link })),
     forgeName: typeof entry.name === "string" ? entry.name : undefined,
+    forgeAuthor: typeof entry.owner?.name === "string" ? entry.owner.name : undefined,
     confidence
   };
 }
@@ -3343,6 +3502,33 @@ export interface ModDependencyInfo {
  * consultar não pode virar bloqueio: o usuário veio instalar um mod, e a
  * checagem é um auxílio, não um pedágio.
  */
+/**
+ * Descobre o endereço da página de um mod na fonte.
+ *
+ * A URL exige o slug ("/mod/902/bigbrain"); só o id devolve 404. O registro não
+ * guarda slug, e derivar do nome publicado seria chute — "UI Fixes" vira
+ * "ui-fixes" e acerta, mas nome com pontuação ou acento não tem regra óbvia.
+ *
+ * A própria API já devolve o endereço pronto em `detail_url`, então a resposta
+ * certa é perguntar. Custa uma requisição no clique, e nesse momento o usuário
+ * está indo pro navegador de qualquer jeito.
+ *
+ * Só resolve o endereço; quem abre é o main, que tem a allowlist.
+ */
+export async function resolveForgeModPageUrl(modId: number): Promise<string | null> {
+  try {
+    const url = new URL(`${activeSource.apiBase}/mods`);
+    url.searchParams.set("filter[id]", String(modId));
+    const json = await forgeFetchJson(url.toString(), newForgeBudget(1));
+    const entrada = Array.isArray(json?.data) ? json.data[0] : undefined;
+    if (typeof entrada?.detail_url === "string" && entrada.detail_url) return entrada.detail_url;
+    if (typeof entrada?.slug === "string" && entrada.slug) return `${activeSource.siteUrl}mod/${modId}/${entrada.slug}`;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchModDependencies(
   modId: number | string,
   modVersion: string,
@@ -3479,7 +3665,7 @@ export async function findForgeDownloadsForNames(
   entries: { name: string; guid?: string; version?: string }[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
-): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }>> {
+): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string; author?: string; modId?: number }>> {
   // Quando a lista exportada traz o GUID, o casamento é exato e resolvido em lote —
   // sem adivinhação por nome. Listas antigas (sem GUID) continuam funcionando pelo nome.
   const matches = await matchForgeMods(
@@ -3487,7 +3673,7 @@ export async function findForgeDownloadsForNames(
     onProgress,
     cacheRoot
   );
-  const out: Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string }> = {};
+  const out: Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string; author?: string; modId?: number }> = {};
   const budget = newForgeBudget(entries.length);
   for (const { name, version: versaoPedida } of entries) {
     const info = matches.get(name);
@@ -3499,7 +3685,11 @@ export async function findForgeDownloadsForNames(
         downloadLink: escolhida.link,
         version: escolhida.version,
         forgeName: info.forgeName,
-        guid: info.identifier
+        guid: info.identifier,
+        // Autor e id numérico vão junto: sem eles, o mod restaurado ficava sem
+        // autor na lista e com o nome da pasta em vez do nome publicado.
+        author: info.forgeAuthor,
+        modId: info.modId
       };
       continue;
     }
@@ -3515,7 +3705,14 @@ export async function findForgeDownloadsForNames(
     const versions = json?.data?.[0]?.versions;
     const latest = Array.isArray(versions) ? versions[0] : undefined;
     if (latest?.link) {
-      out[name] = { downloadLink: latest.link, version: latest.version, forgeName: info.forgeName, guid: info.identifier };
+      out[name] = {
+        downloadLink: latest.link,
+        version: latest.version,
+        forgeName: info.forgeName,
+        guid: info.identifier,
+        author: info.forgeAuthor,
+        modId: info.modId
+      };
     }
   }
   return out;
@@ -3812,9 +4009,21 @@ function mapCatalogMod(m: any): ForgeCatalogMod {
 // filtra por compatibilidade (a própria Forge avisa que isso filtra o MOD,
 // não necessariamente cada versão individual — por isso ainda mostramos a
 // lista de versões recentes de cada mod pro usuário escolher).
+/**
+ * Ordenações que a fonte aceita. O prefixo "-" inverte o sentido.
+ *
+ * A lista é fechada de propósito: o valor vai direto pro parâmetro `sort` da
+ * API, e aceitar texto livre do renderer seria deixar a query aberta pra
+ * qualquer coisa.
+ */
+export const FORGE_SORTS = ["-downloads", "-updated_at", "-created_at", "name"] as const;
+export type ForgeSort = (typeof FORGE_SORTS)[number];
+
 export async function searchForgeMods(params: {
   query?: string;
   categorySlug?: string;
+  /** Ordenação. Sem valor, a fonte usa a ordem padrão dela. */
+  sort?: ForgeSort;
   /** Filtra a busca por versão do SPT. Só quando o usuário pede "só compatíveis". */
   sptVersionConstraint?: string;
   /**
@@ -3824,7 +4033,6 @@ export async function searchForgeMods(params: {
    * buraco que fazia parecer que faltava um seletor de várias versões.
    */
   markVersion?: string;
-  sort?: string;
   page?: number;
   perPage?: number;
   /** Raiz da instância, pra marcar o que já está instalado. Sem ela, nada é marcado. */
@@ -3835,6 +4043,11 @@ export async function searchForgeMods(params: {
 }): Promise<ForgeSearchResult> {
   const url = new URL(`${activeSource.apiBase}/mods`);
   url.searchParams.set("include", "category,versions");
+  // Só passa adiante o que está na lista fechada: o valor chega do renderer e
+  // vai direto pro parâmetro da API.
+  if (params.sort && (FORGE_SORTS as readonly string[]).includes(params.sort)) {
+    url.searchParams.set("sort", params.sort);
+  }
   url.searchParams.set("sort", params.sort || "-downloads");
   url.searchParams.set("page", String(params.page || 1));
   url.searchParams.set("per_page", String(params.perPage || 24));
@@ -3916,6 +4129,16 @@ export async function installForgeModVersion(
 ): Promise<InstallResult> {
   let tmpFilePath: string | undefined;
   try {
+    // A pasta pode ter sumido desde que foi escolhida: trocar o SPT de lugar por
+    // fora do app é coisa que qualquer um faz eventualmente. Sem esta checagem,
+    // a falha só aparecia lá na frente, ao gravar o temporário.
+    if (!fs.existsSync(clientRoot)) {
+      return {
+        success: false,
+        message: `A pasta da instância não existe mais: ${clientRoot}. Escolha a instância de novo em "Trocar instância".`
+      };
+    }
+
     const res = await fetch(downloadLink);
     if (!res.ok) {
       return { success: false, message: `Não foi possível baixar o mod da Forge (HTTP ${res.status}).` };
@@ -3944,6 +4167,16 @@ export async function installForgeModVersion(
       return { success: false, message: "Falha ao baixar/instalar da Forge: resposta sem conteúdo." };
     }
     const fileHandle = fs.createWriteStream(tmpFilePath);
+    // Stream de escrita reporta falha por EVENTO, não pela exceção do write().
+    // Sem um ouvinte, um 'error' no Node vira exceção global — e no Electron
+    // isso é a caixa cinza de "A JavaScript error occurred in the main process",
+    // que derruba o app inteiro por causa de um download que falhou. Aconteceu
+    // de verdade: a pasta do SPT tinha sido movida por fora e o ENOENT escapou.
+    let erroDeEscrita: Error | undefined;
+    fileHandle.on("error", (err: Error) => {
+      erroDeEscrita = err;
+    });
+
     let receivedBytes = 0;
     try {
       // eslint-disable-next-line no-constant-condition
@@ -3953,17 +4186,26 @@ export async function installForgeModVersion(
         if (!value) continue;
         // Respeita a contrapressão do disco: se o buffer encheu, espera drenar
         // antes de pedir mais dados da rede.
+        if (erroDeEscrita) throw erroDeEscrita;
         if (!fileHandle.write(Buffer.from(value))) {
-          await new Promise<void>((resolve) => fileHandle.once("drain", () => resolve()));
+          // Espera drenar OU o erro chegar: sem a segunda saída, um disco cheio
+          // no meio do download deixaria a promessa pendurada pra sempre.
+          await new Promise<void>((resolve, reject) => {
+            fileHandle.once("drain", () => resolve());
+            fileHandle.once("error", (err: Error) => reject(err));
+          });
         }
         receivedBytes += value.byteLength;
         onProgress?.(receivedBytes, totalBytes);
       }
     } finally {
-      await new Promise<void>((resolve, reject) => {
-        fileHandle.end((err?: Error | null) => (err ? reject(err) : resolve()));
+      await new Promise<void>((resolve) => {
+        // Fecha sem propagar: o erro real já foi capturado acima, e deixar o
+        // end() rejeitar aqui dentro do finally engoliria a causa original.
+        fileHandle.end(() => resolve());
       });
     }
+    if (erroDeEscrita) throw erroDeEscrita;
 
     return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName, forgeInfo);
   } catch (err: any) {
