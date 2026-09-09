@@ -1,5 +1,5 @@
 import { MOD_SOURCES, getSourceByKey } from "./sources";
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session } from "electron";
 import path from "path";
 import fs from "fs";
 import Store from "electron-store";
@@ -112,8 +112,44 @@ function createWindow() {
   }
 }
 
+/**
+ * As miniaturas do catálogo ficam num domínio de arquivos protegido contra
+ * hotlink pelo Cloudflare: sem o cabeçalho Referer apontando pro site, o
+ * servidor responde 403. Medido com curl — com o cabeçalho vem 200 e a imagem,
+ * sem ele vem 403 e o texto "Nope".
+ *
+ * A página do app é local, então o navegador não manda referência nenhuma (a
+ * resposta do próprio 403 traz Referrer-Policy: same-origin), e TODAS as
+ * miniaturas falhavam. Parecia intermitente só por causa do cache: o que já
+ * tinha sido baixado continuava aparecendo.
+ *
+ * O cabeçalho é acrescentado só nos pedidos pro domínio de arquivos da fonte, e
+ * só pra imagem. Não é disfarce: o app está buscando exatamente o que o site
+ * mostra, e a proteção existe pra impedir que outro site consuma a banda deles.
+ */
+function ajustarRefererDasImagens() {
+  const dominios = MOD_SOURCES.map((src) => {
+    try {
+      return new URL(src.siteUrl).origin;
+    } catch {
+      return null;
+    }
+  }).filter((o): o is string => o !== null);
+
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ["https://files.sp-mod.com/*", "https://*.sp-mod.com/*", "https://files.forge-alt.katrinfoxvr.com/*"] },
+    (details, callback) => {
+      if (details.resourceType !== "image") return callback({ requestHeaders: details.requestHeaders });
+      // Usa a origem da fonte que casa com o pedido; na dúvida, a primeira.
+      const alvo = dominios.find((o) => details.url.includes(new URL(o).hostname.replace(/^files\./, ""))) ?? dominios[0];
+      callback({ requestHeaders: { ...details.requestHeaders, Referer: `${alvo}/`, Origin: alvo } });
+    }
+  );
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  ajustarRefererDasImagens();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

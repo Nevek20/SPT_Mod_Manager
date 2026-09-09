@@ -69,7 +69,11 @@ function ForgeThumb({ src }: { src?: string }) {
         src={src}
         alt=""
         className={`forge-mod-thumb${carregou ? "" : " forge-mod-thumb-carregando"}`}
-        loading="lazy"
+        // Sem carregamento preguiçoso de propósito: a lista tem rolagem
+        // própria, e o navegador mede a visibilidade em relação à JANELA. Os
+        // últimos itens ficavam abaixo do fim do contêiner e nunca eram
+        // pedidos, nem depois de rolar até eles. Uma página tem no máximo 24
+        // miniaturas de alguns KB, então buscar todas é barato.
         decoding="async"
         onLoad={() => setCarregou(true)}
         onError={() => {
