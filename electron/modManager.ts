@@ -1273,10 +1273,24 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       enabled,
       installedManually: !registryIds.has(id),
       loadOrder,
-      // Prioridade: o que o próprio mod declara localmente; se faltar, o que a
-      // Forge informou quando o mod foi instalado pelo app (fonte confiável —
-      // client mods, por exemplo, não têm campo de autor nenhum na DLL).
-      version: metadata.version ?? registryEntry?.forgeVersion,
+      // Versão: quando o mod foi instalado PELO APP, a versão que a fonte
+      // informou ganha da lida do DLL.
+      //
+      // O motivo é que as duas nem sempre coincidem: autor que esquece de subir
+      // o número dentro do assembly, ou que versiona o DLL separado do pacote,
+      // faz o app comparar um valor com o outro e concluir que há atualização
+      // pendente pra sempre. Era o relato do mozekuma: o aviso voltava mesmo
+      // depois de atualizar, porque atualizar não muda o que está escrito no
+      // DLL.
+      //
+      // Pra mod colocado à mão não existe esse registro, e aí o DLL é a única
+      // fonte — continua valendo como antes.
+      version:
+        registryEntry?.source === "archive-install" && registryEntry.forgeVersion
+          ? registryEntry.forgeVersion
+          : metadata.version ?? registryEntry?.forgeVersion,
+      // Autor segue a regra antiga: o DLL primeiro. Nome de autor não muda a
+      // cada versão, então não gera o mesmo falso positivo.
       author: metadata.author ?? registryEntry?.forgeAuthor,
       // O GUID que a PRÓPRIA Forge nos deu na instalação vem primeiro: é o identificador
       // dela, e é o que os filtros da API entendem. O GUID lido da DLL (BepInPlugin) é

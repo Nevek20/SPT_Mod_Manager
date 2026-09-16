@@ -152,8 +152,6 @@ const pt: Dict = {
   "forge.allUpToDateDetailed": "Todos os mods identificados no Forge estão atualizados.",
   "forge.unmatchedPrefix": "Não encontrados no Forge (busca por nome):",
   "forge.skippedByBudget": "{count} mod(s) não foram consultados: o limite de requisições da Forge foi atingido. Rode a verificação de novo pra completar — o que já foi resolvido fica em cache e não é consultado outra vez.",
-  "forge.matchNote":
-    "Casamento com o catálogo da Forge é por nome — pode não achar mods com nome muito genérico ou que não estão listados lá.",
 
   "bulk.selectedCount": "{count} selecionado(s)",
   "bulk.enable": "Habilitar",
@@ -406,8 +404,6 @@ const en: Dict = {
   "forge.allUpToDateDetailed": "Every mod identified on Forge is up to date.",
   "forge.unmatchedPrefix": "Not found on Forge (matched by name):",
   "forge.skippedByBudget": "{count} mod(s) weren't checked: Forge's request limit was reached. Run the check again to finish — whatever was already resolved is cached and won't be looked up again.",
-  "forge.matchNote":
-    "Matching against Forge's catalogue is done by name — it may not find mods with a very generic name, or ones not listed there.",
 
   "bulk.selectedCount": "{count} selected",
   "bulk.enable": "Enable",
@@ -659,7 +655,6 @@ const zh: Dict = {
   "forge.allUpToDateDetailed": "所有在 Forge 上识别的模组均已是最新。",
   "forge.unmatchedPrefix": "未在 Forge 找到（按名称搜索）：",
   "forge.skippedByBudget": "{count} 个模组未查询：已达 Forge 请求限制。请再次运行检查以完成 — 已解析的会缓存，不会重复查询。",
-  "forge.matchNote": "与 Forge 目录的匹配按名称进行 — 名称过于通用或未上架的模组可能找不到。",
   "bulk.selectedCount": "已选 {count} 个",
   "bulk.enable": "启用",
   "bulk.disable": "禁用",
@@ -887,7 +882,6 @@ const ru: Dict = {
   "forge.allUpToDateDetailed": "Все моды, найденные на Forge, актуальны.",
   "forge.unmatchedPrefix": "Не найдены на Forge (поиск по имени):",
   "forge.skippedByBudget": "{count} мод(ов) не проверены: достигнут лимит запросов Forge. Запустите проверку снова — уже разрешённые кэшируются и не запрашиваются повторно.",
-  "forge.matchNote": "Сопоставление с каталогом Forge по имени — моды с слишком общим именем или отсутствующие в каталоге могут не найтись.",
   "bulk.selectedCount": "Выбрано: {count}",
   "bulk.enable": "Включить",
   "bulk.disable": "Отключить",
@@ -1115,7 +1109,6 @@ const fr: Dict = {
   "forge.allUpToDateDetailed": "Tous les mods identifiés sur Forge sont à jour.",
   "forge.unmatchedPrefix": "Introuvables sur Forge (recherche par nom) :",
   "forge.skippedByBudget": "{count} mod(s) non consultés : limite de requêtes Forge atteinte. Relancez la vérification pour terminer — ce qui est déjà résolu reste en cache.",
-  "forge.matchNote": "Correspondance avec le catalogue Forge par nom — les mods au nom trop générique ou absents du catalogue peuvent ne pas être trouvés.",
   "bulk.selectedCount": "{count} sélectionné(s)",
   "bulk.enable": "Activer",
   "bulk.disable": "Désactiver",
@@ -1343,7 +1336,6 @@ const ja: Dict = {
   "forge.allUpToDateDetailed": "Forge で識別されたすべてのMODは最新です。",
   "forge.unmatchedPrefix": "Forge で見つかりません（名前検索）:",
   "forge.skippedByBudget": "{count} 個のMODは未確認: Forge のリクエスト制限に達しました。再度確認を実行してください — 解決済みはキャッシュされ再問い合わせしません。",
-  "forge.matchNote": "Forge カタログとの照合は名前ベースです — 名前が一般的すぎる、またはカタログにないMODは見つからない場合があります。",
   "bulk.selectedCount": "{count} 件選択",
   "bulk.enable": "有効化",
   "bulk.disable": "無効化",
@@ -1571,7 +1563,6 @@ const de: Dict = {
   "forge.allUpToDateDetailed": "Alle auf Forge erkannten Mods sind aktuell.",
   "forge.unmatchedPrefix": "Nicht auf Forge gefunden (Suche nach Name):",
   "forge.skippedByBudget": "{count} Mod(s) nicht abgefragt: Forge-Anfragelimit erreicht. Prüfung erneut ausführen — bereits Gelöstes bleibt im Cache.",
-  "forge.matchNote": "Abgleich mit dem Forge-Katalog erfolgt nach Name — Mods mit zu generischem Namen oder die nicht gelistet sind, werden möglicherweise nicht gefunden.",
   "bulk.selectedCount": "{count} ausgewählt",
   "bulk.enable": "Aktivieren",
   "bulk.disable": "Deaktivieren",

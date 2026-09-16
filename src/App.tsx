@@ -1601,7 +1601,6 @@ export default function App() {
                   {t("forge.unmatchedPrefix")} {forgeResult.unmatched.join(", ")}
                 </p>
               )}
-              <p className="compare-note">{t("forge.matchNote")}</p>
             </div>
           )}
 
