@@ -11,7 +11,7 @@ import {
   ForgeCatalogMod,
   ForgeCategory,
   InstallResult,
-  AppUpdateInfo, ModDependencyInfo } from "./types";
+  AppUpdateInfo, ModDependencyInfo, ForgeUpdateItem } from "./types";
 import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
 import { Diagnostico, montaRelato, urlIssueGithub } from "./relatoErro";
 
@@ -858,6 +858,7 @@ export default function App() {
       return;
     }
     setForgeResult(response.result);
+    setAtualizadosNoPainel(new Set());
 
     const statusMap = new Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>();
     for (const u of response.result.updates) {
@@ -993,27 +994,80 @@ export default function App() {
   }
 
   const [updatingModName, setUpdatingModName] = useState<string | null>(null);
+  // Nomes já atualizados desde a última checagem: a linha troca o botão por um
+  // "atualizado", e o "Atualizar todos" não baixa de novo.
+  const [atualizadosNoPainel, setAtualizadosNoPainel] = useState<Set<string>>(new Set());
+  const [atualizandoTodos, setAtualizandoTodos] = useState(false);
 
   // Atualiza sem sair do app: o link do resultado é o download direto da versão
   // recomendada, então dá pra passar pelo mesmo instalador usado na busca da Forge —
   // em vez de abrir o navegador e deixar o .zip no Downloads pra instalar na mão.
-  async function handleInstallUpdate(modName: string, downloadLink: string, version?: string, guid?: string) {
-    setUpdatingModName(modName);
-    const previousKeys = new Set(mods.map(selectionKey));
-    const queueId = pushQueueItem(modName);
+  /** Baixa e instala UMA atualização, sem reescanear. Devolve o resultado do backend. */
+  async function instalarAtualizacao(u: ForgeUpdateItem) {
+    const queueId = pushQueueItem(u.name);
     markQueueActive(queueId);
     const result = await installArchiveWithConfirmFlow(
-      window.modManagerAPI.installForgeMod(queueId, downloadLink, modName, { name: modName, version, guid })
+      window.modManagerAPI.installForgeMod(queueId, u.downloadLink!, u.name, {
+        name: u.name,
+        version: u.recommendedVersion,
+        guid: u.guid
+      })
     );
     markQueueDone(queueId, result.success, tMsg(result.message), result.message);
+    if (result.success) setAtualizadosNoPainel((prev) => new Set(prev).add(u.name));
+    return result;
+  }
+
+  async function handleInstallUpdate(u: ForgeUpdateItem) {
+    setUpdatingModName(u.name);
+    const previousKeys = new Set(mods.map(selectionKey));
+    const result = await instalarAtualizacao(u);
     setUpdatingModName(null);
     pushToast(tMsg(result.message), result.success, result.message);
     if (result.success) {
       // A etiqueta antiga fala da versão que acabou de sair do disco.
-      forgetForgeStatus([modName]);
+      forgetForgeStatus([u.name]);
       const updated = await refreshMods();
       checkForgeForNewMods(previousKeys, updated);
     }
+  }
+
+  /**
+   * Atualiza tudo que a checagem achou, UM POR VEZ e NA ORDEM DA LISTA.
+   *
+   * A ordem importa: quando uma atualização só destrava depois de outra (o caso
+   * do hognus, SAIN esperando o BigBrain novo), a checagem já devolve a lista na
+   * ordem de instalação. Clicando um por um, dava pra instalar o SAIN antes.
+   *
+   * Um que falha não para os outros: o erro fica na fila, com Detalhes, e o
+   * aviso do fim diz quem faltou. Reescaneia uma vez só, no fim.
+   */
+  async function handleUpdateAll() {
+    if (!forgeResult) return;
+    const pendentes = forgeResult.updates.filter((u) => u.downloadLink && !atualizadosNoPainel.has(u.name));
+    if (pendentes.length === 0) return;
+    setAtualizandoTodos(true);
+    const previousKeys = new Set(mods.map(selectionKey));
+    const ok: string[] = [];
+    const falhas: string[] = [];
+    for (const u of pendentes) {
+      setUpdatingModName(u.name);
+      const result = await instalarAtualizacao(u);
+      (result.success ? ok : falhas).push(u.name);
+    }
+    setUpdatingModName(null);
+    setAtualizandoTodos(false);
+    if (ok.length > 0) {
+      forgetForgeStatus(ok);
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+    }
+    pushToast(
+      falhas.length === 0
+        ? t("toast.updateAllDone", { done: ok.length, total: pendentes.length })
+        : t("toast.updateAllPartial", { done: ok.length, total: pendentes.length, failed: falhas.join(", ") }),
+      falhas.length === 0
+    );
   }
 
   /**
@@ -1624,7 +1678,18 @@ export default function App() {
               </div>
               {forgeResult.updates.length > 0 && (
                 <>
-                  <p><strong>{t("forge.updatesAvailable")}</strong></p>
+                  <p className="updates-header">
+                    <strong>{t("forge.updatesAvailable")}</strong>
+                    {forgeResult.updates.filter((u) => u.downloadLink && !atualizadosNoPainel.has(u.name)).length > 1 && (
+                      <button
+                        className="primary inline-update-button"
+                        disabled={atualizandoTodos || updatingModName !== null}
+                        onClick={handleUpdateAll}
+                      >
+                        {atualizandoTodos ? t("forge.updating") : t("forge.updateAll")}
+                      </button>
+                    )}
+                  </p>
                   {forgeResult.updates.map((u) => (
                     <p key={`update-${u.name}`}>
                       {u.name}: {u.currentVersion} → <strong>{u.recommendedVersion}</strong>
@@ -1633,17 +1698,24 @@ export default function App() {
                       {u.reason === "unblocked_after_update" && (
                         <span className="update-after-note"> ({t("forge.afterOthers")})</span>
                       )}
-                      {u.downloadLink && (
-                        <>
-                          {" "}
-                          <button
-                            className="primary inline-update-button"
-                            disabled={updatingModName === u.name}
-                            onClick={() => handleInstallUpdate(u.name, u.downloadLink!, u.recommendedVersion, u.guid)}
-                          >
-                            {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
-                          </button>
-                        </>
+                      {atualizadosNoPainel.has(u.name) ? (
+                        <span className="update-done-note"> ✔ {t("forge.updatedDone")}</span>
+                      ) : (
+                        u.downloadLink && (
+                          <>
+                            {" "}
+                            <button
+                              className="primary inline-update-button"
+                              // Durante o "Atualizar todos" os botões individuais ficam
+                              // travados: dois downloads do mesmo mod ao mesmo tempo
+                              // brigariam pela mesma pasta.
+                              disabled={updatingModName === u.name || atualizandoTodos}
+                              onClick={() => handleInstallUpdate(u)}
+                            >
+                              {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
+                            </button>
+                          </>
+                        )
                       )}
                     </p>
                   ))}
@@ -2371,9 +2443,24 @@ function ModList({
                       {t("modlist.openModPage")}
                     </button>
                   )}
-                  {!mod.manifestOnly && (
-                    <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>{t("modlist.openFolder")}</button>
-                  )}
+                  {/* Mod de várias partes: uma entrada por metade. A linha-pai age
+                      sobre a PRIMEIRA parte, e com uma entrada só o "Abrir pasta"
+                      abria sempre a mesma metade (quase sempre o server), sem
+                      jeito de chegar na outra pelo app (relato do inganshin). */}
+                  {node.single
+                    ? !mod.manifestOnly && (
+                        <button onClick={() => { onOpenFolder(mod); onSetOpenMenuKey(null); }}>{t("modlist.openFolder")}</button>
+                      )
+                    : node.parts
+                        .filter((part) => !part.manifestOnly)
+                        .map((part) => (
+                          <button key={`open-${selectionKey(part)}`} onClick={() => { onOpenFolder(part); onSetOpenMenuKey(null); }}>
+                            {/* Tipo repetido (o UI Fixes tem dois DLLs de client): aí
+                                só o nome diferencia uma entrada da outra. */}
+                            {t("modlist.openFolder")} (
+                            {node.parts.filter((x) => x.type === part.type).length > 1 ? part.name : part.type})
+                          </button>
+                        ))}
                   <button onClick={() => onRenameStart(mod)}>{t("modlist.rename")}</button>
                   <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>{t("modlist.reinstall")}</button>
                   <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>{t("bulk.remove")}</button>

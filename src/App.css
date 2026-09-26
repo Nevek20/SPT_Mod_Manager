@@ -1520,3 +1520,14 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
   flex-wrap: wrap;
   margin-top: 16px;
 }
+
+/* "Atualizar todos" ao lado do título da lista de atualizações. */
+.updates-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-done-note {
+  color: var(--ok-strong);
+  font-size: 0.9em;
+}
