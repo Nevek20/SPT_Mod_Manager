@@ -168,6 +168,20 @@ export default function App() {
    * clique, em vez de só no diálogo.
    */
   const [depsPorChave, setDepsPorChave] = useState<Record<string, ModDependencyInfo[]>>({});
+  /**
+   * Confirmação dentro do app, no lugar do window.confirm.
+   *
+   * O diálogo nativo quebrava a busca: no Windows, depois de um window.confirm
+   * os campos de texto do Electron param de aceitar foco até a janela perder e
+   * recuperar o foco. Três pessoas relataram o sintoma, cada uma de um jeito
+   * ("buscar, remover, a barra fica inútil"), e uma delas notou que Alt+Tab
+   * resolvia, que é exatamente a janela perdendo e recuperando o foco.
+   */
+  const [confirmacao, setConfirmacao] = useState<{ texto: string; responder: (ok: boolean) => void } | null>(null);
+  const confirmar = useCallback(
+    (texto: string) => new Promise<boolean>((resolve) => setConfirmacao({ texto, responder: resolve })),
+    []
+  );
   const [depPrompt, setDepPrompt] = useState<{
     mod: ForgeCatalogMod;
     version: { id: number; version: string; link: string };
@@ -585,7 +599,7 @@ export default function App() {
   }
 
   async function handleUninstall(mod: ModInfo) {
-    const confirmed = window.confirm(t("toast.confirmRemove", { name: mod.name }));
+    const confirmed = await confirmar(t("toast.confirmRemove", { name: mod.name }));
     if (!confirmed) return;
     setMutating(true);
     const result = await window.modManagerAPI.uninstallMod(mod);
@@ -642,7 +656,7 @@ export default function App() {
     const { missing, extra } = result.comparison;
 
     if (missing.length > 0) {
-      const wantsDownload = window.confirm(t("restore.confirmDownload", { count: missing.length }));
+      const wantsDownload = await confirmar(t("restore.confirmDownload", { count: missing.length }));
       if (wantsDownload) {
         const previousKeys = new Set(mods.map(selectionKey));
 
@@ -716,7 +730,7 @@ export default function App() {
     }
 
     if (extra.length > 0) {
-      const wantsDisable = window.confirm(t("restore.confirmDisable", { count: extra.length }));
+      const wantsDisable = await confirmar(t("restore.confirmDisable", { count: extra.length }));
       if (wantsDisable) {
         const targets = mods.filter((m) => extra.includes(m.originalName) && m.enabled);
         let disabledCount = 0;
@@ -1116,7 +1130,7 @@ export default function App() {
   async function runBulk(action: "enable" | "disable" | "remove") {
     if (selectedMods.length === 0) return;
     if (action === "remove") {
-      const confirmed = window.confirm(t("toast.confirmRemoveBulk", { count: selectedMods.length }));
+      const confirmed = await confirmar(t("toast.confirmRemoveBulk", { count: selectedMods.length }));
       if (!confirmed) return;
     }
     setMutating(true);
@@ -1543,6 +1557,11 @@ export default function App() {
                   {forgeResult.updates.map((u) => (
                     <p key={`update-${u.name}`}>
                       {u.name}: {u.currentVersion} → <strong>{u.recommendedVersion}</strong>
+                      {/* Sai do bloqueio depois que os de cima atualizarem: a lista já está
+                          na ordem de instalação, e a nota diz isso em voz alta. */}
+                      {u.reason === "unblocked_after_update" && (
+                        <span className="update-after-note"> ({t("forge.afterOthers")})</span>
+                      )}
                       {u.downloadLink && (
                         <>
                           {" "}
@@ -1880,6 +1899,34 @@ export default function App() {
             )}
 
             <p className="compare-note">{t("browse.installNote")}</p>
+          </div>
+        </div>
+      )}
+
+      {confirmacao && (
+        <div className="modal-backdrop">
+          <div className="modal-box">
+            <p className="confirm-message">{confirmacao.texto}</p>
+            <div className="confirm-structure-actions">
+              <button
+                onClick={() => {
+                  confirmacao.responder(false);
+                  setConfirmacao(null);
+                }}
+              >
+                {t("confirm.abort")}
+              </button>
+              <button
+                className="primary"
+                autoFocus
+                onClick={() => {
+                  confirmacao.responder(true);
+                  setConfirmacao(null);
+                }}
+              >
+                {t("confirm.ok")}
+              </button>
+            </div>
           </div>
         </div>
       )}

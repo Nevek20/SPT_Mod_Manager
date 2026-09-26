@@ -1441,6 +1441,28 @@ h2 {
   border-color: #3a4252;
   background: rgba(154, 162, 176, 0.12);
 }
+/* Enquanto a imagem não carregou ela fica fora de vista, com o placeholder por
+   baixo. Um <img> em falha desenha o ícone de papel rasgado do navegador, e
+   durante as tentativas isso apareceria numa imagem que ainda pode dar certo. */
+.forge-mod-thumb-carregando {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Confirmação dentro do app, que substituiu o window.confirm. O diálogo nativo
+   deixava os campos de texto sem aceitar foco no Windows depois de fechado. */
+.confirm-message {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-line;
+}
+.update-after-note {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
 /*
 ⣿⣿⣿⣿⡟⣶⣾⣿⣾⣧⣮⣡⡃⠀⠀⡐⣀⣀⣾⣿⣿⣿⣿⣿⣿⣵⣋⡀⠛⣻⢿⣿⡿⣿⣇
 ⣿⣿⣿⣿⠉⠋⢁⣈⡽⠼⠒⠛⠛⠛⠉⠉⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣯⣾⢋⣅⣿⠙
@@ -1456,11 +1478,4 @@ WOW TATIKAWA HIIIIIIII!!!!!
 
 i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot of things... sorry folks.........
 */
-/* Enquanto a imagem não carregou ela fica fora de vista, com o placeholder por
-   baixo. Um <img> em falha desenha o ícone de papel rasgado do navegador, e
-   durante as tentativas isso apareceria numa imagem que ainda pode dar certo. */
-.forge-mod-thumb-carregando {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
+/* Nota nos updates que só destravam depois dos de cima serem instalados. */

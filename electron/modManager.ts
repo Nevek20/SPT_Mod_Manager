@@ -2958,6 +2958,39 @@ function newForgeBudget(modCount: number): ForgeBudget {
 }
 
 /**
+ * Fatia uma lista de valores de modo que o parâmetro montado com eles nunca fique
+ * grande demais pra URL.
+ *
+ * Cortar por QUANTIDADE não serve: 120 mods de GUID curto caberiam numa
+ * requisição só, e 60 de GUID longo já estouram. Foi exatamente isso que deu
+ * `414 URI Too Long` na checagem de atualizações de quem tem instalação grande
+ * (relato do FlachkopfLarry): a lista inteira ia numa única URL.
+ *
+ * O corte é pelo tamanho JÁ CODIFICADO, que é o que o servidor recebe — a vírgula
+ * separadora custa 3 caracteres (`%2C`) depois de codificada, não 1.
+ */
+export function fatiarPorTamanho(valores: string[], limite = 1500, maxItens = 100): string[][] {
+  const fatias: string[][] = [];
+  let atual: string[] = [];
+  let tamanho = 0;
+  for (const valor of valores) {
+    const bruto = encodeURIComponent(valor).length;
+    const custo = atual.length === 0 ? bruto : bruto + 3;
+    // Valor sozinho maior que o limite vai numa fatia própria: melhor uma
+    // requisição que pode falhar do que descartar o mod em silêncio.
+    if (atual.length > 0 && (tamanho + custo > limite || atual.length >= maxItens)) {
+      fatias.push(atual);
+      atual = [];
+      tamanho = 0;
+    }
+    tamanho += atual.length === 0 ? bruto : bruto + 3;
+    atual.push(valor);
+  }
+  if (atual.length > 0) fatias.push(atual);
+  return fatias;
+}
+
+/**
  * Requisição à Forge respeitando rate limit, orçamento e 429 (com Retry-After).
  * Devolve null em qualquer falha — o chamador segue sem quebrar a checagem inteira.
  */
@@ -3023,10 +3056,11 @@ async function fetchForgeByFuzzyFilter(filterKey: "slug" | "name", value: string
 async function fetchForgeByIds(ids: string[], budget: ForgeBudget): Promise<any[]> {
   if (ids.length === 0) return [];
   const results: any[] = [];
-  const CHUNK = 25;
-  for (let i = 0; i < ids.length; i += CHUNK) {
+  // Fatia por tamanho de URL, não por contagem — mesmo motivo do 414 na checagem
+  // de atualizações: 25 identificadores curtos e 25 longos não dão a mesma URL.
+  for (const fatia of fatiarPorTamanho(ids, 1500, 25)) {
     const url = new URL(`${activeSource.apiBase}/mods`);
-    url.searchParams.set("filter[id]", ids.slice(i, i + CHUNK).join(","));
+    url.searchParams.set("filter[id]", fatia.join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
       const json = await forgeFetchJson(url.toString(), budget);
@@ -3043,10 +3077,10 @@ async function fetchForgeByIds(ids: string[], budget: ForgeBudget): Promise<any[
 async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<any[]> {
   if (guids.length === 0) return [];
   const results: any[] = [];
-  const CHUNK = 25;
-  for (let i = 0; i < guids.length; i += CHUNK) {
+  // GUID é texto livre e há mod com GUID bem longo: corta por tamanho da URL.
+  for (const fatia of fatiarPorTamanho(guids, 1500, 25)) {
     const url = new URL(`${activeSource.apiBase}/mods`);
-    url.searchParams.set("filter[guid]", guids.slice(i, i + CHUNK).join(","));
+    url.searchParams.set("filter[guid]", fatia.join(","));
     url.searchParams.set("per_page", "50");
     url.searchParams.set("include", "versions");
       const json = await forgeFetchJson(url.toString(), budget);
@@ -3574,12 +3608,12 @@ export async function fetchModDependenciesBatch(
   const out: Record<string, ModDependencyInfo[]> = {};
   if (chaves.length === 0) return out;
 
-  // Fatia pra não montar uma URL absurda numa página cheia. 25 por vez é
-  // folgado pra uma página de busca e curto o bastante pra qualquer servidor.
-  const LOTE = 25;
-  const budget = newForgeBudget(Math.ceil(chaves.length / LOTE));
-  for (let i = 0; i < chaves.length; i += LOTE) {
-    const fatia = chaves.slice(i, i + LOTE);
+  // Fatia pra não montar uma URL absurda numa página cheia. O corte é por tamanho
+  // codificado da URL, com teto de 25 itens: contar itens sozinho não protege, porque
+  // chave longa demais estoura antes de chegar aos 25 (foi a causa do 414).
+  const fatias = fatiarPorTamanho(chaves, 1500, 25);
+  const budget = newForgeBudget(fatias.length);
+  for (const fatia of fatias) {
     const url = new URL(`${activeSource.apiBase}/mods/dependencies`);
     url.searchParams.set("mods", fatia.join(","));
     if (sptVersion) url.searchParams.set("spt_version", sptVersion);
@@ -3817,61 +3851,132 @@ export async function checkForgeUpdates(
   };
   if (pairs.length === 0) return empty;
 
-  const url = `${activeSource.apiBase}/mods/updates?mods=${encodeURIComponent(pairs.join(","))}&spt_version=${encodeURIComponent(trimmedVersion)}`;
-  let json: any;
-  try {
-    const res = await forgeFetch(url);
-    json = await lerJson(res, activeSource.label);
-    if (!res.ok || json?.success === false) {
-      throw new Error(json?.message || `Forge respondeu ${res.status}`);
-    }
-  } catch (err: any) {
-    throw new Error(`Não foi possível consultar o Forge: ${err.message || err}`);
+  const nameFor = (guid: string, fallback?: string) => nameByIdentifier.get(guid) || fallback || guid;
+  const norm = (v?: string) => (v ?? "").trim().replace(/^v/i, "");
+
+  // Estado que mandamos pra fonte: GUID -> versao. A fonte avalia dependencia contra
+  // ESSE estado, e e ele que os passes seguintes ajustam.
+  const versaoEnviada = new Map<string, string>();
+  for (const par of pairs) {
+    const corte = par.lastIndexOf(":");
+    versaoEnviada.set(par.slice(0, corte), par.slice(corte + 1));
   }
 
-  const data = json.data || {};
-  const nameFor = (guid: string, fallback?: string) => nameByIdentifier.get(guid) || fallback || guid;
+  /** Uma consulta completa: fatiada por tamanho de URL, com as fatias somadas. */
+  const consultarAtualizacoes = async (): Promise<any> => {
+    const chaves = [...versaoEnviada].map(([guid, versao]) => `${guid}:${versao}`);
+    const soma: any = {
+      spt_version: trimmedVersion,
+      updates: [],
+      blocked_updates: [],
+      up_to_date: [],
+      incompatible_with_spt: []
+    };
+    for (const fatia of fatiarPorTamanho(chaves)) {
+      const url = `${activeSource.apiBase}/mods/updates?mods=${encodeURIComponent(
+        fatia.join(",")
+      )}&spt_version=${encodeURIComponent(trimmedVersion)}`;
+      let json: any;
+      try {
+        const res = await forgeFetch(url);
+        json = await lerJson(res, activeSource.label);
+        if (!res.ok || json?.success === false) {
+          throw new Error(json?.message || `Forge respondeu ${res.status}`);
+        }
+      } catch (err: any) {
+        throw new Error(`Não foi possível consultar o Forge: ${err.message || err}`);
+      }
+      const parte = json.data || {};
+      if (parte.spt_version) soma.spt_version = parte.spt_version;
+      for (const campo of ["updates", "blocked_updates", "up_to_date", "incompatible_with_spt"] as const) {
+        if (Array.isArray(parte[campo])) soma[campo].push(...parte[campo]);
+      }
+    }
+    return soma;
+  };
+
+  /** Converte um item de `updates`, ou devolve null se não é atualização de verdade. */
+  const paraItem = (u: any, encadeada: boolean): ForgeUpdateItem | null => {
+    const name = nameFor(u.current_version?.guid, u.current_version?.name);
+    const recomendada = norm(u.recommended_version?.version);
+    // A Forge às vezes devolve como "atualização" uma versão igual à instalada (por
+    // exemplo, o mesmo número publicado para outra versão do SPT). Anunciar
+    // "v1.2.6 disponível" pra quem já está na v1.2.6 é ruído.
+    if (recomendada) {
+      // Compara com a versão da Forge E com a que lemos localmente. A Forge às vezes
+      // está desatualizada sobre o que você tem instalado (MakeMedsGreatAgain: ela diz
+      // que você está na 1.2.5 e recomenda a 1.2.6, mas a DLL local já é 1.2.6), e
+      // anunciar atualização pra versão que a pessoa já tem é ruído.
+      const local = localVersionByName.get(name);
+      if (local && recomendada === norm(local)) return null;
+      if (recomendada === norm(u.current_version?.version)) return null;
+    }
+    return {
+      name,
+      currentVersion: u.current_version?.version,
+      recommendedVersion: u.recommended_version?.version,
+      downloadLink: u.recommended_version?.link,
+      // Identificador da Forge, pra que atualizar pelo app grave o mesmo GUID e as
+      // próximas checagens desse mod não voltem a depender de casamento por nome.
+      guid: u.current_version?.guid,
+      reason: encadeada ? "unblocked_after_update" : u.update_reason
+    };
+  };
+
+  const primeiro = await consultarAtualizacoes();
+  const updates: ForgeUpdateItem[] = [];
+  const vistos = new Set<string>();
+  const registra = (u: any, encadeada: boolean): boolean => {
+    const item = paraItem(u, encadeada);
+    if (!item) return false;
+    const chave = item.guid ?? item.name;
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    updates.push(item);
+    return true;
+  };
+  for (const u of primeiro.updates ?? []) registra(u, false);
+
+  // `chain_dependency_conflict` é avaliado contra o estado ATUAL, e isso trava em par:
+  // A só aceita a versão nova de B, B só aceita a nova de A, e os dois voltam como
+  // "bloqueado" mesmo existindo atualização pros dois. É o relato do hognus: um monte
+  // de mod que se recusa a atualizar porque a dependência também tem atualização.
+  //
+  // Conserto: aplica as versões recomendadas ao estado e pergunta de novo. Quem
+  // destrava vira atualização de verdade, com link, e entra na lista DEPOIS de quem
+  // precisa ser instalado antes — a ordem da lista é a ordem de instalação.
+  let bloqueados: any[] = primeiro.blocked_updates ?? [];
+  for (let passe = 0; passe < 3 && bloqueados.length > 0 && updates.length > 0; passe++) {
+    let mudou = false;
+    for (const u of updates) {
+      if (!u.guid || !u.recommendedVersion) continue;
+      if (versaoEnviada.get(u.guid) === u.recommendedVersion) continue;
+      versaoEnviada.set(u.guid, u.recommendedVersion);
+      mudou = true;
+    }
+    if (!mudou) break;
+    const rodada = await consultarAtualizacoes();
+    let novos = 0;
+    for (const u of rodada.updates ?? []) if (registra(u, true)) novos++;
+    bloqueados = rodada.blocked_updates ?? [];
+    if (novos === 0) break;
+  }
 
   return {
-    sptVersionUsed: data.spt_version || trimmedVersion,
-    updates: (data.updates || [])
-      .map((u: any) => ({
-        name: nameFor(u.current_version?.guid, u.current_version?.name),
-        currentVersion: u.current_version?.version,
-        recommendedVersion: u.recommended_version?.version,
-        downloadLink: u.recommended_version?.link,
-        // Identificador da Forge, pra que atualizar pelo app grave o mesmo GUID e as
-        // próximas checagens desse mod não voltem a depender de casamento por nome.
-        guid: u.current_version?.guid,
-        reason: u.update_reason
-      }))
-      // A Forge às vezes devolve como "atualização" uma versão igual à instalada (por
-      // exemplo, o mesmo número publicado para outra versão do SPT). Anunciar
-      // "v1.2.6 disponível" pra quem já está na v1.2.6 é ruído: se o número é o mesmo,
-      // não há o que atualizar.
-      .filter((u: { name: string; currentVersion?: string; recommendedVersion?: string }) => {
-        const norm = (v?: string) => (v ?? "").trim().replace(/^v/i, "");
-        if (!norm(u.recommendedVersion)) return true;
-        // Compara com a versão da Forge E com a que lemos localmente. A Forge às vezes
-        // está desatualizada sobre o que você tem instalado (MakeMedsGreatAgain: ela diz
-        // que você está na 1.2.5 e recomenda a 1.2.6, mas a DLL local já é 1.2.6), e
-        // anunciar atualização pra versão que a pessoa já tem é ruído.
-        const local = localVersionByName.get(u.name);
-        if (local && norm(u.recommendedVersion) === norm(local)) return false;
-        return norm(u.recommendedVersion) !== norm(u.currentVersion);
-      }),
-    blocked: (data.blocked_updates || []).map((b: any) => ({
+    sptVersionUsed: primeiro.spt_version || trimmedVersion,
+    updates,
+    blocked: bloqueados.map((b: any) => ({
       name: nameFor(b.current_version?.guid, b.current_version?.name),
       currentVersion: b.current_version?.version,
       recommendedVersion: b.latest_version?.version,
       reason: b.block_reason
     })),
-    upToDate: (data.up_to_date || []).map((u: any) => ({
+    upToDate: (primeiro.up_to_date || []).map((u: any) => ({
       name: nameFor(u.guid, u.name),
       currentVersion: u.version,
       reason: "up_to_date"
     })),
-    incompatible: (data.incompatible_with_spt || []).map((i: any) => ({
+    incompatible: (primeiro.incompatible_with_spt || []).map((i: any) => ({
       name: nameFor(i.guid, i.name),
       currentVersion: i.version,
       reason: i.reason

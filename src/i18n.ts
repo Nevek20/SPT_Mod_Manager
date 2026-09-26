@@ -143,6 +143,7 @@ const pt: Dict = {
 
   "forge.checkTitle": "Verificação de atualizações (Forge)",
   "forge.updatesAvailable": "Atualizações disponíveis:",
+  "forge.afterOthers": "atualiza depois dos de cima",
   "forge.updateNow": "Atualizar",
   "forge.updating": "Atualizando...",
   "forge.blockedTitle": "Atualizações bloqueadas (quebrariam dependência):",
@@ -292,7 +293,8 @@ const pt: Dict = {
   "browse.sortDownloads": "Mais baixados",
   "browse.sortUpdated": "Atualizados recentemente",
   "browse.sortCreated": "Adicionados recentemente",
-  "browse.sortName": "Nome (A-Z)"
+  "browse.sortName": "Nome (A-Z)",
+  "confirm.ok": "Confirmar"
 };
 
 const en: Dict = {
@@ -395,6 +397,7 @@ const en: Dict = {
 
   "forge.checkTitle": "Update check (Forge)",
   "forge.updatesAvailable": "Updates available:",
+  "forge.afterOthers": "update after the ones above",
   "forge.updateNow": "Update",
   "forge.updating": "Updating...",
   "forge.blockedTitle": "Blocked updates (would break a dependency):",
@@ -544,7 +547,8 @@ const en: Dict = {
   "browse.sortDownloads": "Most downloaded",
   "browse.sortUpdated": "Recently updated",
   "browse.sortCreated": "Recently added",
-  "browse.sortName": "Name (A-Z)"
+  "browse.sortName": "Name (A-Z)",
+  "confirm.ok": "Confirm"
 };
 
 /**
@@ -646,6 +650,7 @@ const zh: Dict = {
   "conflicts.note": "文件级别检查 — 仅提示重叠，不保证真正不兼容。",
   "forge.checkTitle": "更新检查（Forge）",
   "forge.updatesAvailable": "可用更新：",
+  "forge.afterOthers": "在上面的更新之后安装",
   "forge.updateNow": "立即更新",
   "forge.updating": "更新中…",
   "forge.blockedTitle": "被阻止的更新（会破坏依赖）：",
@@ -781,7 +786,8 @@ const zh: Dict = {
   "browse.sortDownloads": "下载最多",
   "browse.sortUpdated": "最近更新",
   "browse.sortCreated": "最近添加",
-  "browse.sortName": "名称 (A-Z)"
+  "browse.sortName": "名称 (A-Z)",
+  "confirm.ok": "确认"
 };
 
 const ru: Dict = {
@@ -873,6 +879,7 @@ const ru: Dict = {
   "conflicts.note": "Проверка на уровне файлов — отмечает пересечения, не гарантирует реальную несовместимость.",
   "forge.checkTitle": "Проверка обновлений (Forge)",
   "forge.updatesAvailable": "Доступные обновления:",
+  "forge.afterOthers": "обновить после указанных выше",
   "forge.updateNow": "Обновить",
   "forge.updating": "Обновление…",
   "forge.blockedTitle": "Заблокированные обновления (сломают зависимости):",
@@ -1008,7 +1015,8 @@ const ru: Dict = {
   "browse.sortDownloads": "Больше загрузок",
   "browse.sortUpdated": "Недавно обновлённые",
   "browse.sortCreated": "Недавно добавленные",
-  "browse.sortName": "По названию (A-Z)"
+  "browse.sortName": "По названию (A-Z)",
+  "confirm.ok": "Подтвердить"
 };
 
 const fr: Dict = {
@@ -1100,6 +1108,7 @@ const fr: Dict = {
   "conflicts.note": "Vérification au niveau fichier — signale les chevauchements, ne garantit pas une réelle incompatibilité.",
   "forge.checkTitle": "Vérification des mises à jour (Forge)",
   "forge.updatesAvailable": "Mises à jour disponibles :",
+  "forge.afterOthers": "à mettre à jour après ceux du dessus",
   "forge.updateNow": "Mettre à jour",
   "forge.updating": "Mise à jour…",
   "forge.blockedTitle": "Mises à jour bloquées (casseraient une dépendance) :",
@@ -1235,7 +1244,8 @@ const fr: Dict = {
   "browse.sortDownloads": "Plus téléchargés",
   "browse.sortUpdated": "Mis à jour récemment",
   "browse.sortCreated": "Ajoutés récemment",
-  "browse.sortName": "Nom (A-Z)"
+  "browse.sortName": "Nom (A-Z)",
+  "confirm.ok": "Confirmer"
 };
 
 const ja: Dict = {
@@ -1327,6 +1337,7 @@ const ja: Dict = {
   "conflicts.note": "ファイルレベルのチェック — 重複を示しますが、実際の非互換を保証するものではありません。",
   "forge.checkTitle": "更新確認（Forge）",
   "forge.updatesAvailable": "利用可能な更新:",
+  "forge.afterOthers": "上の更新を適用してから",
   "forge.updateNow": "更新",
   "forge.updating": "更新中…",
   "forge.blockedTitle": "ブロックされた更新（依存関係を壊す）:",
@@ -1462,7 +1473,8 @@ const ja: Dict = {
   "browse.sortDownloads": "ダウンロード数順",
   "browse.sortUpdated": "最近更新された順",
   "browse.sortCreated": "最近追加された順",
-  "browse.sortName": "名前順 (A-Z)"
+  "browse.sortName": "名前順 (A-Z)",
+  "confirm.ok": "確認"
 };
 
 const de: Dict = {
@@ -1554,6 +1566,7 @@ const de: Dict = {
   "conflicts.note": "Prüfung auf Dateiebene — meldet Überlappungen, garantiert keine echte Inkompatibilität.",
   "forge.checkTitle": "Aktualisierungsprüfung (Forge)",
   "forge.updatesAvailable": "Verfügbare Updates:",
+  "forge.afterOthers": "nach den obigen aktualisieren",
   "forge.updateNow": "Aktualisieren",
   "forge.updating": "Aktualisierung…",
   "forge.blockedTitle": "Blockierte Updates (würden Abhängigkeit brechen):",
@@ -1689,7 +1702,8 @@ const de: Dict = {
   "browse.sortDownloads": "Meiste Downloads",
   "browse.sortUpdated": "Kürzlich aktualisiert",
   "browse.sortCreated": "Kürzlich hinzugefügt",
-  "browse.sortName": "Name (A-Z)"
+  "browse.sortName": "Name (A-Z)",
+  "confirm.ok": "Bestätigen"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };
