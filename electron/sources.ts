@@ -26,14 +26,14 @@ export interface ModSource {
 export const MOD_SOURCES: ModSource[] = [
   {
     key: "sp-mod",
-    label: "sp-mod.com (oficial)",
+    label: "sp-mod.com (official)",
     apiBase: "https://sp-mod.com/api/v0",
     siteUrl: "https://sp-mod.com/",
     modManagerPage: "https://sp-mod.com/mod/2851/spt-mod-manager"
   },
   {
     key: "forge-alt",
-    label: "Forge Alt (comunidade)",
+    label: "Forge Alt (community)",
     apiBase: "https://forge-alt.katrinfoxvr.com/api/v0",
     siteUrl: "https://forge-alt.katrinfoxvr.com/",
     modManagerPage: "https://forge-alt.katrinfoxvr.com/mods/spt-mod-manager"

@@ -1,6 +1,7 @@
 import { MOD_SOURCES, getSourceByKey } from "./sources";
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, clipboard } from "electron";
 import path from "path";
+import os from "os";
 import fs from "fs";
 import Store from "electron-store";
 import {
@@ -181,7 +182,7 @@ ipcMain.handle("select-spt-folder", async () => {
   if (!resolved) {
     return {
       success: false,
-      message: "Não achei uma instância SPT nessa pasta nem nas subpastas diretas dela. Selecione a pasta que tem o SPT.Server.exe."
+      message: "Couldn't find an SPT instance in that folder or its direct subfolders. Select the folder that has SPT.Server.exe."
     };
   }
   store.set("sptPath", resolved.instance.clientRoot);
@@ -193,8 +194,8 @@ ipcMain.handle("select-spt-folder", async () => {
     split: resolved.instance.split,
     message: resolved.autoDetected
       ? resolved.instance.split
-        ? `Instância dividida detectada — client em "${resolved.instance.clientRoot}", server em "${resolved.instance.serverRoot}".`
-        : `Instância encontrada automaticamente em: ${resolved.instance.clientRoot}`
+        ? `Split instance detected: client at "${resolved.instance.clientRoot}", server at "${resolved.instance.serverRoot}".`
+        : `Instance found automatically at: ${resolved.instance.clientRoot}`
       : undefined
   };
 });
@@ -245,7 +246,7 @@ ipcMain.handle("set-mod-source", async (_event, key: string) => {
   // Confere que a fonte responde ANTES de salvar. Salvar primeiro deixaria o
   // usuário preso numa fonte fora do ar, sem entender por que nada carrega.
   const alive = await pingModSource(source.apiBase);
-  if (!alive) return { success: false, message: `${source.label} não respondeu.` };
+  if (!alive) return { success: false, message: `${source.label} didn't respond.` };
   store.set("modSourceKey", source.key);
   setModSource(source.key);
   return { success: true, activeKey: source.key };
@@ -282,7 +283,7 @@ ipcMain.handle("check-forge-updates", async (_event, mods: { name: string; origi
     );
     return { success: true, result };
   } catch (err: any) {
-    return { success: false, message: err?.message || "Falha ao verificar atualizações." };
+    return { success: false, message: err?.message || "Failed to check for updates." };
   }
 });
 
@@ -312,7 +313,7 @@ ipcMain.handle(
       });
       return { success: true, result };
     } catch (err: any) {
-      return { success: false, message: err?.message || "Falha ao buscar mods na Forge." };
+      return { success: false, message: err?.message || "Failed to search mods on Forge." };
     }
   }
 );
@@ -325,14 +326,35 @@ ipcMain.handle("get-forge-categories", () => getForgeCategories());
  */
 ipcMain.handle("open-forge-mod-page", async (_event, modId: number) => {
   const destino = await resolveForgeModPageUrl(modId);
-  if (!destino) return { success: false, message: "Não achei a página desse mod na fonte." };
+  if (!destino) return { success: false, message: "Couldn't find this mod's page on the source." };
   // Mesma allowlist do resto: só abre o que pertence à fonte ativa.
-  if (!destino.startsWith(getModSource().siteUrl)) return { success: false, message: "Endereço fora da fonte ativa." };
+  if (!destino.startsWith(getModSource().siteUrl)) return { success: false, message: "Address is outside the active source." };
   shell.openExternal(destino);
   return { success: true };
 });
 
 ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
+
+// Dados pro relato de erro. O renderer não tem acesso a nada disso (sandbox), e
+// são justamente as três perguntas que todo relato precisa responder: qual versão
+// do app, qual sistema e onde reportar. homeDir vai junto só pra ser APAGADO do
+// texto antes de copiar: caminho com o nome de usuário do Windows não precisa
+// sair da máquina de ninguém.
+ipcMain.handle("get-diagnostics", () => ({
+  appVersion: app.getVersion(),
+  os: `${process.platform === "win32" ? "Windows" : os.type()} ${os.release()} (${process.arch})`,
+  homeDir: os.homedir(),
+  reportPage: getModSource().modManagerPage ?? null
+}));
+
+// Copiar pelo main em vez do navigator.clipboard: a API do navegador exige
+// contexto seguro e foco no documento, e página carregada de file:// nem sempre
+// conta como segura. A do Electron funciona sempre.
+ipcMain.handle("copy-text", (_event, texto: string) => {
+  if (typeof texto !== "string" || texto.length > 20000) return { success: false };
+  clipboard.writeText(texto);
+  return { success: true };
+});
 
 /** Páginas de crédito linkadas no rodapé. Ver a allowlist logo abaixo. */
 const CREDIT_URLS = ["https://github.com/GAVRIEL-911"];
@@ -438,7 +460,7 @@ ipcMain.handle(
     forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
   ) => {
     const sptPath = store.get("sptPath");
-    if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+    if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
     // O que já existe deste mesmo mod, pra instalação saber que é atualização.
     // Montado no processo principal e não no renderer pelo mesmo motivo da
@@ -461,24 +483,24 @@ ipcMain.handle(
 
 ipcMain.handle("install-mod", async () => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [{ name: "Arquivo de mod", extensions: ["zip", "7z", "rar"] }]
+    filters: [{ name: "Mod archive", extensions: ["zip", "7z", "rar"] }]
   });
-  if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelado." };
+  if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelled." };
 
   return installModFromArchive(sptPath, getServerRoot()!, result.filePaths[0]);
 });
 
 ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
   const ext = path.extname(filePath).toLowerCase();
   if (ext !== ".zip" && ext !== ".7z" && ext !== ".rar") {
-    return { success: false, message: `Arquivo "${path.basename(filePath)}" não é .zip, .7z nem .rar.` };
+    return { success: false, message: `File "${path.basename(filePath)}" isn't .zip, .7z, or .rar.` };
   }
 
   return installModFromArchive(sptPath, getServerRoot()!, filePath);
@@ -486,74 +508,74 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
 
 ipcMain.handle("install-mod-confirm", (_event, tmpDir: string, archivePath: string) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
   return finalizeUnrecognizedInstall(sptPath, getServerRoot()!, tmpDir, archivePath);
 });
 
 ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
   return discardPendingInstall(sptPath, tmpDir);
 });
 
 ipcMain.handle("toggle-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
   return toggleMod(sptPath, getServerRoot()!, mod);
 });
 
 ipcMain.handle("uninstall-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
   return uninstallMod(sptPath, getServerRoot()!, mod);
 });
 
 ipcMain.handle("rename-mod", (_event, modId: string, alias: string) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
   return setModAlias(sptPath, modId, alias);
 });
 
 ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
   const target = resolveModPath(sptPath, getServerRoot()!, mod);
   if (!fs.existsSync(target)) {
-    return { success: false, message: "Caminho do mod não encontrado: " + target };
+    return { success: false, message: "Mod path not found: " + target };
   }
   if (fs.statSync(target).isDirectory()) {
     shell.openPath(target);
   } else {
     shell.showItemInFolder(target);
   }
-  return { success: true, message: "Pasta aberta." };
+  return { success: true, message: "Folder opened." };
 });
 
 ipcMain.handle("export-mod-list", async () => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
   const data = exportModListData(sptPath, getServerRoot()!);
   const result = await dialog.showSaveDialog({
     defaultPath: "spt-modlist.json",
     filters: [{ name: "JSON", extensions: ["json"] }]
   });
-  if (result.canceled || !result.filePath) return { success: false, message: "Cancelado." };
+  if (result.canceled || !result.filePath) return { success: false, message: "Cancelled." };
 
   fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2), "utf-8");
-  return { success: true, message: `Lista exportada com ${data.mods.length} mod(s) para ${path.basename(result.filePath)}.` };
+  return { success: true, message: `List exported with ${data.mods.length} mod(s) to ${path.basename(result.filePath)}.` };
 });
 
 ipcMain.handle("import-mod-list", async () => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "Nenhuma instância SPT configurada." };
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
 
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
     filters: [{ name: "JSON", extensions: ["json"] }]
   });
-  if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelado." };
+  if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelled." };
 
   try {
     const raw = fs.readFileSync(result.filePaths[0], "utf-8");
@@ -562,7 +584,7 @@ ipcMain.handle("import-mod-list", async () => {
       ? parsed.mods.map((m: { name?: string }) => m.name).filter((n: unknown): n is string => typeof n === "string")
       : [];
     if (names.length === 0) {
-      return { success: false, message: "Esse arquivo não parece uma lista de mods exportada por este app." };
+      return { success: false, message: "This file doesn't look like a mod list exported by this app." };
     }
     // Repassa os GUIDs da lista (quando existirem) pra que a restauração case por
     // identificador exato em vez de tentar adivinhar pelo nome da pasta.
@@ -579,12 +601,12 @@ ipcMain.handle("import-mod-list", async () => {
     const comparison = compareModList(sptPath, getServerRoot()!, names);
     return {
       success: true,
-      message: `Comparado com ${names.length} mod(s) da lista importada.`,
+      message: `Compared against ${names.length} mod(s) from the imported list.`,
       comparison,
       guidByName,
       versionByName
     };
   } catch (err) {
-    return { success: false, message: "Erro ao ler o arquivo: " + (err as Error).message };
+    return { success: false, message: "Error reading the file: " + (err as Error).message };
   }
 });

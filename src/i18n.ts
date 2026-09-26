@@ -294,7 +294,15 @@ const pt: Dict = {
   "browse.sortUpdated": "Atualizados recentemente",
   "browse.sortCreated": "Adicionados recentemente",
   "browse.sortName": "Nome (A-Z)",
-  "confirm.ok": "Confirmar"
+  "confirm.ok": "Confirmar",
+  "error.details": "Detalhes",
+  "error.title": "Algo deu errado",
+  "error.hint": "Se parecer um bug, copie o erro e mande nos comentários da página do mod ou abra uma issue no GitHub.",
+  "error.technical": "Detalhe técnico",
+  "error.copy": "Copiar erro",
+  "error.copied": "Copiado!",
+  "error.reportPage": "Comentar na página do mod",
+  "error.reportGithub": "Abrir issue no GitHub"
 };
 
 const en: Dict = {
@@ -548,7 +556,15 @@ const en: Dict = {
   "browse.sortUpdated": "Recently updated",
   "browse.sortCreated": "Recently added",
   "browse.sortName": "Name (A-Z)",
-  "confirm.ok": "Confirm"
+  "confirm.ok": "Confirm",
+  "error.details": "Details",
+  "error.title": "Something went wrong",
+  "error.hint": "If this looks like a bug, copy the error and post it in the mod page comments or open a GitHub issue.",
+  "error.technical": "Technical details",
+  "error.copy": "Copy error",
+  "error.copied": "Copied!",
+  "error.reportPage": "Comment on the mod page",
+  "error.reportGithub": "Open a GitHub issue"
 };
 
 /**
@@ -787,7 +803,15 @@ const zh: Dict = {
   "browse.sortUpdated": "最近更新",
   "browse.sortCreated": "最近添加",
   "browse.sortName": "名称 (A-Z)",
-  "confirm.ok": "确认"
+  "confirm.ok": "确认",
+  "error.details": "详情",
+  "error.title": "出错了",
+  "error.hint": "如果这看起来像是错误，请复制错误信息并发到模组页面的评论区，或在 GitHub 上提交 issue。",
+  "error.technical": "技术细节",
+  "error.copy": "复制错误",
+  "error.copied": "已复制！",
+  "error.reportPage": "在模组页面评论",
+  "error.reportGithub": "在 GitHub 提交 issue"
 };
 
 const ru: Dict = {
@@ -1016,7 +1040,15 @@ const ru: Dict = {
   "browse.sortUpdated": "Недавно обновлённые",
   "browse.sortCreated": "Недавно добавленные",
   "browse.sortName": "По названию (A-Z)",
-  "confirm.ok": "Подтвердить"
+  "confirm.ok": "Подтвердить",
+  "error.details": "Подробнее",
+  "error.title": "Что-то пошло не так",
+  "error.hint": "Если это похоже на баг, скопируйте ошибку и напишите в комментариях на странице мода или создайте issue на GitHub.",
+  "error.technical": "Технические подробности",
+  "error.copy": "Скопировать ошибку",
+  "error.copied": "Скопировано!",
+  "error.reportPage": "Написать на странице мода",
+  "error.reportGithub": "Создать issue на GitHub"
 };
 
 const fr: Dict = {
@@ -1245,7 +1277,15 @@ const fr: Dict = {
   "browse.sortUpdated": "Mis à jour récemment",
   "browse.sortCreated": "Ajoutés récemment",
   "browse.sortName": "Nom (A-Z)",
-  "confirm.ok": "Confirmer"
+  "confirm.ok": "Confirmer",
+  "error.details": "Détails",
+  "error.title": "Un problème est survenu",
+  "error.hint": "Si cela ressemble à un bug, copiez l'erreur et publiez-la dans les commentaires de la page du mod ou ouvrez une issue sur GitHub.",
+  "error.technical": "Détails techniques",
+  "error.copy": "Copier l'erreur",
+  "error.copied": "Copié !",
+  "error.reportPage": "Commenter sur la page du mod",
+  "error.reportGithub": "Ouvrir une issue sur GitHub"
 };
 
 const ja: Dict = {
@@ -1474,7 +1514,15 @@ const ja: Dict = {
   "browse.sortUpdated": "最近更新された順",
   "browse.sortCreated": "最近追加された順",
   "browse.sortName": "名前順 (A-Z)",
-  "confirm.ok": "確認"
+  "confirm.ok": "確認",
+  "error.details": "詳細",
+  "error.title": "問題が発生しました",
+  "error.hint": "バグのようであれば、エラーをコピーして Mod ページのコメント欄に投稿するか、GitHub で issue を作成してください。",
+  "error.technical": "技術的な詳細",
+  "error.copy": "エラーをコピー",
+  "error.copied": "コピーしました",
+  "error.reportPage": "Mod ページにコメント",
+  "error.reportGithub": "GitHub で issue を作成"
 };
 
 const de: Dict = {
@@ -1703,7 +1751,15 @@ const de: Dict = {
   "browse.sortUpdated": "Kürzlich aktualisiert",
   "browse.sortCreated": "Kürzlich hinzugefügt",
   "browse.sortName": "Name (A-Z)",
-  "confirm.ok": "Bestätigen"
+  "confirm.ok": "Bestätigen",
+  "error.details": "Details",
+  "error.title": "Etwas ist schiefgelaufen",
+  "error.hint": "Wenn das nach einem Fehler aussieht, kopiere die Meldung und poste sie in den Kommentaren der Mod-Seite oder eröffne ein Issue auf GitHub.",
+  "error.technical": "Technische Details",
+  "error.copy": "Fehler kopieren",
+  "error.copied": "Kopiert!",
+  "error.reportPage": "Auf der Mod-Seite kommentieren",
+  "error.reportGithub": "Issue auf GitHub eröffnen"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };
@@ -1722,141 +1778,156 @@ export function translate(lang: Lang, key: string, vars?: Record<string, string 
 }
 
 /**
- * O backend (processo main / modManager.ts) sempre responde em português —
- * ele não sabe em qual idioma a UI está. Em vez de reescrever todas as ~50
- * mensagens do backend pra retornar códigos (grande refatoração, mais risco
- * de reintroduzir bug nas partes que acabamos de corrigir), a gente traduz
- * aqui na hora de exibir, casando contra o conjunto conhecido de mensagens.
- * Se uma mensagem nova não bater com nenhuma regra, mostra o texto original
- * (em português) em vez de quebrar — é um degrade aceitável.
+ * O backend (processo main / modManager.ts) fala INGLÊS. Ele não sabe em qual
+ * idioma a interface está, e inglês é o que qualquer usuário consegue colar num
+ * relato e o que dá pra procurar no código.
+ *
+ * Até a 0.6.3 era o contrário: o backend falava português e estas regras
+ * traduziam pra inglês. Toda mensagem nova precisava de uma regra, e a que
+ * ficava sem regra aparecia EM PORTUGUÊS pra um usuário gringo (issue #6, o erro
+ * 414 do lerJson). Agora, mensagem sem regra cai em inglês, que é o degrade certo.
+ *
+ * As regras abaixo só existem pra quem usa a interface em português ver as
+ * mensagens comuns na própria língua. Os outros idiomas veem o texto do backend.
+ * Erro técnico raro (resposta da API, exceção do Node) fica em inglês pra todo
+ * mundo, de propósito.
  */
 interface BackendMessageRule {
   pattern: RegExp;
-  en: (m: RegExpMatchArray, lang: Lang) => string;
+  pt: (m: RegExpMatchArray, lang: Lang) => string;
 }
 
 const BACKEND_MESSAGE_RULES: BackendMessageRule[] = [
   // --- Mensagens fixas (sem parte dinâmica) ---
-  { pattern: /^Nenhuma instância SPT configurada\.$/, en: () => "No SPT instance configured." },
-  { pattern: /^Cancelado\.$/, en: () => "Cancelled." },
-  { pattern: /^Pasta aberta\.$/, en: () => "Folder opened." },
-  { pattern: /^Nome restaurado pro original\.$/, en: () => "Name restored to original." },
-  { pattern: /^Nome atualizado\.$/, en: () => "Name updated." },
+  { pattern: /^No SPT instance configured\.$/, pt: () => "Nenhuma instância SPT configurada." },
+  { pattern: /^Cancelled\.$/, pt: () => "Cancelado." },
+  { pattern: /^Folder opened\.$/, pt: () => "Pasta aberta." },
+  { pattern: /^Name restored to original\.$/, pt: () => "Nome restaurado pro original." },
+  { pattern: /^Name updated\.$/, pt: () => "Nome atualizado." },
   {
-    pattern: /^Estrutura de arquivo incomum: não encontrei DLL, package\.json nem pasta user\/BepInEx\.$/,
-    en: () => "Unusual file structure: found no DLL, package.json, or user/BepInEx folder."
-  },
-  { pattern: /^Mod instalado e verificado \(estrutura completa detectada\)\.$/, en: () => "Mod installed and verified (full structure detected)." },
-  { pattern: /^Caminho temporário inválido\.$/, en: () => "Invalid temporary path." },
-  {
-    pattern: /^A extração temporária não existe mais — tente instalar o arquivo de novo\.$/,
-    en: () => "The temporary extraction no longer exists — try installing the file again."
-  },
-  { pattern: /^Instalação cancelada\.$/, en: () => "Installation cancelled." },
-  {
-    pattern: /^Esse item é um arquivo do próprio SPT \(não é um mod\) e não pode ser alternado\.$/,
-    en: () => "This item is one of SPT's own files (not a mod) and can't be toggled."
+    pattern: /^Unusual file structure: found no DLL, package\.json, or user\/BepInEx folder\.$/,
+    pt: () => "Estrutura de arquivo incomum: não encontrei DLL, package.json nem pasta user/BepInEx."
   },
   {
-    pattern: /^Esse item é um arquivo do próprio SPT \(não é um mod\) e não pode ser removido pelo Manager\.$/,
-    en: () => "This item is one of SPT's own files (not a mod) and can't be removed by the Manager."
+    pattern: /^Mod installed and verified \(full structure detected\)\.$/,
+    pt: () => "Mod instalado e verificado (estrutura completa detectada)."
   },
-  { pattern: /^Mod desabilitado\.$/, en: () => "Mod disabled." },
+  { pattern: /^Invalid temporary path\.$/, pt: () => "Caminho temporário inválido." },
   {
-    pattern: /^Mod desabilitado \((\d+) partes do pacote\)\.$/,
-    en: (m) => `Mod disabled (${m[1]} package parts).`
+    pattern: /^The temporary extraction no longer exists\. Try installing the file again\.$/,
+    pt: () => "A extração temporária não existe mais. Tente instalar o arquivo de novo."
   },
+  { pattern: /^Installation cancelled\.$/, pt: () => "Instalação cancelada." },
   {
-    pattern: /^Mod habilitado \((\d+) partes do pacote\)\.$/,
-    en: (m) => `Mod enabled (${m[1]} package parts).`
-  },
-  {
-    pattern: /^Mod removido \((\d+) partes do pacote\)\.$/,
-    en: (m) => `Mod removed (${m[1]} package parts).`
+    pattern: /^This item is one of SPT's own files \(not a mod\) and can't be toggled\.$/,
+    pt: () => "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser alternado."
   },
   {
-    pattern: /^Mod atualizado \((\d+) pasta\(s\) da versão anterior removida\(s\)\)\.$/,
-    en: (m) => `Mod updated (${m[1]} folder(s) from the previous version removed).`
+    pattern: /^This item is one of SPT's own files \(not a mod\) and can't be removed by the Manager\.$/,
+    pt: () => "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser removido pelo Manager."
   },
-  { pattern: /^Mod atualizado \(continua desabilitado\)\.$/, en: () => "Mod updated (still disabled)." },
-  { pattern: /^Não achei a página desse mod na fonte\.$/, en: () => "Couldn't find this mod's page on the source." },
-  { pattern: /^Endereço fora da fonte ativa\.$/, en: () => "Address is outside the active source." },
+  { pattern: /^Mod disabled\.$/, pt: () => "Mod desabilitado." },
+  { pattern: /^Mod enabled\.$/, pt: () => "Mod habilitado." },
+  { pattern: /^Mod removed\.$/, pt: () => "Mod removido." },
+  { pattern: /^Mod disabled \((\d+) package parts\)\.$/, pt: (m) => `Mod desabilitado (${m[1]} partes do pacote).` },
+  { pattern: /^Mod enabled \((\d+) package parts\)\.$/, pt: (m) => `Mod habilitado (${m[1]} partes do pacote).` },
+  { pattern: /^Mod removed \((\d+) package parts\)\.$/, pt: (m) => `Mod removido (${m[1]} partes do pacote).` },
   {
-    pattern: /^A pasta da instância não existe mais: (.+)\. Escolha a instância de novo em "Trocar instância"\.$/,
-    en: (m) => `The instance folder no longer exists: ${m[1]}. Pick the instance again under "Change instance".`
-  },
-  {
-    pattern: /^Mod desabilitado \(e (\d+) patcher\(s\) junto\)\.$/,
-    en: (m) => `Mod disabled (along with ${m[1]} patcher(s)).`
-  },
-  {
-    pattern: /^Mod habilitado \(e (\d+) patcher\(s\) junto\)\.$/,
-    en: (m) => `Mod enabled (along with ${m[1]} patcher(s)).`
-  },
-  { pattern: /^Mod habilitado\.$/, en: () => "Mod enabled." },
-  { pattern: /^Entrada removida da lista \(nenhum arquivo rastreado\)\.$/, en: () => "Entry removed from the list (no tracked files)." },
-  { pattern: /^Mod removido\.$/, en: () => "Mod removed." },
-  {
-    pattern: /^Mod instalado\. (\d+) arquivo\(s\) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação\.$/,
-    en: (m) => `Mod installed. ${m[1]} SPT core file(s) shipped inside the package were skipped, to avoid breaking the installation.`
+    pattern: /^Mod disabled \(along with (\d+) patcher\(s\)\)\.$/,
+    pt: (m) => `Mod desabilitado (e ${m[1]} patcher(s) junto).`
   },
   {
-    pattern: /^Mod removido \(e (\d+) arquivo\(s\) que vieram junto\)\.$/,
-    en: (m) => `Mod removed (along with ${m[1]} file(s) that came with it).`
-  },
-  { pattern: /^Pasta de server mods não existe\.$/, en: () => "Server mods folder doesn't exist." },
-  { pattern: /^Ordem de carregamento atualizada\.$/, en: () => "Load order updated." },
-  { pattern: /^Falha ao verificar atualizações\.$/, en: () => "Failed to check for updates." },
-  { pattern: /^Falha ao buscar mods na Forge\.$/, en: () => "Failed to search mods on Forge." },
-  {
-    pattern: /^Esse arquivo não parece uma lista de mods exportada por este app\.$/,
-    en: () => "This file doesn't look like a mod list exported by this app."
+    pattern: /^Mod enabled \(along with (\d+) patcher\(s\)\)\.$/,
+    pt: (m) => `Mod habilitado (e ${m[1]} patcher(s) junto).`
   },
   {
-    pattern: /^Não achei uma instância SPT nessa pasta nem nas subpastas diretas dela\. Selecione a pasta que tem o SPT\.Server\.exe\.$/,
-    en: () => "Couldn't find an SPT instance in that folder or its direct subfolders. Select the folder that has SPT.Server.exe."
+    pattern: /^Mod updated \((\d+) folder\(s\) from the previous version removed\)\.$/,
+    pt: (m) => `Mod atualizado (${m[1]} pasta(s) da versão anterior removida(s)).`
   },
-  { pattern: /^Informe a versão do SPT antes de verificar atualizações\.$/, en: () => "Enter the SPT version before checking for updates." },
+  { pattern: /^Mod updated \(still disabled\)\.$/, pt: () => "Mod atualizado (continua desabilitado)." },
+  { pattern: /^Couldn't find this mod's page on the source\.$/, pt: () => "Não achei a página desse mod na fonte." },
+  { pattern: /^Address is outside the active source\.$/, pt: () => "Endereço fora da fonte ativa." },
+  {
+    pattern: /^The instance folder no longer exists: (.+)\. Pick the instance again under "Change instance"\.$/,
+    pt: (m) => `A pasta da instância não existe mais: ${m[1]}. Escolha a instância de novo em "Trocar instância".`
+  },
+  {
+    pattern: /^Entry removed from the list \(no tracked files\)\.$/,
+    pt: () => "Entrada removida da lista (nenhum arquivo rastreado)."
+  },
+  {
+    pattern: /^Mod installed\. (\d+) SPT core file\(s\) shipped inside the package were skipped, to avoid breaking the installation\.$/,
+    pt: (m) => `Mod instalado. ${m[1]} arquivo(s) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação.`
+  },
+  {
+    pattern: /^Mod removed \(along with (\d+) file\(s\) that came with it\)\.$/,
+    pt: (m) => `Mod removido (e ${m[1]} arquivo(s) que vieram junto).`
+  },
+  { pattern: /^Failed to check for updates\.$/, pt: () => "Falha ao verificar atualizações." },
+  { pattern: /^Failed to search mods on Forge\.$/, pt: () => "Falha ao buscar mods na Forge." },
+  {
+    pattern: /^This file doesn't look like a mod list exported by this app\.$/,
+    pt: () => "Esse arquivo não parece uma lista de mods exportada por este app."
+  },
+  {
+    pattern: /^Couldn't find an SPT instance in that folder or its direct subfolders\. Select the folder that has SPT\.Server\.exe\.$/,
+    pt: () => "Não achei uma instância SPT nessa pasta nem nas subpastas diretas dela. Selecione a pasta que tem o SPT.Server.exe."
+  },
+  {
+    pattern: /^Enter the SPT version before checking for updates\.$/,
+    pt: () => "Informe a versão do SPT antes de verificar atualizações."
+  },
 
   // --- Mensagens com parte dinâmica (nome de arquivo, contagem, erro etc.) ---
   {
-    pattern: /^Instalação incompleta: arquivo não confirmado no destino \((.+)\)\.$/,
-    en: (m) => `Incomplete installation: file not confirmed at destination (${m[1]}).`
+    pattern: /^Incomplete installation: file not confirmed at destination \((.+)\)\.$/,
+    pt: (m) => `Instalação incompleta: arquivo não confirmado no destino (${m[1]}).`
   },
   {
-    pattern: /^Mod "(.+)" instalado e verificado como (server mod|client mod)\.$/,
-    en: (m) => `Mod "${m[1]}" installed and verified as a ${m[2] === "server mod" ? "server mod" : "client mod"}.`
+    pattern: /^Mod "(.+)" installed and verified as a (server mod|client mod)\.$/,
+    pt: (m) => `Mod "${m[1]}" instalado e verificado como ${m[2]}.`
   },
-  { pattern: /^Erro ao instalar: (.+)$/, en: (m, lang) => `Error installing: ${translateBackendMessage(m[1], lang)}` },
-  { pattern: /^(\d+) arquivo\(s\) órfão\(s\) removido\(s\)\.$/, en: (m) => `${m[1]} orphan file(s) removed.` },
-  { pattern: /^Arquivo\/pasta do mod não encontrado: (.+)$/, en: (m) => `Mod file/folder not found: ${m[1]}` },
-  { pattern: /^Mod não encontrado: (.+)$/, en: (m) => `Mod not found: ${m[1]}` },
-  { pattern: /^Não foi possível baixar o mod da Forge \(HTTP (\d+)\)\.$/, en: (m) => `Couldn't download the mod from Forge (HTTP ${m[1]}).` },
-  { pattern: /^Falha ao baixar\/instalar da Forge: (.+)$/, en: (m) => `Failed to download/install from Forge: ${m[1]}` },
-  { pattern: /^Instância encontrada automaticamente em: (.+)$/, en: (m) => `Instance automatically found at: ${m[1]}` },
+  { pattern: /^Error installing: (.+)$/, pt: (m, lang) => `Erro ao instalar: ${translateBackendMessage(m[1], lang)}` },
+  { pattern: /^(\d+) orphan file\(s\) removed\.$/, pt: (m) => `${m[1]} arquivo(s) órfão(s) removido(s).` },
+  { pattern: /^Mod file\/folder not found: (.+)$/, pt: (m) => `Arquivo/pasta do mod não encontrado: ${m[1]}` },
+  { pattern: /^Mod not found: (.+)$/, pt: (m) => `Mod não encontrado: ${m[1]}` },
   {
-    pattern: /^Instância dividida detectada — client em "(.+)", server em "(.+)"\.$/,
-    en: (m) => `Split instance detected — client at "${m[1]}", server at "${m[2]}".`
+    pattern: /^Couldn't download the mod from Forge \(HTTP (\d+)\)\.$/,
+    pt: (m) => `Não foi possível baixar o mod da Forge (HTTP ${m[1]}).`
   },
-  { pattern: /^Arquivo "(.+)" não é \.zip, \.7z nem \.rar\.$/, en: (m) => `File "${m[1]}" isn't .zip, .7z, or .rar.` },
-  { pattern: /^Caminho do mod não encontrado: (.+)$/, en: (m) => `Mod path not found: ${m[1]}` },
-  { pattern: /^Lista exportada com (\d+) mod\(s\) para (.+)\.$/, en: (m) => `List exported with ${m[1]} mod(s) to ${m[2]}.` },
-  { pattern: /^Comparado com (\d+) mod\(s\) da lista importada\.$/, en: (m) => `Compared against ${m[1]} mod(s) from the imported list.` },
-  { pattern: /^Erro ao ler o arquivo: (.+)$/, en: (m) => `Error reading the file: ${m[1]}` },
-  { pattern: /^Não foi possível consultar o Forge: (.+)$/, en: (m) => `Couldn't reach Forge: ${m[1]}` },
-  { pattern: /^Forge respondeu (\d+)$/, en: (m) => `Forge responded ${m[1]}` },
+  { pattern: /^Failed to download\/install from Forge: empty response\.$/, pt: () => "Falha ao baixar/instalar da Forge: resposta sem conteúdo." },
+  { pattern: /^Failed to download\/install from Forge: (.+)$/, pt: (m) => `Falha ao baixar/instalar da Forge: ${m[1]}` },
+  { pattern: /^Instance found automatically at: (.+)$/, pt: (m) => `Instância encontrada automaticamente em: ${m[1]}` },
   {
-    pattern: /^Arquivo rejeitado por segurança: entrada suspeita no \.(7z|rar|zip) \("(.+)"\)\.$/,
-    en: (m) => `File rejected for security reasons: suspicious entry in the .${m[1]} ("${m[2]}").`
+    pattern: /^Split instance detected: client at "(.+)", server at "(.+)"\.$/,
+    pt: (m) => `Instância dividida detectada: client em "${m[1]}", server em "${m[2]}".`
+  },
+  { pattern: /^File "(.+)" isn't \.zip, \.7z, or \.rar\.$/, pt: (m) => `Arquivo "${m[1]}" não é .zip, .7z nem .rar.` },
+  {
+    pattern: /^Unsupported archive format: (.+)\. Use \.zip, \.7z, or \.rar\.$/,
+    pt: (m) => `Formato de arquivo não suportado: ${m[1]}. Use .zip, .7z ou .rar.`
+  },
+  { pattern: /^Mod path not found: (.+)$/, pt: (m) => `Caminho do mod não encontrado: ${m[1]}` },
+  { pattern: /^List exported with (\d+) mod\(s\) to (.+)\.$/, pt: (m) => `Lista exportada com ${m[1]} mod(s) para ${m[2]}.` },
+  {
+    pattern: /^Compared against (\d+) mod\(s\) from the imported list\.$/,
+    pt: (m) => `Comparado com ${m[1]} mod(s) da lista importada.`
+  },
+  { pattern: /^Error reading the file: (.+)$/, pt: (m) => `Erro ao ler o arquivo: ${m[1]}` },
+  { pattern: /^Couldn't check for updates: (.+)$/, pt: (m) => `Não foi possível verificar atualizações: ${m[1]}` },
+  { pattern: /^(.+) didn't respond\.$/, pt: (m) => `${m[1]} não respondeu.` },
+  {
+    pattern: /^File rejected for security reasons: suspicious entry in the (\S+) \("(.+)"\)\.$/,
+    pt: (m) => `Arquivo rejeitado por segurança: entrada suspeita no ${m[1]} ("${m[2]}").`
   }
 ];
 
 export function translateBackendMessage(msg: string | undefined | null, lang: Lang): string {
   if (!msg) return msg ?? "";
-  if (lang === "pt-BR") return msg;
+  if (lang !== "pt-BR") return msg;
   for (const rule of BACKEND_MESSAGE_RULES) {
     const match = msg.match(rule.pattern);
-    if (match) return rule.en(match, lang);
+    if (match) return rule.pt(match, lang);
   }
-  return msg; // sem regra — melhor mostrar em PT do que quebrar a mensagem
+  return msg; // sem regra: fica em inglês, que é o idioma do backend
 }

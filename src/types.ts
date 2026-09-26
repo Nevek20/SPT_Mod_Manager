@@ -203,6 +203,8 @@ export interface ModManagerAPI {
   checkAppUpdate: () => Promise<AppUpdateInfo>;
   onForgeCheckProgress: (callback: (data: { done: number; total: number }) => void) => () => void;
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
+  getDiagnostics: () => Promise<{ appVersion: string; os: string; homeDir: string; reportPage: string | null }>;
+  copyText: (texto: string) => Promise<{ success: boolean }>;
   openForgeModPage: (modId: number) => Promise<{ success: boolean; message?: string }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string; version?: string }[]

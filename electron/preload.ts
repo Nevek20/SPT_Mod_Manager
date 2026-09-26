@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     return () => ipcRenderer.removeListener("forge-check-progress", handler);
   },
   openReleasePage: (url: string) => ipcRenderer.invoke("open-release-page", url),
+  getDiagnostics: () => ipcRenderer.invoke("get-diagnostics"),
+  copyText: (texto: string) => ipcRenderer.invoke("copy-text", texto),
   openForgeModPage: (modId: number) => ipcRenderer.invoke("open-forge-mod-page", modId),
   findForgeDownloadsForNames: (entries: { name: string; guid?: string }[]) =>
     ipcRenderer.invoke("find-forge-downloads-for-names", entries),

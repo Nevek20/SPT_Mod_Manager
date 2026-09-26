@@ -146,7 +146,7 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
     });
     const dangerous = entries.find(isDangerousEntryPath);
     if (dangerous) {
-      throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no ${ext} ("${dangerous}").`);
+      throw new Error(`File rejected for security reasons: suspicious entry in the ${ext} ("${dangerous}").`);
     }
     return;
   }
@@ -156,7 +156,7 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
     const { fileHeaders } = extractor.getFileList();
     for (const header of fileHeaders) {
       if (isDangerousEntryPath(header.name)) {
-        throw new Error(`Arquivo rejeitado por segurança: entrada suspeita no .rar ("${header.name}").`);
+        throw new Error(`File rejected for security reasons: suspicious entry in the .rar ("${header.name}").`);
       }
     }
     return;
@@ -209,7 +209,7 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
     return;
   }
 
-  throw new Error(`Formato de arquivo não suportado: ${ext}. Use .zip, .7z ou .rar.`);
+  throw new Error(`Unsupported archive format: ${ext}. Use .zip, .7z, or .rar.`);
 }
 
 /**
@@ -988,11 +988,11 @@ export function setModAlias(sptPath: string, modId: string, alias: string): { su
   if (trimmed.length === 0) {
     delete aliases[modId];
     saveAliases(sptPath, aliases);
-    return { success: true, message: "Nome restaurado pro original." };
+    return { success: true, message: "Name restored to original." };
   }
   aliases[modId] = trimmed;
   saveAliases(sptPath, aliases);
-  return { success: true, message: "Nome atualizado." };
+  return { success: true, message: "Name updated." };
 }
 
 // --- Manifesto de arquivos "órfãos" (mods hybrid instalados via merge sem pasta nomeada) ---
@@ -1543,7 +1543,7 @@ export async function installModFromArchive(
       const verification = verifyCopyRecursive(sourceDir, serverDest);
       if (!verification.ok) {
         cleanup(tmpExtractDir);
-        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+        return { success: false, message: `Incomplete installation: file not confirmed at destination (${verification.missing}).` };
       }
       type = "server";
     } else if (dllFiles.length > 0) {
@@ -1559,7 +1559,7 @@ export async function installModFromArchive(
         const verification = verifyCopyRecursive(path.join(tmpExtractDir, singleDir), clientDest);
         if (!verification.ok) {
           cleanup(tmpExtractDir);
-          return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+          return { success: false, message: `Incomplete installation: file not confirmed at destination (${verification.missing}).` };
         }
       } else {
         modId = path.parse(archivePath).name;
@@ -1568,7 +1568,7 @@ export async function installModFromArchive(
         const verification = verifyCopyRecursive(tmpExtractDir, clientDest);
         if (!verification.ok) {
           cleanup(tmpExtractDir);
-          return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+          return { success: false, message: `Incomplete installation: file not confirmed at destination (${verification.missing}).` };
         }
       }
       type = "client";
@@ -1586,7 +1586,7 @@ export async function installModFromArchive(
         tmpDir: tmpExtractDir,
         rootEntries,
         archivePath,
-        message: "Estrutura de arquivo incomum: não encontrei DLL, package.json nem pasta user/BepInEx."
+        message: "Unusual file structure: found no DLL, package.json, or user/BepInEx folder."
       };
     }
 
@@ -1604,10 +1604,10 @@ export async function installModFromArchive(
       forgeId: forgeInfo?.id,
       forgeSourceKey: forgeInfo?.id ? activeSource.key : undefined
     });
-    return { success: true, message: `Mod "${modId}" instalado e verificado como ${type === "server" ? "server mod" : "client mod"}.` };
+    return { success: true, message: `Mod "${modId}" installed and verified as a ${type === "server" ? "server mod" : "client mod"}.` };
   } catch (err) {
     cleanup(tmpExtractDir);
-    return { success: false, message: "Erro ao instalar: " + (err as Error).message };
+    return { success: false, message: "Error installing: " + (err as Error).message };
   }
 }
 
@@ -1734,7 +1734,7 @@ function performMerge(
     const verification = verifyCopyRecursive(userSrc, path.join(serverRoot, "user"));
     if (!verification.ok) {
       cleanup(tmpExtractDir);
-      return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+      return { success: false, message: `Incomplete installation: file not confirmed at destination (${verification.missing}).` };
     }
   }
   const skippedCoreFiles: string[] = [];
@@ -1747,7 +1747,7 @@ function performMerge(
       const verification = verifyCopyRecursive(srcPath, destPath, skippedCoreFiles, entry.name);
       if (!verification.ok) {
         cleanup(tmpExtractDir);
-        return { success: false, message: `Instalação incompleta: arquivo não confirmado no destino (${verification.missing}).` };
+        return { success: false, message: `Incomplete installation: file not confirmed at destination (${verification.missing}).` };
       }
     } else if (!isProtectedInstancePath(entry.name)) {
       ensureDir(clientRoot);
@@ -1873,19 +1873,19 @@ function performMerge(
   if (skippedCoreFiles.length > 0) {
     return {
       success: true,
-      message: `Mod instalado. ${skippedCoreFiles.length} arquivo(s) do núcleo do SPT vieram no pacote e foram ignorados, pra não quebrar a instalação.`
+      message: `Mod installed. ${skippedCoreFiles.length} SPT core file(s) shipped inside the package were skipped, to avoid breaking the installation.`
     };
   }
   if (reconciliado.pastasAntigasRemovidas > 0) {
     return {
       success: true,
-      message: `Mod atualizado (${reconciliado.pastasAntigasRemovidas} pasta(s) da versão anterior removida(s)).`
+      message: `Mod updated (${reconciliado.pastasAntigasRemovidas} folder(s) from the previous version removed).`
     };
   }
   if (reconciliado.mantidasDesabilitadas > 0) {
-    return { success: true, message: "Mod atualizado (continua desabilitado)." };
+    return { success: true, message: "Mod updated (still disabled)." };
   }
-  return { success: true, message: "Mod instalado e verificado (estrutura completa detectada)." };
+  return { success: true, message: "Mod installed and verified (full structure detected)." };
 }
 
 /**
@@ -2021,10 +2021,10 @@ export function finalizeUnrecognizedInstall(
   preferredDisplayName?: string
 ): InstallResult {
   if (!isOwnTempExtractDir(clientRoot, tmpDir)) {
-    return { success: false, message: "Caminho temporário inválido." };
+    return { success: false, message: "Invalid temporary path." };
   }
   if (!fs.existsSync(tmpDir)) {
-    return { success: false, message: "A extração temporária não existe mais — tente instalar o arquivo de novo." };
+    return { success: false, message: "The temporary extraction no longer exists. Try installing the file again." };
   }
   return performMerge(clientRoot, serverRoot, tmpDir, archivePath, tmpDir, preferredDisplayName);
 }
@@ -2032,10 +2032,10 @@ export function finalizeUnrecognizedInstall(
 // Usada quando o usuário aborta depois de revisar uma estrutura de arquivo incomum.
 export function discardPendingInstall(clientRoot: string, tmpDir: string): { success: boolean; message: string } {
   if (!isOwnTempExtractDir(clientRoot, tmpDir)) {
-    return { success: false, message: "Caminho temporário inválido." };
+    return { success: false, message: "Invalid temporary path." };
   }
   cleanup(tmpDir);
-  return { success: true, message: "Instalação cancelada." };
+  return { success: true, message: "Installation cancelled." };
 }
 
 // --- Habilitar/desabilitar (move entre pasta ativa e .disabled) ---
@@ -2070,7 +2070,7 @@ function findPackageSiblings(clientRoot: string, modId: string, modType: ModType
 
 export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
-    return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser alternado." };
+    return { success: false, message: "This item is one of SPT's own files (not a mod) and can't be toggled." };
   }
 
   const isServer = mod.type === "server";
@@ -2084,7 +2084,7 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
   const to = mod.enabled ? path.join(disabledDir, mod.id) : path.join(activeDir, mod.id);
 
   if (!fs.existsSync(from)) {
-    return { success: false, message: "Arquivo/pasta do mod não encontrado: " + from };
+    return { success: false, message: "Mod file/folder not found: " + from };
   }
   fs.renameSync(from, to);
 
@@ -2149,8 +2149,8 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
     return {
       success: true,
       message: mod.enabled
-        ? `Mod desabilitado (${movedSiblings + 1} partes do pacote).`
-        : `Mod habilitado (${movedSiblings + 1} partes do pacote).`
+        ? `Mod disabled (${movedSiblings + 1} package parts).`
+        : `Mod enabled (${movedSiblings + 1} package parts).`
     };
   }
 
@@ -2158,11 +2158,11 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
     return {
       success: true,
       message: mod.enabled
-        ? `Mod desabilitado (e ${movedPatchers} patcher(s) junto).`
-        : `Mod habilitado (e ${movedPatchers} patcher(s) junto).`
+        ? `Mod disabled (along with ${movedPatchers} patcher(s)).`
+        : `Mod enabled (along with ${movedPatchers} patcher(s)).`
     };
   }
-  return { success: true, message: mod.enabled ? "Mod desabilitado." : "Mod habilitado." };
+  return { success: true, message: mod.enabled ? "Mod disabled." : "Mod enabled." };
 }
 
 // --- Desinstalar ---
@@ -2185,7 +2185,7 @@ export function uninstallMod(
   jaRemovidos?: Set<string>
 ): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
-    return { success: false, message: "Esse item é um arquivo do próprio SPT (não é um mod) e não pode ser removido pelo Manager." };
+    return { success: false, message: "This item is one of SPT's own files (not a mod) and can't be removed by the Manager." };
   }
 
   // Mods "órfãos" (manifestOnly) não têm uma pasta própria com o nome do mod —
@@ -2199,7 +2199,7 @@ export function uninstallMod(
       // da lista pra não deixar um fantasma que ninguém consegue remover.
       removeManifestEntry(clientRoot, mod.id);
       removeFromRegistry(clientRoot, mod.id, mod.type);
-      return { success: true, message: "Entrada removida da lista (nenhum arquivo rastreado)." };
+      return { success: true, message: "Entry removed from the list (no tracked files)." };
     }
     let removedCount = 0;
     for (const relPath of files) {
@@ -2211,7 +2211,7 @@ export function uninstallMod(
     }
     removeManifestEntry(clientRoot, mod.id);
     removeFromRegistry(clientRoot, mod.id);
-    return { success: true, message: `${removedCount} arquivo(s) órfão(s) removido(s).` };
+    return { success: true, message: `${removedCount} orphan file(s) removed.` };
   }
 
   const isServer = mod.type === "server";
@@ -2219,7 +2219,7 @@ export function uninstallMod(
   const dir = p(base, mod.enabled ? (isServer ? SERVER_MODS_DIR : CLIENT_PLUGINS_DIR) : isServer ? SERVER_MODS_DISABLED_DIR : CLIENT_PLUGINS_DISABLED_DIR);
   const target = path.join(dir, mod.id);
   if (!fs.existsSync(target)) {
-    return { success: false, message: "Mod não encontrado: " + target };
+    return { success: false, message: "Mod not found: " + target };
   }
   fs.rmSync(target, { recursive: true, force: true });
 
@@ -2322,14 +2322,14 @@ export function uninstallMod(
   }
 
   if (partesRemovidas > 0) {
-    return { success: true, message: `Mod removido (${partesRemovidas + 1} partes do pacote).` };
+    return { success: true, message: `Mod removed (${partesRemovidas + 1} package parts).` };
   }
   return {
     success: true,
     message:
       linkedFilesRemoved > 0
-        ? `Mod removido (e ${linkedFilesRemoved} arquivo(s) que vieram junto).`
-        : "Mod removido."
+        ? `Mod removed (along with ${linkedFilesRemoved} file(s) that came with it).`
+        : "Mod removed."
   };
 }
 
@@ -2907,11 +2907,11 @@ async function lerJson(res: Response, ondeVeio: string): Promise<any> {
   try {
     return JSON.parse(texto);
   } catch {
-    const tipo = res.headers.get("content-type") || "sem content-type";
+    const tipo = res.headers.get("content-type") || "no content-type";
     const inicio = texto.trim().slice(0, 120).replace(/\s+/g, " ");
     throw new Error(
-      `${ondeVeio} respondeu ${res.status} ${res.statusText} em vez de JSON ` +
-        `(${tipo}). Começo da resposta: ${inicio || "(vazia)"}`
+      `${ondeVeio} responded ${res.status} ${res.statusText} instead of JSON ` +
+        `(${tipo}). Start of response: ${inicio || "(empty)"}`
     );
   }
 }
@@ -3791,7 +3791,7 @@ export async function checkForgeUpdates(
 ): Promise<ForgeUpdateCheckResult> {
   const trimmedVersion = sptVersion.trim();
   if (!trimmedVersion) {
-    throw new Error("Informe a versão do SPT antes de verificar atualizações.");
+    throw new Error("Enter the SPT version before checking for updates.");
   }
 
   const pairs: string[] = [];
@@ -3881,10 +3881,10 @@ export async function checkForgeUpdates(
         const res = await forgeFetch(url);
         json = await lerJson(res, activeSource.label);
         if (!res.ok || json?.success === false) {
-          throw new Error(json?.message || `Forge respondeu ${res.status}`);
+          throw new Error(json?.message || `${activeSource.label} responded ${res.status}`);
         }
       } catch (err: any) {
-        throw new Error(`Não foi possível consultar o Forge: ${err.message || err}`);
+        throw new Error(`Couldn't check for updates: ${err.message || err}`);
       }
       const parte = json.data || {};
       if (parte.spt_version) soma.spt_version = parte.spt_version;
@@ -4177,7 +4177,7 @@ export async function searchForgeMods(params: {
   const res = await forgeFetch(url.toString());
   const json: any = await lerJson(res, activeSource.label);
   if (!res.ok || json?.success === false) {
-    throw new Error(json?.message || `Forge respondeu ${res.status}`);
+    throw new Error(json?.message || `${activeSource.label} responded ${res.status}`);
   }
 
   // O filtro da Forge é por MOD, não por versão: ela devolve todo mod que tenha
@@ -4254,13 +4254,13 @@ export async function installForgeModVersion(
     if (!fs.existsSync(clientRoot)) {
       return {
         success: false,
-        message: `A pasta da instância não existe mais: ${clientRoot}. Escolha a instância de novo em "Trocar instância".`
+        message: `The instance folder no longer exists: ${clientRoot}. Pick the instance again under "Change instance".`
       };
     }
 
     const res = await fetch(downloadLink);
     if (!res.ok) {
-      return { success: false, message: `Não foi possível baixar o mod da Forge (HTTP ${res.status}).` };
+      return { success: false, message: `Couldn't download the mod from Forge (HTTP ${res.status}).` };
     }
 
     let ext = ".zip";
@@ -4283,7 +4283,7 @@ export async function installForgeModVersion(
     const totalBytes = Number(res.headers.get("content-length") || 0);
     const reader = res.body?.getReader();
     if (!reader) {
-      return { success: false, message: "Falha ao baixar/instalar da Forge: resposta sem conteúdo." };
+      return { success: false, message: "Failed to download/install from Forge: empty response." };
     }
     const fileHandle = fs.createWriteStream(tmpFilePath);
     // Stream de escrita reporta falha por EVENTO, não pela exceção do write().
@@ -4328,7 +4328,7 @@ export async function installForgeModVersion(
 
     return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName, forgeInfo);
   } catch (err: any) {
-    return { success: false, message: `Falha ao baixar/instalar da Forge: ${err.message || err}` };
+    return { success: false, message: `Failed to download/install from Forge: ${err.message || err}` };
   } finally {
     if (tmpFilePath && fs.existsSync(tmpFilePath)) {
       try {

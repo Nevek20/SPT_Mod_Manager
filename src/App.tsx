@@ -13,6 +13,7 @@ import {
   InstallResult,
   AppUpdateInfo, ModDependencyInfo } from "./types";
 import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
+import { Diagnostico, montaRelato, urlIssueGithub } from "./relatoErro";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 
@@ -20,6 +21,15 @@ interface Toast {
   id: number;
   text: string;
   ok: boolean;
+  /** Mensagem original do backend (em inglês). Só existe em erro que dá pra relatar. */
+  raw?: string;
+}
+
+/** Mensagens que vêm como falha mas são escolha do usuário, não defeito: sem "Detalhes". */
+const NAO_RELATAVEL = new Set(["Cancelled.", "Installation cancelled."]);
+
+function relatavel(raw?: string): raw is string {
+  return Boolean(raw) && !NAO_RELATAVEL.has(raw!.trim());
 }
 
 type TypeFilter = "all" | ModType;
@@ -93,7 +103,15 @@ function selectionKey(mod: ModInfo): string {
   return `${mod.type}:${mod.id}`;
 }
 
-function ToastStack({ toasts }: { toasts: Toast[] }) {
+function ToastStack({
+  toasts,
+  detalhesLabel,
+  onDetalhes
+}: {
+  toasts: Toast[];
+  detalhesLabel: string;
+  onDetalhes: (toast: Toast) => void;
+}) {
   if (toasts.length === 0) return null;
   return (
     <div className="toast-stack">
@@ -101,6 +119,11 @@ function ToastStack({ toasts }: { toasts: Toast[] }) {
         <div key={t.id} className={`toast ${t.ok ? "toast-ok" : "toast-error"}`}>
           {t.ok ? "✔ " : "❌ "}
           {t.text}
+          {!t.ok && relatavel(t.raw) && (
+            <button className="toast-details" onClick={() => onDetalhes(t)}>
+              {detalhesLabel}
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -178,6 +201,29 @@ export default function App() {
    * resolvia, que é exatamente a janela perdendo e recuperando o foco.
    */
   const [confirmacao, setConfirmacao] = useState<{ texto: string; responder: (ok: boolean) => void } | null>(null);
+
+  // Caixa de erro: o texto traduzido em cima, e o relato pronto pra copiar embaixo.
+  const [erroAberto, setErroAberto] = useState<{ texto: string; relato: string; raw: string } | null>(null);
+  const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
+  const [erroCopiado, setErroCopiado] = useState(false);
+
+  async function abrirErro(texto: string, raw: string) {
+    // Busca uma vez só: versão do app e sistema não mudam com o app aberto.
+    const diag = diagnostico ?? (await window.modManagerAPI.getDiagnostics());
+    if (!diagnostico) setDiagnostico(diag);
+    setErroCopiado(false);
+    setErroAberto({ texto, raw, relato: montaRelato(raw, diag, sptVersion) });
+  }
+
+  async function copiarErro() {
+    if (!erroAberto) return;
+    const r = await window.modManagerAPI.copyText(erroAberto.relato);
+    // Se falhar, o texto continua selecionável na caixa: nada se perde.
+    if (r.success) {
+      setErroCopiado(true);
+      window.setTimeout(() => setErroCopiado(false), 2000);
+    }
+  }
   const confirmar = useCallback(
     (texto: string) => new Promise<boolean>((resolve) => setConfirmacao({ texto, responder: resolve })),
     []
@@ -211,6 +257,7 @@ export default function App() {
     totalBytes?: number;
     startedAt?: number;
     message?: string;
+    raw?: string;
   }
   const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
 
@@ -245,8 +292,10 @@ export default function App() {
   function markQueueActive(id: string) {
     setDownloadQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: "active", startedAt: Date.now() } : q)));
   }
-  function markQueueDone(id: string, success: boolean, message?: string) {
-    setDownloadQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: success ? "done" : "error", message } : q)));
+  function markQueueDone(id: string, success: boolean, message?: string, raw?: string) {
+    setDownloadQueue((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, status: success ? "done" : "error", message, raw } : q))
+    );
     // Some da lista sozinho depois de um tempo, sem precisar de ação manual — erro fica
     // visível um pouco mais que sucesso, já que é mais provável que a pessoa queira ler.
     setTimeout(
@@ -263,12 +312,17 @@ export default function App() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  const pushToast = useCallback((text: string, ok: boolean) => {
+  const pushToast = useCallback((text: string, ok: boolean, raw?: string) => {
     const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, text, ok }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    setToasts((prev) => [...prev, { id, text, ok, raw: ok ? undefined : raw }]);
+    // 4s era pouco pra erro: o pessoal tirava print no meio da animação e o relato
+    // chegava cortado. Erro com "Detalhes" fica o bastante pra alguém clicar.
+    setTimeout(
+      () => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      },
+      !ok && relatavel(raw) ? 12000 : 4000
+    );
   }, []);
 
   const refreshMods = useCallback(async () => {
@@ -430,7 +484,7 @@ export default function App() {
       // Volta pro que estava: o backend não trocou (a fonte não respondeu ao
       // ping), então deixar o dropdown na nova mentiria sobre o estado real.
       setActiveSourceKey(anterior);
-      pushToast(tMsg(result.message) || t("toast.sourceFailed"), false);
+      pushToast(tMsg(result.message) || t("toast.sourceFailed"), false, result.message);
       return;
     }
     // Categorias e ids são POR FONTE — o que estava na tela é da fonte antiga.
@@ -462,7 +516,7 @@ export default function App() {
       // com um sptPath salvo).
       window.modManagerAPI.getForgeSptVersions().then(setForgeSptVersions);
     } else {
-      pushToast(tMsg(result.message) || t("toast.folderSelectFailed"), false);
+      pushToast(tMsg(result.message) || t("toast.folderSelectFailed"), false, result.message);
     }
   }
 
@@ -507,7 +561,7 @@ export default function App() {
     setLoading(true);
     const previousKeys = new Set(mods.map(selectionKey));
     const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installMod());
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     setLoading(false);
     if (result.success) {
       const updated = await refreshMods();
@@ -567,8 +621,8 @@ export default function App() {
       markQueueActive(queueId);
       const result = await installArchiveWithConfirmFlow(window.modManagerAPI.installModFromPath(filePath));
       if (result.success) successCount++;
-      markQueueDone(queueId, result.success, tMsg(result.message));
-      pushToast(tMsg(result.message), result.success);
+      markQueueDone(queueId, result.success, tMsg(result.message), result.message);
+      pushToast(tMsg(result.message), result.success, result.message);
     }
     setLoading(false);
     if (successCount > 0) {
@@ -580,7 +634,7 @@ export default function App() {
   async function handleToggle(mod: ModInfo) {
     setMutating(true);
     const result = await window.modManagerAPI.toggleMod(mod);
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     if (result.success) {
       // Atualização local (sem re-escanear o disco inteiro) — bem mais rápido com muitos mods.
       //
@@ -603,7 +657,7 @@ export default function App() {
     if (!confirmed) return;
     setMutating(true);
     const result = await window.modManagerAPI.uninstallMod(mod);
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     if (result.success) {
       const key = selectionKey(mod);
       forgetForgeStatus([mod.name]);
@@ -624,7 +678,7 @@ export default function App() {
 
   async function handleOpenFolder(mod: ModInfo) {
     const result = await window.modManagerAPI.openModFolder(mod);
-    if (!result.success) pushToast(tMsg(result.message), false);
+    if (!result.success) pushToast(tMsg(result.message), false, result.message);
   }
 
   async function handleReinstall() {
@@ -634,7 +688,7 @@ export default function App() {
 
   async function handleExportList() {
     const result = await window.modManagerAPI.exportModList();
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
   }
 
   /**
@@ -643,13 +697,13 @@ export default function App() {
    */
   function handleOpenModPage(modId: number) {
     void window.modManagerAPI.openForgeModPage(modId).then((r) => {
-      if (!r.success && r.message) pushToast(tMsg(r.message), false);
+      if (!r.success && r.message) pushToast(tMsg(r.message), false, r.message);
     });
   }
 
   async function handleImportList() {
     const result = await window.modManagerAPI.importModList();
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     if (!result.success || !result.comparison) return;
     setCompareResult(result.comparison);
 
@@ -703,7 +757,7 @@ export default function App() {
               guid: lookup.guid
             })
           );
-          markQueueDone(queueId, installResult.success, tMsg(installResult.message));
+          markQueueDone(queueId, installResult.success, tMsg(installResult.message), installResult.message);
           if (installResult.success) installedCount++;
           else failed.push(name);
         }
@@ -800,7 +854,7 @@ export default function App() {
     if (!response.success || !response.result) {
       const message = tMsg(response.message) || t("toast.forgeUpdateCheckFailed");
       setForgeError(message);
-      pushToast(message, false);
+      pushToast(message, false, response.message);
       return;
     }
     setForgeResult(response.result);
@@ -951,9 +1005,9 @@ export default function App() {
     const result = await installArchiveWithConfirmFlow(
       window.modManagerAPI.installForgeMod(queueId, downloadLink, modName, { name: modName, version, guid })
     );
-    markQueueDone(queueId, result.success, tMsg(result.message));
+    markQueueDone(queueId, result.success, tMsg(result.message), result.message);
     setUpdatingModName(null);
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     if (result.success) {
       // A etiqueta antiga fala da versão que acabou de sair do disco.
       forgetForgeStatus([modName]);
@@ -988,8 +1042,8 @@ export default function App() {
     const result = await installArchiveWithConfirmFlow(
       window.modManagerAPI.installForgeMod(queueId, link, nome, registro)
     );
-    markQueueDone(queueId, result.success, tMsg(result.message));
-    pushToast(tMsg(result.message), result.success);
+    markQueueDone(queueId, result.success, tMsg(result.message), result.message);
+    pushToast(tMsg(result.message), result.success, result.message);
     return result.success;
   }
 
@@ -1099,7 +1153,7 @@ export default function App() {
     const trimmed = editingValue.trim();
     const newAlias = trimmed === mod.originalName ? "" : trimmed;
     const result = await window.modManagerAPI.renameMod(mod.id, newAlias);
-    pushToast(tMsg(result.message), result.success);
+    pushToast(tMsg(result.message), result.success, result.message);
     setEditingKey(null);
     if (result.success) {
       const displayName = newAlias || mod.originalName;
@@ -1219,7 +1273,14 @@ export default function App() {
 
   return (
     <>
-      <ToastStack toasts={toasts} />
+      <ToastStack
+        toasts={toasts}
+        detalhesLabel={t("error.details")}
+        onDetalhes={(toast) => {
+          setToasts((prev) => prev.filter((x) => x.id !== toast.id));
+          void abrirErro(toast.text, toast.raw!);
+        }}
+      />
 
       {appUpdate?.updateAvailable && !updateDismissed && (
         <div className="update-banner">
@@ -1310,7 +1371,17 @@ export default function App() {
                   ))}
                 {item.status === "done" && <div className="queue-item-status queue-status-done-text">✔ {t("queue.done")}</div>}
                 {item.status === "error" && (
-                  <div className="queue-item-status queue-status-error-text">✕ {item.message ?? t("queue.failed")}</div>
+                  <div className="queue-item-status queue-status-error-text">
+                    ✕ {item.message ?? t("queue.failed")}
+                    {relatavel(item.raw) && (
+                      <button
+                        className="toast-details"
+                        onClick={() => abrirErro(item.message ?? item.raw!, item.raw!)}
+                      >
+                        {t("error.details")}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -1899,6 +1970,32 @@ export default function App() {
             )}
 
             <p className="compare-note">{t("browse.installNote")}</p>
+          </div>
+        </div>
+      )}
+
+      {erroAberto && (
+        <div className="modal-backdrop" onClick={() => setErroAberto(null)}>
+          <div className="modal-box error-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="error-box-title">{t("error.title")}</h3>
+            <p className="confirm-message">{erroAberto.texto}</p>
+            <p className="error-box-label">{t("error.technical")}</p>
+            <pre className="error-box-report">{erroAberto.relato}</pre>
+            <p className="error-box-hint">{t("error.hint")}</p>
+            <div className="confirm-structure-actions error-box-actions">
+              <button className="primary" autoFocus onClick={copiarErro}>
+                {erroCopiado ? t("error.copied") : t("error.copy")}
+              </button>
+              {diagnostico?.reportPage && (
+                <button onClick={() => window.modManagerAPI.openReleasePage(diagnostico.reportPage!)}>
+                  {t("error.reportPage")}
+                </button>
+              )}
+              <button onClick={() => window.modManagerAPI.openReleasePage(urlIssueGithub(erroAberto.raw, erroAberto.relato))}>
+                {t("error.reportGithub")}
+              </button>
+              <button onClick={() => setErroAberto(null)}>{t("common.close")}</button>
+            </div>
           </div>
         </div>
       )}

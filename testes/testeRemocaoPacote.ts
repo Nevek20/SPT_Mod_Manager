@@ -70,7 +70,7 @@ console.log("\ncascata pelo packageSiblings (o que o scan entrega)");
     packageSiblings: [{ id: "WTT-ServerCommonLib", type: "server" }]
   });
   check("remove as DUAS metades", existe(raiz), { server: false, client: false });
-  check("e diz quantas partes saíram", r.message, "Mod removido (2 partes do pacote).");
+  check("e diz quantas partes saíram", r.message, "Mod removed (2 package parts).");
   fs.rmSync(raiz, { recursive: true, force: true });
 }
 
@@ -114,7 +114,7 @@ console.log("\nnao pode entrar em recursao infinita");
     ...base,
     packageSiblings: [{ id: "WTT-ServerCommonLib", type: "server" }, { id: "WTT-ClientCommonLib", type: "client" }]
   });
-  check("termina e reporta 2 partes, nao 3", r.message, "Mod removido (2 partes do pacote).");
+  check("termina e reporta 2 partes, nao 3", r.message, "Mod removed (2 package parts).");
   fs.rmSync(raiz, { recursive: true, force: true });
 }
 
@@ -133,7 +133,7 @@ console.log("\nmod solo nao muda de comportamento");
     name: "SoloMod",
     type: "server"
   });
-  check("remove e usa a mensagem simples", r.message, "Mod removido.");
+  check("remove e usa a mensagem simples", r.message, "Mod removed.");
   check("pasta some", fs.existsSync(path.join(raiz, "user", "mods", "SoloMod")), false);
   fs.rmSync(raiz, { recursive: true, force: true });
 }
@@ -149,7 +149,7 @@ console.log("\nirma ja ausente do disco nao quebra");
     packageSiblings: [{ id: "WTT-ServerCommonLib", type: "server" }]
   });
   check("segue sem erro", r.success, true);
-  check("e nao conta como parte removida", r.message, "Mod removido.");
+  check("e nao conta como parte removida", r.message, "Mod removed.");
   fs.rmSync(raiz, { recursive: true, force: true });
 }
 

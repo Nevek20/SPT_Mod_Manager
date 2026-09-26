@@ -1459,10 +1459,6 @@ h2 {
   color: var(--text);
   white-space: pre-line;
 }
-.update-after-note {
-  opacity: 0.7;
-  font-size: 0.85em;
-}
 /*
 ⣿⣿⣿⣿⡟⣶⣾⣿⣾⣧⣮⣡⡃⠀⠀⡐⣀⣀⣾⣿⣿⣿⣿⣿⣿⣵⣋⡀⠛⣻⢿⣿⡿⣿⣇
 ⣿⣿⣿⣿⠉⠋⢁⣈⡽⠼⠒⠛⠛⠛⠉⠉⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣯⣾⢋⣅⣿⠙
@@ -1479,3 +1475,48 @@ WOW TATIKAWA HIIIIIIII!!!!!
 i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot of things... sorry folks.........
 */
 /* Nota nos updates que só destravam depois dos de cima serem instalados. */
+.update-after-note {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+/* Botão "Detalhes" nos erros que dá pra relatar (toast e fila de download). */
+.toast-details {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+}
+
+/* Caixa de erro com o relato pronto pra copiar. */
+.error-box {
+  max-width: 660px;
+}
+.error-box-title {
+  margin: 0 0 8px;
+}
+.error-box-label {
+  margin: 12px 0 4px;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+.error-box-report {
+  margin: 0;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8em;
+  user-select: text;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+.error-box-hint {
+  margin: 12px 0 0;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.error-box-actions {
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
