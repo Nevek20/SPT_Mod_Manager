@@ -15,7 +15,7 @@ import fs from "fs";
 import path from "path";
 import ts from "typescript";
 import { translateBackendMessage } from "../src/i18n";
-import { apagaHome, montaRelato, urlIssueGithub } from "../src/relatoErro";
+import { apagaHome, montaRelato, urlIssueGithub } from "../src/reportError";
 
 let ok = 0;
 let fail = 0;

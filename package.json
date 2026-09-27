@@ -17,8 +17,8 @@
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "electron:dev": "npm run build && electron .",
     "electron:build": "npm run build && electron-builder",
-    "teste": "tsx testes/testeArvore.ts && tsx testes/testePeVersion.ts && tsx testes/testeCache.ts && tsx testes/testeDeteccao.ts && tsx testes/testeCompat.ts && tsx testes/testeJson.ts && tsx testes/testeMetadata.ts && tsx testes/testeDependencias.ts && tsx testes/testeRemocaoPacote.ts && tsx testes/testeMarcacaoInstalado.ts && tsx testes/testeRestauracao.ts && tsx testes/testeRaizFusao.ts && tsx testes/testeAtualizacao.ts && tsx testes/testeVersaoInstalada.ts && tsx testes/testeUrlLonga.ts && tsx testes/testeMensagens.ts && tsx testes/verificaTraducoes.ts",
-    "preversion": "npm run teste"
+    "test": "tsx tests/testTree.ts && tsx tests/testPeVersion.ts && tsx tests/testCache.ts && tsx tests/testDetection.ts && tsx tests/testCompat.ts && tsx tests/testJson.ts && tsx tests/testMetadata.ts && tsx tests/testDependencies.ts && tsx tests/testRemovePackage.ts && tsx tests/testMarkedInstalled.ts && tsx tests/testRestoration.ts && tsx tests/testRootFusion.ts && tsx tests/testUpdate.ts && tsx tests/testInstalledVersion.ts && tsx tests/testLongURL.ts && tsx tests/testMessages.ts && tsx tests/checkTranslations.ts",
+    "preversion": "npm test"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

@@ -1,184 +1,177 @@
 # SPT Mod Manager
 
+[![Latest release](https://img.shields.io/github/v/release/Nevek20/SPT_Mod_Manager?label=release)](https://github.com/Nevek20/SPT_Mod_Manager/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Nevek20/SPT_Mod_Manager/total?label=GitHub%20downloads)](https://github.com/Nevek20/SPT_Mod_Manager/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 🇧🇷 Leia em Português: [README_pt-BR.md](README_pt-BR.md)
 
-A **Vortex / Mod Organizer 2**-style mod manager, built specifically for **SPT**.
+A mod manager in the spirit of **Vortex** and **Mod Organizer 2**, built specifically for **SPT**.
 
-A desktop app (Electron + React + TypeScript) that handles installing, organizing, enabling/disabling, and removing mods without manually messing with folders — while staying compatible with mods you already installed by hand.
+Install, update, enable, disable and remove mods without digging through folders. Browse the mod catalogue and install in one click, with dependencies pulled in automatically. Mods you already installed by hand keep working and show up in the list like any other.
 
-Styled with its own "tactical manifest" look — condensed headers, monospace technical data, a warm accent color — rather than a generic dark-mode template.
+> ⚠️ Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners.
 
-> ⚠️ Personal project, not affiliated with the SPT team or Battlestate Games. Tarkov and Escape from Tarkov are trademarks of their respective owners. ⚠️
+![Main window](docs/screenshot.png)
+
+---
+
+## Download
+
+**[Get the latest installer from Releases](https://github.com/Nevek20/SPT_Mod_Manager/releases/latest)** (`SPT-Mod-Manager-x.x.x-win-x64.exe`), or from the [mod page on sp-mod.com](https://sp-mod.com/mod/2851/spt-mod-manager).
+
+1. Run the installer.
+2. Windows SmartScreen may warn about an unrecognized app, because the installer isn't code-signed. Click **More info → Run anyway**.
+3. Open the app and point it at your SPT folder. It finds the instance on its own, including setups where the client and the server live in different folders.
+
+The app can also check for new versions of itself, so you don't have to come back here.
+
+**Requirements:** Windows 10 or 11 (x64) and an existing SPT install. Linux and macOS aren't officially supported yet.
 
 ---
 
 ## Features
 
-**Installation**
-- Install mods from `.zip`, `.7z`, or `.rar`, via file picker or drag-and-drop straight into the window
-- Automatic structure detection — works even when the mod is wrapped in extra folders (e.g. `SPT/user/mods/ModName/...`)
-- Type detection: Server, Client, or Hybrid (when the mod has both parts)
-- Post-install verification: checks file by file that everything was copied correctly before reporting success
+### Browse and install
+- Search the catalogue from inside the app, by name or category, sorted by downloads, recently updated, recently added or name.
+- Filter to mods compatible with your SPT version, and pick which version of a mod to install.
+- One click downloads and installs. Big downloads stream straight to disk, with progress, percentage and speed in the download queue.
+- Install your own `.zip`, `.7z` or `.rar` files with the file picker or by dragging them onto the window.
+- Archives with odd layouts (extra wrapper folders, loose files next to `user/`) are handled. If the app can't tell what an archive is, it shows you its contents and asks, instead of guessing.
 
-**Organization**
-- Enable/disable mods without deleting anything (moves between an active folder and a `.disabled` one)
-- Rename a mod's display name (alias) without touching any real file or folder
-- Detects manually installed mods (outside the app) and distinguishes them from "installed by the Manager"
-- Export the current mod list to a JSON file, and import a previous export to compare it against what's currently installed (shows what's missing / extra). For anything missing, offers to automatically look it up and download it from Forge (matched by name, same exact-match lookup used for update checking); for anything extra (installed now but not in the imported list), offers to disable it. Whatever Forge can't find by name still needs a manual install.
-- "Hybrid" mods installed via merge that leave loose files with no folder of their own still show up as an "Orphan" row, tracked through a manifest — removable cleanly even without a named folder
+![Browse tab](docs/screenshot2.png)
 
-**Reliability**
-- Conflict detection: duplicate DLL names across different client mods, and server mods declaring the same `name` in different folders
-- Automatic SPT version detection (read from the instance's `core.json`), shown in the summary — on SPT 4.0+ installs, `core.json` no longer stores the SPT version itself, so it falls back to showing the compatible game version instead
-- Checks your installed mods against [Forge](https://forge.sp-tarkov.com)'s public API for updates, with a per-mod inline status chip: update available, update blocked by a dependency conflict, incompatible with your SPT version, or — for mods with no locally-readable version (e.g. `.dll`-only mods with no `package.json`) — the latest version Forge knows about
-- Search/browse the Forge catalogue from inside the app (by name, category, and optionally filtered to your selected SPT version) and install a mod in one click — it downloads the chosen version and runs it through the same installer as a manually picked archive
-- SPT version picker pulled straight from Forge's own version list (with a mod count per version) instead of free text
-- Bilingual UI (Portuguese/English), with a PT/EN toggle in the corner — including error/confirmation messages
-- Archive entries are validated before extraction (.7z, .rar) or sanitized during it (.zip) to reject anything trying to write outside the target folder
-- A download queue panel (bottom-right) shows per-item progress, percentage, and speed for Forge installs, plus a visible queue when installing several files at once via drag-and-drop
-- Never lists or touches SPT's own core client files (e.g. `BepInEx/plugins/spt/spt-core.dll`) as if they were a mod, even under "select all + remove"
-- If an installed archive's structure isn't recognized (no DLL, no `package.json`, no `user`/`BepInEx` folder), shows a confirmation dialog with the archive's root contents instead of silently failing or guessing
-- A newly installed mod gets checked against Forge right away, without re-querying every other mod you'd already checked
-- Check results and the "last checked" timestamp persist across restarts
+### Dependencies
+- Before installing, the app asks the source which mods this one needs and compares that with what you have.
+- Missing or outdated dependencies are listed with their size, and **Install all** gets them first, then the mod.
+- Search results show a badge on mods that need something you don't have.
+- Mods that are made of several parts (server + client) are treated as one package: enabling, disabling or removing one part takes the others along.
 
-**Finding what you need**
-- Real-time search by name
-- Filters by type, status (enabled/disabled), and origin (manual/Manager)
-- Sort by name, type, status, origin, or install date
-- Multi-select with bulk actions (enable/disable/remove several at once), including Shift+Click for range selection
+### Updates
+- **Check for updates** compares every installed mod against the source, with a status chip on each row: update available, blocked, incompatible with your SPT version.
+- **Update all** installs everything in dependency order. When mod A needs the new version of mod B, B goes first.
+- Updating keeps what you had: a disabled mod stays disabled, and if the new version renamed its folder, the old one is removed instead of left behind to load twice.
 
-**Interface**
-- Cards showing type, status, origin, and — when available — mod version and author
-- Per-mod action menu: enable/disable, open folder, rename, reinstall, remove (orphan entries only show rename/remove, since they don't have a folder of their own to enable or open)
-- Instance summary in the header (total mods, breakdown by type, enabled/disabled, detected SPT version)
-- Temporary success/error notifications
+### Organize
+- Enable and disable without deleting anything.
+- A tree view groups multi-part mods under one row, with filters by type, status and origin, and sorting by name, type, status, origin or install date.
+- Rename how a mod shows up without touching any real file.
+- Select several mods (Shift+Click for a range) and enable, disable or remove them at once.
+- Open a mod's folder (either half, for server + client mods) or its page on the source.
 
----
+### Mod lists
+- Export your mod list to a file, and import it on another PC or a fresh install.
+- On import, the app compares against what's installed, downloads the exact versions that are missing and offers to disable the extras.
 
-## Screenshots
+### Safety
+- SPT's own files (like `spt-core.dll`) are never listed or touched as if they were mods, and a mod that ships its own copy can't overwrite yours.
+- Archive entries are checked before extraction, so nothing can write outside the SPT folder.
+- Every install is verified file by file before reporting success.
+- Conflict check: flags duplicate DLLs across client mods and server mods declaring the same name.
 
-![main 1](docs/screenshot.png)
-![main 2](docs/screenshot2.png)
-
+### Languages
+English, Português, 中文, Русский, Français, 日本語 and Deutsch, picked from your system language on first launch.
 
 ---
 
-## Getting Started
+## Found a bug?
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) 18 or later
-- Windows (the app assumes Windows-style SPT folder conventions; not tested on Linux/macOS)
-- An existing SPT instance installed somewhere on your PC
+When something fails, the error has a **Details** button. It opens a box with:
 
-### Development
+- **Copy error**: the error plus the app version, SPT version and Windows version, which is exactly what's needed to look into it. Your Windows username is removed from any path.
+- **Open a GitHub issue**: opens a new issue with all of that already filled in.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/spt-mod-manager.git
-cd spt-mod-manager
-npm install
-npm run electron:dev
-```
-
-This builds the renderer (Vite) + the main process (`tsc`) and opens the Electron window.
-
-If you just want to work on the UI without opening Electron (faster to iterate on CSS/layout):
-```bash
-npm run dev
-```
-In this mode `window.modManagerAPI` doesn't exist, so anything depending on the backend will fail — it's just for visuals.
-
-### Building the installer (Windows)
-
-```bash
-npm run electron:build
-```
-Generates a `.exe` via `electron-builder` (configuration already set in `package.json`).
+You can also post it in the comments on the [sp-mod.com page](https://sp-mod.com/mod/2851/spt-mod-manager).
 
 ---
 
-## Project structure
+## How it works
 
-```
-spt-mod-manager/
-├── electron/
-│   ├── main.ts         # Electron window + IPC handlers
-│   ├── preload.ts       # exposes window.modManagerAPI to the renderer (contextIsolation)
-│   ├── modManager.ts    # all the filesystem logic (scan, install, enable, etc)
-│   └── types.ts         # shared types on the Electron side
-├── src/
-│   ├── App.tsx           # the whole React UI
-│   ├── App.css           # styles
-│   ├── main.tsx           # React entry point
-│   └── types.ts           # types + interface for the API exposed by preload
-├── package.json
-└── vite.config.ts
-```
-
----
-
-## How it works under the hood
-
-### Folder conventions used
+### Where mods live
 | What | Where |
 |---|---|
-| Active server mods | `<instance>/user/mods/` |
-| Disabled server mods | `<instance>/user/mods.disabled/` |
-| Active client mods | `<instance>/BepInEx/plugins/` |
-| Disabled client mods | `<instance>/BepInEx/plugins.disabled/` |
+| Active server mods | `<SPT>/user/mods/` |
+| Disabled server mods | `<SPT>/user/mods.disabled/` |
+| Active client mods | `<SPT>/BepInEx/plugins/` |
+| Disabled client mods | `<SPT>/BepInEx/plugins.disabled/` |
+
+### Mod sources
+The catalogue comes from [sp-mod.com](https://sp-mod.com) by default, with [Forge Alt](https://forge-alt.katrinfoxvr.com) as a second option. Both use the same API and the same mod IDs, so switching between them doesn't lose anything. The app is read-only toward them and needs no account or API key.
+
+### Recognizing installed mods
+SPT 4.x mods declare an ID (`com.author.mod`), a version and their dependencies inside their DLL, and the app reads them from there. That ID is what links a mod on disk to the catalogue, and most mods are resolved in a single batched request. Mods without one fall back to name matching, and every hit is double-checked, because a wrong match is worse than none. Once found, the catalogue ID is cached, so later checks take seconds.
+
+For mods installed through the app, the version the source reported at install time wins over the one in the DLL: some authors forget to bump the number inside the DLL, which would otherwise show an update forever.
 
 ### Load order
-This was a manual thing (up/down buttons renaming folders with a numeric prefix, `01_modname`, `02_othermod`, ...) for SPT 3.11-era server mods, which load in alphabetical order. Starting with SPT 4.0, mods appear to handle their own load order automatically — manually forcing a numeric prefix caused real problems, so the reorder buttons and the renaming logic behind them were removed. The app still reads an existing numeric prefix if a folder has one (for display and sorting), it just never writes one anymore.
+SPT 4.x mods handle their own load order, so the app doesn't rename folders or force any order. Older folders with a numeric prefix (`01_modname`) are still read and sorted correctly.
 
-### Control files (at the instance root)
-- `.spt-mod-manager-registry.json` — tracks which mods were installed by the app (to tell them apart from "manually installed"), along with the details Forge reported at install time
-- `.spt-mod-manager-aliases.json` — custom display names (renaming doesn't touch any real file)
-- `.spt-mod-manager-manifest.json` — loose files that came with a mod but live outside its own folder, so they can be removed with it
-- `.spt-mod-manager-forge-match.json` — cached Forge identifiers, so an update check doesn't re-derive them every time (see below)
-
-### "Smart" installation
-When installing a `.zip`/`.7z`/`.rar`, the app searches recursively (not just at the archive's root) for a folder containing `user/` and/or `BepInEx/` — this covers both "ready to copy" mods and mods wrapped in an extra folder. If that structure isn't found, it tries to identify whether it's a server mod (via `package.json`) or a client mod (via `.dll`) and installs it in the right place.
-
-### Forge integration
-The app talks to [Forge](https://forge.sp-tarkov.com)'s public API (`forge.sp-tarkov.com/api/v0`) — the SPT team's own official mod platform. It's read-only and needs no API key.
-
-**Matching an installed mod to its Forge entry.** SPT 4.0 mods declare a GUID (`com.author.mod`) inside their compiled DLL, and the app reads it from there. That's the good path: the GUID is exact, and Forge's API accepts them in batches, so most mods resolve in a single request. Mods that don't declare one fall back to deriving candidates from the folder name — slug, name, name without the author prefix, then a full-text search — verifying each result before accepting it, since a wrong match is worse than no match. Matching always uses the mod's real folder-derived name, never a display alias, so renaming a mod for your own organization can't break it.
-
-**Rate limits, and what they mean for you.** Forge limits requests per IP: 40 per 10 seconds (burst) and 200 per 60 seconds (sustained). The app paces itself just under the sustained limit and honours the `Retry-After` header if it's ever throttled. In practice the sustained window is the binding one, so a mod that has to go through all four name-based strategies costs a bit over a second — a first update check on a large install can take around a minute. Mods with a GUID skip all of that.
-
-Because of that cost, resolved identifiers are cached per instance (`.spt-mod-manager-forge-match.json`), so later checks resolve everything in the batched request instead. On a ~140-mod install that's roughly a minute for the first check and a couple of seconds afterwards.
-
-**Versions.** Starting with SPT 4.0, server mods no longer declare their version in `package.json` — that moved into a metadata class inside the mod's own code, which the app reads from the DLL. A mod with no readable local version still gets looked up, and the latest known Forge version is shown as information rather than as an available update, since there's nothing local to compare it against.
+### Files the app keeps in your SPT folder
+- `.spt-mod-manager-registry.json`: which mods the app installed, and what the source said about them
+- `.spt-mod-manager-aliases.json`: your custom display names
+- `.spt-mod-manager-manifest.json`: loose files a mod brought along outside its own folder, so they're removed with it
+- `.spt-mod-manager-forge-match.json`: cached catalogue IDs for faster update checks
 
 ---
 
 ## Known limitations
 
-- **"Hybrid" mods installed via merge** show up as an "Orphan" row tracked through a manifest, but only support rename/remove — no enable/disable as a unit, since there's no folder of their own to move.
-- **"Reinstall"** in the action menu opens the generic file picker (it doesn't keep the original `.zip`/`.7z`/`.rar`) — works well for updating a mod to a new version, but isn't a true one-click "reinstall this exact thing."
-- **Conflict detection is file-level**, not semantic — it flags duplicate DLLs and duplicate server mod names, but has no idea whether two mods actually touch the same thing in-game.
-- **Forge matching for update-checking is name-based**, not by a stable ID — a very generic mod name, or a mod not listed on Forge, won't be found (the new search/browse tab doesn't have this problem, since it talks to Forge's catalogue directly by ID).
-- **Forge search filtering by SPT version filters the mod, not each version** — the API applies `filter[spt_version]` at the mod level, so the version dropdown for a matching mod can still include versions built for other SPT releases; check the SPT constraint shown next to each version before installing.
-- Only tested on Windows.
+- **Conflict detection is file-level.** It catches duplicate DLLs and duplicate server mod names, but can't tell whether two mods change the same thing in-game.
+- **Two mods can pin different versions of the same library.** Only one copy fits on disk, so the last one installed wins. The dependency dialog shows which other mods use a library before you update it.
+- **Reinstall asks for the file again.** Keeping every archive would double the disk space of your mods (a 3 GB mod would take 6 GB).
+- **Mods that aren't on the catalogue** can be installed and managed, but can't be checked for updates.
+- **Windows only**, for now.
 
 ---
 
-## Roadmap
+## Development
 
-Done (moved up into Features ⬆️):
-- [x] Conflict detection between mods (file-level)
-- [x] Automatic SPT version detection in the header summary
-- [x] Install manifest for hybrid mods (they show up in the list and can be removed cleanly)
-- [x] Update checking against Forge, with per-mod inline status and a version picker sourced from Forge itself
-- [x] Full mod search/browse/one-click install from Forge
-- [x] Zip-slip hardening on archive extraction (.zip was already safe via AdmZip's own path sanitization; .7z and .rar now get their entry list validated before extraction, rejecting the whole archive if anything tries to escape the target folder)
-- [x] Download queue with per-item progress (bytes/percentage/speed) for Forge installs, plus queue visibility for batch drag-and-drop installs
+Requires [Node.js](https://nodejs.org/) 18 or later.
 
-Considered and decided against:
-- Reinstall remembering the original archive file — would double disk usage for every installed mod (a 3GB mod becomes 6GB on disk just sitting there in case of a future reinstall). Re-prompting for the file, like today, is the better tradeoff.
+```bash
+git clone https://github.com/Nevek20/SPT_Mod_Manager.git
+cd SPT_Mod_Manager
+npm install
+npm run electron:dev     # build and open the app
+npm test                 # run the test suite
+npm run electron:build   # build the Windows installer into release/
+```
 
-Still open:
-- [ ] Deeper conflict detection (e.g. two mods editing the same loot table), not just duplicate file names
-- [ ] Linux/macOS support
+`npm run dev` opens only the UI in a browser, which is handy for CSS work, but nothing that needs the backend will work there.
+
+### Project structure
+```
+electron/
+  main.ts          window, IPC handlers, settings
+  preload.ts       exposes window.modManagerAPI to the UI
+  modManager.ts    everything that touches disk or the network
+  sources.ts       mod sources (sp-mod.com, Forge Alt)
+  peVersion.ts     reads the SPT version from SPT.Server.exe
+src/
+  App.tsx          the UI
+  modTree.ts       groups mod parts into the tree view
+  i18n.ts          the 7 dictionaries
+  reportError.ts   builds the error report
+tests/             one file per area (npm test runs all of them)
+scripts/           one-off investigation scripts
+```
+
+### Tests
+Each file in `tests/` covers one area and most of them work on real temporary folders. `npm version` runs the whole suite first and refuses to bump if anything fails.
+
+---
+
+## Contributing
+
+Issues and PRs are welcome. For anything big, open an issue first so we can agree on the approach.
+
+**Translations are especially welcome.** Copy an existing dictionary in `src/i18n.ts`, add the code to the `Lang` type and to `LANG_LABELS`, and run:
+
+```bash
+npx tsx tests/checkTranslations.ts
+```
+
+It compares every key against English and catches what a manual review usually misses, like a placeholder such as `{name}` renamed or dropped, which would make the app show the literal `{name}` instead of the mod's name.
 
 ---
 
@@ -186,20 +179,10 @@ Still open:
 
 The Chinese, Russian, French, Japanese and German translations were contributed by **[GΛVRIEL](https://github.com/GAVRIEL-911)**, who built a multilingual edition of the Manager on his own and offered it back to the project. Portuguese and English are maintained here.
 
-## Contributing
-
-Personal project, but issues and PRs are welcome. If you're planning something big, open an issue first to align on it.
-
-**Translations are especially welcome.** Copy an existing dictionary in `src/i18n.ts`, add the code to the `Lang` type and to `LANG_LABELS`, and run the checker before opening the PR:
-
-```
-npx tsx verificaTraducoes.ts
-```
-
-It compares every key against English and catches the mistake that a manual review misses: a placeholder like `{name}` renamed or dropped, which makes the app print the literal `{name}` instead of the mod's name.
+Thanks to everyone who reports bugs and suggests features in the comments. Most of what's in this README exists because someone asked for it.
 
 ## License
 
 [MIT](LICENSE)
 
-`.rar` extraction is powered by [node-unrar-js](https://github.com/YuJianrong/node-unrar.js), a WASM build of the official UnRAR source, which is free to use but distributed under its own license (not MIT) — see the package's `LICENSE.md` for details.
+`.rar` extraction uses [node-unrar-js](https://github.com/YuJianrong/node-unrar.js), a WASM build of the official UnRAR source, which has its own license (not MIT). See the package's `LICENSE.md`.

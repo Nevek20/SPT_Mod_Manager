@@ -13,7 +13,7 @@ import {
   InstallResult,
   AppUpdateInfo, ModDependencyInfo, ForgeUpdateItem } from "./types";
 import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
-import { Diagnostico, montaRelato, urlIssueGithub } from "./relatoErro";
+import { Diagnostico, montaRelato, urlIssueGithub } from "./reportError";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 
