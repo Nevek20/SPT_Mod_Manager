@@ -212,7 +212,10 @@ export default function App() {
     const diag = diagnostico ?? (await window.modManagerAPI.getDiagnostics());
     if (!diagnostico) setDiagnostico(diag);
     setErroCopiado(false);
-    setErroAberto({ texto, raw, relato: montaRelato(raw, diag, sptVersion) });
+    // A versão do SPT vem do SPT.Server.exe (4.1.6). O sptVersion do cabeçalho
+    // no SPT 4.x é a versão do JOGO ("Tarkov 0.16.9..."), que não diz qual SPT a pessoa usa.
+    const sptSemver = await window.modManagerAPI.getSptSemver().catch(() => undefined);
+    setErroAberto({ texto, raw, relato: montaRelato(raw, diag, sptSemver || sptVersionInput.trim() || undefined) });
   }
 
   async function copiarErro() {
