@@ -50,6 +50,8 @@ type SortDirection = "asc" | "desc";
  * A espera dobra a cada tentativa e leva um sorteio junto: sem ele, as imagens
  * que falharam juntas tentariam de novo todas no mesmo instante, reproduzindo
  * a rajada que causou o problema.
+ * 
+ * :) make yourself comfortable in pain
  */
 function ForgeThumb({ src }: { src?: string }) {
   const [tentativa, setTentativa] = useState(0);
@@ -212,8 +214,9 @@ export default function App() {
     const diag = diagnostico ?? (await window.modManagerAPI.getDiagnostics());
     if (!diagnostico) setDiagnostico(diag);
     setErroCopiado(false);
+
     // A versão do SPT vem do SPT.Server.exe (4.1.6). O sptVersion do cabeçalho
-    // no SPT 4.x é a versão do JOGO ("Tarkov 0.16.9..."), que não diz qual SPT a pessoa usa.
+    // no SPT 4.x é a versão do JOGO ("Tarkov 0.16.9..."), que não diz qual SPT a pessoa usa. 
     const sptSemver = await window.modManagerAPI.getSptSemver().catch(() => undefined);
     setErroAberto({ texto, raw, relato: montaRelato(raw, diag, sptSemver || sptVersionInput.trim() || undefined) });
   }
