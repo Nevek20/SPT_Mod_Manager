@@ -4,7 +4,8 @@
  * Três modos, escolhidos pelo usuário:
  * - "none": a lista de sempre, sem cabeçalhos;
  * - "source": a categoria que o catálogo dá a cada mod (Traders, Quests...);
- * - "custom": categorias criadas pelo usuário, estilo separadores do MO2.
+ * - "custom": categorias criadas pelo usuário, estilo separadores do MO2. Começa
+ *   com tudo em "Sem categoria": a organização é dele, não uma cópia da fonte.
  *
  * Trabalha em cima das LINHAS da árvore (ModTreeNode), não dos mods soltos: um
  * pacote de server + client é uma coisa só e não pode ficar com uma metade em
@@ -87,24 +88,6 @@ export function groupNodes(
   const grupos: CategoryGroup[] = custom.categories.map((c) => ({ id: c.id, name: c.name, nodes: porId.get(c.id)! }));
   grupos.push({ id: UNCATEGORIZED, name: "", nodes: semCategoria });
   return grupos;
-}
-
-/**
- * Ponto de partida do modo "Minhas categorias": uma cópia das categorias da
- * fonte, com cada mod já no lugar. Começar vazio obrigaria quem tem 100 mods a
- * organizar tudo na mão antes de ver qualquer vantagem.
- */
-export function seedFromSource(nodes: ModTreeNode[], sourceTitles: Record<string, string>): CustomCategories {
-  const titulos = [...new Set(nodes.map((n) => sourceCategoryOf(n, sourceTitles)).filter((t): t is string => !!t))].sort(
-    (a, b) => a.localeCompare(b)
-  );
-  const idDe = new Map(titulos.map((t) => [t, newCategoryId(t)]));
-  const assign: Record<string, string> = {};
-  for (const node of nodes) {
-    const titulo = sourceCategoryOf(node, sourceTitles);
-    if (titulo) assign[node.key] = idDe.get(titulo)!;
-  }
-  return { categories: titulos.map((t) => ({ id: idDe.get(t)!, name: t })), assign };
 }
 
 let contador = 0;

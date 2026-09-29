@@ -18,7 +18,6 @@ import {
   GroupMode,
   UNCATEGORIZED,
   groupNodes,
-  seedFromSource,
   assignNodes,
   removeCategory,
   renameCategory,
@@ -50,6 +49,8 @@ function gravarLocal(chave: string, valor: unknown) {
     // preferência de exibição: sem armazenamento, vale só nesta sessão
   }
 }
+/** Tipo de dado do arrasto interno de mod entre categorias. */
+const ARRASTO_MOD = "application/x-spt-mod-node";
 const ehModoGrupo = (v: unknown): v is GroupMode => v === "none" || v === "source" || v === "custom";
 const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
@@ -574,23 +575,11 @@ export default function App() {
     window.modManagerAPI.saveCustomCategories(proximo).catch(() => undefined);
   }
 
-  async function mudarAgrupamento(modo: GroupMode) {
+  // Trocar o modo só troca a VISÃO. "Minhas categorias" e a da fonte são dados
+  // separados: olhar a da fonte nunca mexe no que o usuário montou.
+  function mudarAgrupamento(modo: GroupMode) {
     setGroupMode(modo);
     gravarLocal(GROUP_STORAGE_KEY, modo);
-    // Primeira vez em "Minhas categorias": começa com uma cópia das da fonte.
-    if (modo === "custom" && custom.categories.length === 0 && Object.keys(custom.assign).length === 0) {
-      const ids = mods.map((m) => m.forgeModId).filter((id): id is number => id !== undefined);
-      let titulos = titulosFonte;
-      if (ids.some((id) => !(String(id) in titulos))) {
-        setBuscandoCategorias(true);
-        titulos = { ...titulos, ...(await window.modManagerAPI.fetchModCategories(ids).catch(() => ({}))) };
-        ids.forEach((id) => idsPerguntados.current.add(id));
-        setTitulosFonte(titulos);
-        setBuscandoCategorias(false);
-      }
-      const semente = seedFromSource(buildModTree(mods, "all"), titulos);
-      if (semente.categories.length > 0) salvarCustom(semente);
-    }
   }
 
   const grupos = useMemo(
@@ -643,6 +632,24 @@ export default function App() {
 
   function moverParaCategoria(nodeKeys: string[], categoriaId: string) {
     salvarCustom(assignNodes(custom, nodeKeys, categoriaId));
+  }
+
+  // ---- Arrastar mod pra categoria ----
+  // Tipo próprio no dataTransfer: é o que separa este arrastar do arrastar de
+  // ARQUIVO pra instalar, que a janela inteira escuta.
+  const [alvoDoArrasto, setAlvoDoArrasto] = useState<string | null>(null);
+  function soltarNaCategoria(e: DragEvent, categoriaId: string) {
+    const chave = e.dataTransfer.getData(ARRASTO_MOD);
+    if (!chave) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setAlvoDoArrasto(null);
+    // Arrastou uma linha que está selecionada: leva a seleção inteira junto,
+    // igual a qualquer gerenciador de arquivos.
+    const selecionadas = chavesDeLinhaSelecionadas();
+    const chaves = selecionadas.includes(chave) ? selecionadas : [chave];
+    moverParaCategoria(chaves, categoriaId);
+    if (chaves.length > 1) clearSelection();
   }
 
   /** Chaves de linha da árvore das partes selecionadas (a seleção é por mod). */
@@ -843,6 +850,8 @@ export default function App() {
     e.preventDefault();
     setIsDraggingFile(false);
     setDragCounter(0);
+    // Soltar um mod fora de uma categoria não é instalar arquivo nenhum.
+    if (!e.dataTransfer.types.includes("Files")) return;
 
     const files = Array.from(e.dataTransfer.files);
     const archives = files.filter((f) => /\.(zip|7z|rar)$/i.test(f.name));
@@ -2071,7 +2080,23 @@ export default function App() {
                     const editavel = groupMode === "custom" && g.id !== UNCATEGORIZED;
                     const editando = editandoCategoria?.id === g.id;
                     return (
-                      <section key={g.id} className="category-group">
+                      <section
+                        key={g.id}
+                        className={`category-group ${alvoDoArrasto === g.id ? "drop-target" : ""}`}
+                        onDragOver={(e) => {
+                          if (groupMode !== "custom" || !e.dataTransfer.types.includes(ARRASTO_MOD)) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = "move";
+                          if (alvoDoArrasto !== g.id) setAlvoDoArrasto(g.id);
+                        }}
+                        onDragLeave={(e) => {
+                          // Só limpa quando sai da seção de verdade, não ao passar
+                          // de uma linha pra outra dentro dela.
+                          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setAlvoDoArrasto(null);
+                        }}
+                        onDrop={(e) => soltarNaCategoria(e, g.id)}
+                      >
                         <div className="category-header">
                           <button
                             className="category-toggle"
@@ -2150,16 +2175,6 @@ export default function App() {
                   de buscar pra linha de baixo sozinho, parecendo defeito. */}
               <div className="forge-browse-filters">
                 <select
-                  value={activeSourceKey}
-                  onChange={(e) => handleChangeSource(e.target.value)}
-                  disabled={browseLoading}
-                  title={t("browse.sourceTitle")}
-                >
-                  {modSources.map((src) => (
-                    <option key={src.key} value={src.key}>{src.label}</option>
-                  ))}
-                </select>
-                <select
                   value={browseSort}
                   onChange={(e) => {
                     const valor = e.target.value as typeof browseSort;
@@ -2217,7 +2232,6 @@ export default function App() {
                 </label>
               </div>
             </div>
-            <p className="browse-source-note">{t("browse.sourceNote")}</p>
 
             {browseError && <p className="compare-note">{browseError}</p>}
             {browseHideInstalled &&
@@ -2503,6 +2517,9 @@ export default function App() {
                   ))}
                 </select>
               </div>
+              {/* A fonte mora só aqui. No Browse ela parecia um filtro da busca,
+                  mas também decide de onde vem a checagem de atualizações. */}
+              <p className="settings-note">{t("browse.sourceNote")}</p>
             </section>
 
             <section className="settings-section">
@@ -2808,7 +2825,16 @@ function ModList({
         const expanded = isExpanded(node);
         return (
           <Fragment key={node.key}>
-          <li className={`mod-item ${mod.enabled ? "" : "disabled"}`}>
+          <li
+            className={`mod-item ${mod.enabled ? "" : "disabled"} ${categoryMenu ? "draggable" : ""}`}
+            // Arrastável só em "Minhas categorias": nos outros modos não há pra onde soltar.
+            draggable={!!categoryMenu && !isEditing}
+            onDragStart={(e) => {
+              if (!categoryMenu) return;
+              e.dataTransfer.setData(ARRASTO_MOD, node.key);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+          >
             <input
               type="checkbox"
               checked={selectedKeys.has(key)}

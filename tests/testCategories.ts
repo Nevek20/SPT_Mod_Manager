@@ -3,7 +3,8 @@
  *
  * O que não pode quebrar:
  * - um pacote de server + client fica INTEIRO numa categoria só;
- * - "Minhas categorias" nasce como cópia das da fonte, com cada mod no lugar;
+ * - "Minhas categorias" começa com tudo em "Sem categoria", e olhar a da fonte
+ *   nunca mexe no que o usuário montou;
  * - apagar uma categoria nunca some com mod: ele volta pra "Sem categoria";
  * - lixo no arquivo (ou vindo da interface) é descartado sem derrubar a lista;
  * - a fonte só é consultada pelos ids que ainda não estão guardados.
@@ -16,7 +17,6 @@ import { buildModTree } from "../src/modTree";
 import {
   UNCATEGORIZED,
   groupNodes,
-  seedFromSource,
   assignNodes,
   removeCategory,
   renameCategory,
@@ -86,13 +86,32 @@ console.log("\ncategoria da fonte");
 console.log("\nminhas categorias");
 // ---------------------------------------------------------------------------
 {
-  const semente = seedFromSource(arvore, titulos);
-  check("semente copia as categorias da fonte", semente.categories.map((c) => c.name), ["Bots", "Traders"]);
-  check("e ja poe cada linha no lugar", nomes(groupNodes(arvore, "custom", titulos, semente)), [
+  const vazio = { categories: [], assign: {} };
+  check("comeca com tudo em sem categoria", nomes(groupNodes(arvore, "custom", titulos, vazio)), [
+    ["(sem)", ["BigBrain", "SAIN", "Painter", "FeitoAMao"]]
+  ]);
+
+  const semente = {
+    categories: [
+      { id: "bots", name: "Bots" },
+      { id: "traders", name: "Traders" }
+    ],
+    assign: {
+      [arvore.find((n) => n.name === "BigBrain")!.key]: "bots",
+      [arvore.find((n) => n.name === "SAIN")!.key]: "bots",
+      [arvore.find((n) => n.name === "Painter")!.key]: "traders"
+    }
+  };
+  check("o que o usuario montou aparece como montou", nomes(groupNodes(arvore, "custom", titulos, semente)), [
     ["Bots", ["BigBrain", "SAIN"]],
     ["Traders", ["Painter"]],
     ["(sem)", ["FeitoAMao"]]
   ]);
+  check(
+    "e olhar pela fonte nao muda o objeto das minhas",
+    (groupNodes(arvore, "source", titulos, semente), JSON.stringify(semente.assign).includes("bots")),
+    true
+  );
 
   const bots = semente.categories[0].id;
   const traders = semente.categories[1].id;
@@ -186,6 +205,27 @@ async function main() {
 
     await fetchModCategories(raiz, [902, 1025, 791]);
     check("mod novo: pergunta so por ele", pedidos[1], "791");
+
+    // A corrida real: a consulta à fonte demora, e no meio dela o usuário
+    // mexe nas categorias dele. Antes, a gravação da fonte apagava isso.
+    let liberar: () => void = () => {};
+    const segura = new Promise<void>((r) => (liberar = r));
+    const fetchNormal = (globalThis as { fetch: (u: unknown) => Promise<Response> }).fetch;
+    (globalThis as { fetch: unknown }).fetch = async (u: unknown) => {
+      await segura;
+      return fetchNormal(u);
+    };
+    const consulta = fetchModCategories(raiz, [555]);
+    await new Promise((r) => setTimeout(r, 600)); // já leu o arquivo e está esperando a rede
+    saveCustomCategories(raiz, { categories: [{ id: "meio", name: "Criada no meio" }], assign: { k: "meio" } });
+    liberar();
+    await consulta;
+    check(
+      "mudanca feita durante a consulta a fonte sobrevive",
+      loadCustomCategories(raiz),
+      { categories: [{ id: "meio", name: "Criada no meio" }], assign: { k: "meio" } }
+    );
+    (globalThis as { fetch: unknown }).fetch = fetchNormal;
 
     saveCustomCategories(raiz, { categories: [{ id: "x", name: "Minhas" }], assign: {} });
     const depois = await fetchModCategories(raiz, [902]);

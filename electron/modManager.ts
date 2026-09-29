@@ -3325,7 +3325,12 @@ export async function fetchModCategories(root: string, ids: number[]): Promise<R
     }
     if (achou) {
       try {
-        gravarArquivoCategorias(root, dados);
+        // Relê ANTES de gravar e só troca a parte da fonte. A consulta leva
+        // segundos, e nesse meio tempo o usuário pode ter mexido nas categorias
+        // dele; gravar o "dados" lido lá no começo apagava essas mudanças.
+        const atual = lerArquivoCategorias(root);
+        atual.fonte[activeSource.key] = { ...(atual.fonte[activeSource.key] ?? {}), ...daFonte };
+        gravarArquivoCategorias(root, atual);
       } catch {
         // sem gravar, a próxima abertura pergunta de novo; nada quebra
       }

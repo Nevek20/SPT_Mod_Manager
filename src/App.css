@@ -1902,3 +1902,19 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
   margin: 4px 8px;
   max-width: calc(100% - 16px);
 }
+
+/* Arrastar mod pra categoria */
+.mod-item.draggable {
+  cursor: grab;
+}
+
+.mod-item.draggable:active {
+  cursor: grabbing;
+}
+
+.category-group.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+  background: var(--accent-wash);
+}

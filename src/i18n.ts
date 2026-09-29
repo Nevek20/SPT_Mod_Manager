@@ -345,7 +345,7 @@ const pt: Dict = {
   "categories.moveTo": "Mover para categoria",
   "categories.moveUp": "Subir",
   "categories.moveDown": "Descer",
-  "categories.empty": "Nenhum mod aqui. Use \"Mover para categoria\" no menu de um mod ou com vários selecionados.",
+  "categories.empty": "Nenhum mod aqui. Arraste mods pra cá, ou use \"Mover para categoria\" no menu de um mod.",
   "categories.loading": "Buscando categorias na fonte..."
 };
 
@@ -651,7 +651,7 @@ const en: Dict = {
   "categories.moveTo": "Move to category",
   "categories.moveUp": "Move up",
   "categories.moveDown": "Move down",
-  "categories.empty": "No mods here yet. Use \"Move to category\" in a mod's menu or with several selected.",
+  "categories.empty": "No mods here yet. Drag mods here, or use \"Move to category\" in a mod's menu.",
   "categories.loading": "Getting categories from the source..."
 };
 
@@ -942,7 +942,7 @@ const zh: Dict = {
   "categories.moveTo": "移动到分类",
   "categories.moveUp": "上移",
   "categories.moveDown": "下移",
-  "categories.empty": "这里还没有模组。可在模组菜单或多选后使用“移动到分类”。",
+  "categories.empty": "这里还没有模组。把模组拖到这里，或在模组菜单中使用“移动到分类”。",
   "categories.loading": "正在从来源获取分类…"
 };
 
@@ -1223,7 +1223,7 @@ const ru: Dict = {
   "categories.moveTo": "Переместить в категорию",
   "categories.moveUp": "Выше",
   "categories.moveDown": "Ниже",
-  "categories.empty": "Здесь пока нет модов. Используйте «Переместить в категорию» в меню мода или при выборе нескольких.",
+  "categories.empty": "Здесь пока нет модов. Перетащите моды сюда или используйте «Переместить в категорию» в меню мода.",
   "categories.loading": "Загрузка категорий из источника…"
 };
 
@@ -1504,7 +1504,7 @@ const fr: Dict = {
   "categories.moveTo": "Déplacer vers la catégorie",
   "categories.moveUp": "Monter",
   "categories.moveDown": "Descendre",
-  "categories.empty": "Aucun mod ici. Utilisez « Déplacer vers la catégorie » dans le menu d'un mod ou avec plusieurs sélectionnés.",
+  "categories.empty": "Aucun mod ici. Glissez des mods ici, ou utilisez « Déplacer vers la catégorie » dans le menu d'un mod.",
   "categories.loading": "Récupération des catégories depuis la source…"
 };
 
@@ -1785,7 +1785,7 @@ const ja: Dict = {
   "categories.moveTo": "カテゴリへ移動",
   "categories.moveUp": "上へ",
   "categories.moveDown": "下へ",
-  "categories.empty": "まだ Mod がありません。Mod のメニューか複数選択で「カテゴリへ移動」を使ってください。",
+  "categories.empty": "まだ Mod がありません。ここに Mod をドラッグするか、Mod のメニューで「カテゴリへ移動」を使ってください。",
   "categories.loading": "取得元からカテゴリを取得中…"
 };
 
@@ -2066,7 +2066,7 @@ const de: Dict = {
   "categories.moveTo": "In Kategorie verschieben",
   "categories.moveUp": "Nach oben",
   "categories.moveDown": "Nach unten",
-  "categories.empty": "Noch keine Mods. Nutze „In Kategorie verschieben“ im Menü eines Mods oder bei mehreren ausgewählten.",
+  "categories.empty": "Noch keine Mods. Zieh Mods hierher oder nutze „In Kategorie verschieben“ im Menü eines Mods.",
   "categories.loading": "Kategorien werden von der Quelle geladen…"
 };
 
