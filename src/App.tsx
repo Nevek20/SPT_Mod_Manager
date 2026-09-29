@@ -31,6 +31,7 @@ const THEME_STORAGE_KEY = "spt-mod-manager.theme";
 const WELCOMED_STORAGE_KEY = "spt-mod-manager.welcomed";
 const GROUP_STORAGE_KEY = "spt-mod-manager.groupBy";
 const COLLAPSED_STORAGE_KEY = "spt-mod-manager.collapsedCategories";
+const EXPANDED_STORAGE_KEY = "spt-mod-manager.expandedPackages";
 
 function lerLocal<T>(chave: string, padrao: T, valida: (v: unknown) => v is T): T {
   try {
@@ -52,6 +53,8 @@ function gravarLocal(chave: string, valor: unknown) {
 /** Tipo de dado do arrasto interno de mod entre categorias. */
 const ARRASTO_MOD = "application/x-spt-mod-node";
 const ehModoGrupo = (v: unknown): v is GroupMode => v === "none" || v === "source" || v === "custom";
+const ehMapaDeBooleanos = (v: unknown): v is Record<string, boolean> =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((x) => typeof x === "boolean");
 const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 type TemaEscolhido = "system" | "dark" | "light";
@@ -534,6 +537,31 @@ export default function App() {
 
   const modTree = useMemo(() => buildModTree(filteredMods, typeFilter), [filteredMods, typeFilter]);
 
+  // ---- Pacotes abertos/fechados ----
+  // Morava dentro da lista, então qualquer re-render que recriava a lista
+  // (reescanear, trocar filtro, agrupar por categoria) voltava tudo ao padrão:
+  // o pacote que a pessoa fechou abria de novo. Agora fica aqui e é gravado.
+  // Guarda só o que a pessoa ESCOLHEU; o resto segue o padrão (registrado
+  // aberto, inferido fechado, porque um palpite não deve parecer certeza).
+  const [pacotesAbertos, setPacotesAbertos] = useState<Record<string, boolean>>(() =>
+    lerLocal(EXPANDED_STORAGE_KEY, {} as Record<string, boolean>, ehMapaDeBooleanos)
+  );
+  const pacoteAberto = useCallback(
+    (node: ModTreeNode) => (node.single ? false : pacotesAbertos[node.key] ?? !node.inferred),
+    [pacotesAbertos]
+  );
+  function definirPacotes(nodes: ModTreeNode[], aberto: boolean) {
+    setPacotesAbertos((prev) => {
+      const prox = { ...prev };
+      for (const n of nodes) if (!n.single) prox[n.key] = aberto;
+      gravarLocal(EXPANDED_STORAGE_KEY, prox);
+      return prox;
+    });
+  }
+  function alternarPacote(node: ModTreeNode) {
+    definirPacotes([node], !pacoteAberto(node));
+  }
+
   // ---- Categorias ----
   const [groupMode, setGroupMode] = useState<GroupMode>(() => lerLocal(GROUP_STORAGE_KEY, "none", ehModoGrupo));
   const [recolhidas, setRecolhidas] = useState<Set<string>>(
@@ -543,6 +571,12 @@ export default function App() {
   const [buscandoCategorias, setBuscandoCategorias] = useState(false);
   const [custom, setCustom] = useState<CustomCategories>({ categories: [], assign: {} });
   const [editandoCategoria, setEditandoCategoria] = useState<{ id: string; valor: string } | null>(null);
+  // Modo de edição das categorias: fora dele a lista fica limpa, sem lápis,
+  // setas, arrastar nem categoria vazia. Não é gravado: organizar é uma tarefa
+  // de vez em quando, e a lista do dia a dia não deveria vir com as ferramentas
+  // à mostra.
+  const [editandoCategorias, setEditandoCategorias] = useState(false);
+  const modoEdicao = groupMode === "custom" && editandoCategorias;
   // Ids que já foram perguntados à fonte, pra não repetir a cada reescaneamento.
   const idsPerguntados = useRef(new Set<number>());
 
@@ -579,6 +613,7 @@ export default function App() {
   // separados: olhar a da fonte nunca mexe no que o usuário montou.
   function mudarAgrupamento(modo: GroupMode) {
     setGroupMode(modo);
+    if (modo !== "custom") setEditandoCategorias(false);
     gravarLocal(GROUP_STORAGE_KEY, modo);
   }
 
@@ -600,17 +635,27 @@ export default function App() {
       return prox;
     });
   }
-  const todasRecolhidas = grupos.length > 0 && grupos.every((g) => recolhidas.has(chaveRecolhida(g.id)));
+  // "Recolher tudo" fecha as categorias E os pacotes de várias partes; é o
+  // "esconder/mostrar tudo" que o inganshin pediu, e vale até sem agrupamento.
+  const pacotesVisiveis = modTree.filter((n) => !n.single);
+  const todasRecolhidas =
+    (groupMode === "none" || grupos.every((g) => recolhidas.has(chaveRecolhida(g.id)))) &&
+    pacotesVisiveis.every((n) => !pacoteAberto(n)) &&
+    (groupMode !== "none" || pacotesVisiveis.length > 0);
   function alternarTodas() {
-    setRecolhidas((prev) => {
-      const prox = new Set(prev);
-      for (const g of grupos) {
-        if (todasRecolhidas) prox.delete(chaveRecolhida(g.id));
-        else prox.add(chaveRecolhida(g.id));
-      }
-      gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
-      return prox;
-    });
+    const abrir = todasRecolhidas;
+    if (groupMode !== "none") {
+      setRecolhidas((prev) => {
+        const prox = new Set(prev);
+        for (const g of grupos) {
+          if (abrir) prox.delete(chaveRecolhida(g.id));
+          else prox.add(chaveRecolhida(g.id));
+        }
+        gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
+        return prox;
+      });
+    }
+    definirPacotes(pacotesVisiveis, abrir);
   }
 
   function criarCategoria() {
@@ -1532,8 +1577,10 @@ export default function App() {
   // Quantas partes cada pacote tem instaladas. Serve pra avisar na linha do mod que ele
   // faz parte de um conjunto — sem isso, ver a outra metade desabilitar junto parece bug.
   const listProps = {
+    isExpanded: pacoteAberto,
+    toggleExpanded: alternarPacote,
     categoryMenu:
-      groupMode === "custom"
+      modoEdicao
         ? {
             options: custom.categories,
             currentOf: (nodeKey: string) => custom.assign[nodeKey] ?? UNCATEGORIZED,
@@ -1756,22 +1803,7 @@ export default function App() {
 
             <span className="filter-separator" />
 
-            <select
-              value={groupMode}
-              onChange={(e) => mudarAgrupamento(e.target.value as GroupMode)}
-              title={t("categories.groupBy")}
-              aria-label={t("categories.groupBy")}
-            >
-              <option value="none">{t("categories.groupNone")}</option>
-              <option value="source">{t("categories.groupSource")}</option>
-              <option value="custom">{t("categories.groupCustom")}</option>
-            </select>
-            {groupMode !== "none" && (
-              <button onClick={alternarTodas}>{todasRecolhidas ? t("categories.expandAll") : t("categories.collapseAll")}</button>
-            )}
-            {groupMode === "custom" && <button onClick={criarCategoria}>+ {t("categories.new")}</button>}
 
-            <span className="filter-separator" />
 
             <select value={sortField} onChange={(e) => setSortField(e.target.value as SortField)} title={t("filters.sortFieldTitle")}>
               <option value="name">{t("filters.sortByName")}</option>
@@ -2020,7 +2052,7 @@ export default function App() {
                 <button onClick={() => runBulk("enable")} disabled={mutating}>{t("bulk.enable")}</button>
                 <button onClick={() => runBulk("disable")} disabled={mutating}>{t("bulk.disable")}</button>
                 <button onClick={() => runBulk("remove")} className="danger" disabled={mutating}>{t("bulk.remove")}</button>
-                {groupMode === "custom" && (
+                {modoEdicao && (
                   <select
                     className="bulk-move"
                     value=""
@@ -2050,16 +2082,51 @@ export default function App() {
             </div>
           )}
 
-          <div className="type-filter-bar">
-            {typeFilterOptions.map((option) => (
-              <button
-                key={option}
-                className={`type-filter-chip ${typeFilter === option ? "active" : ""}`}
-                onClick={() => setTypeFilter(option)}
-              >
-                {t(`typeFilter.${option}`)} {typeCounts[option]}
+          {/* Cabeçalho da lista: o que muda a LISTA (tipo, agrupamento, abrir e
+              fechar, nova categoria) fica colado nela, e não perdido no meio dos
+              filtros e botões de exportar. */}
+          <div className="list-header">
+            <div className="type-filter-bar">
+              {typeFilterOptions.map((option) => (
+                <button
+                  key={option}
+                  className={`type-filter-chip ${typeFilter === option ? "active" : ""}`}
+                  onClick={() => setTypeFilter(option)}
+                >
+                  {t(`typeFilter.${option}`)} {typeCounts[option]}
+                </button>
+              ))}
+            </div>
+            <div className="list-header-actions">
+              {modoEdicao && (
+                <button className="primary" onClick={criarCategoria}>
+                  + {t("categories.new")}
+                </button>
+              )}
+              {groupMode === "custom" && (
+                <button
+                  className={editandoCategorias ? "edit-toggle on" : "edit-toggle"}
+                  onClick={() => {
+                    setEditandoCategorias((v) => !v);
+                    setEditandoCategoria(null);
+                  }}
+                  aria-pressed={editandoCategorias}
+                >
+                  {editandoCategorias ? "✓ " + t("categories.doneEditing") : "✎ " + t("categories.edit")}
+                </button>
+              )}
+              <button onClick={alternarTodas} title={todasRecolhidas ? t("categories.expandAll") : t("categories.collapseAll")}>
+                {todasRecolhidas ? "⊞ " + t("categories.expandAll") : "⊟ " + t("categories.collapseAll")}
               </button>
-            ))}
+              <label className="group-by">
+                <span>{t("categories.groupBy")}</span>
+                <select value={groupMode} onChange={(e) => mudarAgrupamento(e.target.value as GroupMode)}>
+                  <option value="none">{t("categories.groupNone")}</option>
+                  <option value="source">{t("categories.groupSource")}</option>
+                  <option value="custom">{t("categories.groupCustom")}</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           {groupMode === "none" ? (
@@ -2071,20 +2138,20 @@ export default function App() {
                 let deslocamento = 0;
                 return grupos
                   // Com busca ativa, categoria vazia só atrapalha a leitura.
-                  .filter((g) => g.nodes.length > 0 || (groupMode === "custom" && !searchQuery.trim()))
+                  .filter((g) => g.nodes.length > 0 || (modoEdicao && !searchQuery.trim()))
                   .map((g) => {
                     const recolhida = recolhidas.has(chaveRecolhida(g.id));
                     const inicio = deslocamento;
                     deslocamento += g.nodes.length;
                     const nome = g.id === UNCATEGORIZED ? t("categories.uncategorized") : g.name;
-                    const editavel = groupMode === "custom" && g.id !== UNCATEGORIZED;
+                    const editavel = modoEdicao && g.id !== UNCATEGORIZED;
                     const editando = editandoCategoria?.id === g.id;
                     return (
                       <section
                         key={g.id}
                         className={`category-group ${alvoDoArrasto === g.id ? "drop-target" : ""}`}
                         onDragOver={(e) => {
-                          if (groupMode !== "custom" || !e.dataTransfer.types.includes(ARRASTO_MOD)) return;
+                          if (!modoEdicao || !e.dataTransfer.types.includes(ARRASTO_MOD)) return;
                           e.preventDefault();
                           e.stopPropagation();
                           e.dataTransfer.dropEffect = "move";
@@ -2743,9 +2810,13 @@ function ModList({
   onSetOpenMenuKey,
   disabled = false,
   forgeStatusByName,
+  isExpanded,
+  toggleExpanded,
   t
 }: {
   nodes: ModTreeNode[];
+  isExpanded: (node: ModTreeNode) => boolean;
+  toggleExpanded: (node: ModTreeNode) => void;
   /** Numeração contínua entre categorias: a segunda começa onde a primeira parou. */
   numberOffset?: number;
   categoryMenu?: {
@@ -2774,26 +2845,6 @@ function ModList({
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
-  // Grupo registrado na instalação abre; grupo INFERIDO nasce fechado, porque
-  // aninhar um palpite afirma parentesco com muito mais força que um chip.
-  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
-
-  function isExpanded(node: ModTreeNode) {
-    if (node.single) return false;
-    return collapsedKeys.has(node.key) ? false : !node.inferred;
-  }
-
-  function toggleExpanded(node: ModTreeNode) {
-    setCollapsedKeys((prev) => {
-      const next = new Set(prev);
-      // O Set guarda "estado invertido em relação ao padrão do nó", e não
-      // "fechado": assim um grupo inferido (fechado por padrão) e um registrado
-      // (aberto por padrão) usam o mesmo botão sem precisar de dois estados.
-      if (next.has(node.key)) next.delete(node.key);
-      else next.add(node.key);
-      return next;
-    });
-  }
 
   if (nodes.length === 0) {
     return <p className="empty-list">{t("modlist.emptyCategory")}</p>;
