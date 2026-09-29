@@ -41,11 +41,58 @@
   --danger: #a8492f;
   --danger-strong: #c96a4c;
 
+  /* Tipos de mod e superfícies que tinham cor fixa: viraram variável pra que o
+     tema claro consiga trocar. Cor pastel sobre fundo claro some. */
+  --type-server: #8fb2cf;
+  --type-server-border: #4d6d8a;
+  --type-server-wash: rgba(77, 109, 138, 0.18);
+  --type-client: #b79bcf;
+  --type-client-border: #7a5f8f;
+  --type-client-wash: rgba(122, 95, 143, 0.18);
+  --border-strong: #3a4252;
+  --badge-bg: rgba(0, 0, 0, 0.2);
+  --bulk-bar-bg: #6b4e36;
+  --overlay: rgba(17, 14, 10, 0.88);
+  --overlay-soft: rgba(10, 8, 6, 0.72);
+
   --radius: 3px;
   --radius-lg: 5px;
   --font-display: "Oswald", "Arial Narrow", sans-serif;
   --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Consolas", monospace;
+}
+
+/* Tema claro. Só troca as variáveis: todo o resto do CSS já lê delas, então um
+   tema novo (todo preto, "Tarkov"...) é só mais um bloco destes. O âmbar
+   escurece um pouco pra manter contraste sobre fundo branco. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef0f3;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #f6f7f9;
+  --border: #d4d9e0;
+  --border-soft: #e4e7ec;
+  --border-strong: #bfc6d0;
+  --text: #1b1f26;
+  --text-dim: #556070;
+  --text-faint: #8a93a1;
+  --accent: #b0611d;
+  --accent-strong: #a45a1a;
+  --accent-wash: rgba(200, 117, 46, 0.12);
+  --ok: #5d7a3a;
+  --ok-strong: #4f6a2f;
+  --danger: #a8492f;
+  --danger-strong: #a8492f;
+  --type-server: #33597a;
+  --type-server-border: #7f9fbb;
+  --type-server-wash: rgba(77, 109, 138, 0.12);
+  --type-client: #6a4a85;
+  --type-client-border: #a78cbf;
+  --type-client-wash: rgba(122, 95, 143, 0.12);
+  --bulk-bar-bg: #f3dfc9;
+  --badge-bg: transparent;
+  --overlay: rgba(238, 240, 243, 0.92);
+  --overlay-soft: rgba(20, 22, 26, 0.45);
 }
 
 * {
@@ -171,7 +218,7 @@ button.danger:hover:not(:disabled) {
 .drop-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(17, 14, 10, 0.88);
+  background: var(--overlay);
   border: 3px dashed var(--accent);
   display: flex;
   align-items: center;
@@ -318,7 +365,7 @@ header h1 {
   max-width: calc(100vw - 380px); /* deixa espaço pro painel de downloads, à direita */
   /* Laranja OPACO: flutuando sobre a lista, um fundo translúcido (como o
      --accent-wash de antes) deixaria o conteúdo aparecer através da barra. */
-  background: #6b4e36;
+  background: var(--bulk-bar-bg);
   border: 1px solid var(--accent);
   border-radius: var(--radius-lg);
   padding: 10px 16px;
@@ -358,7 +405,7 @@ header h1 {
   letter-spacing: 0.05em;
   padding: 2px 5px;
   border-radius: 2px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--badge-bg);
   border: 1px solid var(--border);
   color: var(--text-dim);
 }
@@ -376,13 +423,13 @@ header h1 {
 }
 
 .type-badge.type-server {
-  border-color: #4d6d8a;
-  color: #8fb2cf;
+  border-color: var(--type-server-border);
+  color: var(--type-server);
 }
 
 .type-badge.type-client {
-  border-color: #7a5f8f;
-  color: #b79bcf;
+  border-color: var(--type-client-border);
+  color: var(--type-client);
 }
 
 .type-badge.type-hybrid {
@@ -704,7 +751,7 @@ h2 {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(10, 8, 6, 0.72);
+  background: var(--overlay-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1022,7 +1069,7 @@ h2 {
 }
 
 .download-queue-item.queue-status-error {
-  border-color: #c0392b;
+  border-color: var(--danger-strong);
 }
 
 .queue-item-name {
@@ -1044,7 +1091,7 @@ h2 {
 }
 
 .queue-status-error-text {
-  color: #e57368;
+  color: var(--danger-strong);
 }
 
 .queue-progress-track {
@@ -1235,13 +1282,13 @@ h2 {
 }
 
 .mod-part-tag.type-server {
-  background: rgba(77, 109, 138, 0.18);
-  color: #8fb2cf;
+  background: var(--type-server-wash);
+  color: var(--type-server);
 }
 
 .mod-part-tag.type-client {
-  background: rgba(122, 95, 143, 0.18);
-  color: #b79bcf;
+  background: var(--type-client-wash);
+  color: var(--type-client);
 }
 
 .mod-part-tag.type-hybrid,
@@ -1287,7 +1334,7 @@ h2 {
    instalação. Com a mesma cor lado a lado, o olho lia as duas como o mesmo tipo
    de informação. O verde fica com o estado; a característica vai pro neutro. */
 .forge-chip-fika {
-  border-color: #3a4252;
+  border-color: var(--border-strong);
   color: var(--text-dim);
   /* Espaço antes do símbolo sem precisar de nó de texto separado no JSX. */
   letter-spacing: 0.04em;
@@ -1394,7 +1441,7 @@ h2 {
 .dep-outdated .dep-chip {
   color: var(--text-dim);
   background: rgba(154, 162, 176, 0.12);
-  border-color: #3a4252;
+  border-color: var(--border-strong);
 }
 
 .dep-unavailable .dep-chip {
@@ -1414,7 +1461,7 @@ h2 {
    de cor do diálogo, pra o usuário não ter que aprender duas linguagens. */
 .forge-chip-deps {
   color: var(--text-dim);
-  border-color: #3a4252;
+  border-color: var(--border-strong);
   background: rgba(154, 162, 176, 0.12);
 }
 
@@ -1438,7 +1485,7 @@ h2 {
    aconteceu com o selo antigo. */
 .forge-chip-deps-outdated {
   color: var(--text-dim);
-  border-color: #3a4252;
+  border-color: var(--border-strong);
   background: rgba(154, 162, 176, 0.12);
 }
 /* Enquanto a imagem não carregou ela fica fora de vista, com o placeholder por
@@ -1530,4 +1577,328 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
 .update-done-note {
   color: var(--ok-strong);
   font-size: 0.9em;
+}
+
+/* ==========================================================================
+   Configurações (engrenagem): painel lateral por cima da lista
+   ========================================================================== */
+
+.gear-button {
+  width: 38px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.settings-backdrop {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+}
+
+.settings-panel {
+  width: 460px;
+  max-width: 100vw;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  padding: 22px 26px 30px;
+  animation: settings-in 0.16s ease-out;
+}
+
+@keyframes settings-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.settings-section {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.settings-section h3 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.settings-row > span:first-child {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.settings-row-end {
+  justify-content: flex-end;
+}
+
+.settings-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.settings-value.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.settings-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button.on {
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+
+.settings-panel select {
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  max-width: 230px;
+}
+
+/* Botões que são texto (fechar, crédito): sem a moldura de botão comum. */
+.settings-panel .link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.settings-note .link-button {
+  text-decoration: underline;
+  color: var(--text-dim);
+}
+
+.settings-panel .link-button:hover:not(:disabled) {
+  color: var(--accent-strong);
+  background: none;
+}
+
+.settings-close {
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
+/* Boas-vindas: escolha de idioma na primeira abertura. */
+.welcome-box {
+  width: 420px;
+}
+
+.welcome-title {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.welcome-langs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.welcome-langs button.on {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-wash);
+}
+
+.welcome-credit {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.welcome-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.empty-state-gear {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+}
+
+/* ==========================================================================
+   Categorias (Agrupar por)
+   ========================================================================== */
+
+.category-group {
+  margin-top: 14px;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 2px 6px;
+  margin-bottom: 6px;
+}
+
+.category-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.category-toggle:hover:not(:disabled) {
+  background: none;
+}
+
+.category-toggle:hover .category-name {
+  color: var(--accent-strong);
+}
+
+.category-chevron {
+  width: 12px;
+  font-size: 10px;
+  color: var(--accent-strong);
+}
+
+.category-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.category-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+
+.category-header:hover .category-actions,
+.category-actions:focus-within {
+  opacity: 1;
+}
+
+.category-actions button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.category-rename {
+  flex: 1;
+  font-family: var(--font-display);
+  letter-spacing: 1px;
+}
+
+.category-empty,
+.category-loading {
+  margin: 6px 0 4px 18px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.menu-category-select,
+.bulk-move {
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+.menu-category-select {
+  margin: 4px 8px;
+  max-width: calc(100% - 16px);
 }

@@ -1245,6 +1245,10 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
   const registry = loadRegistry(clientRoot);
   const registryIds = new Set(registry.map((r) => r.id));
   const aliases = loadAliases(clientRoot);
+  // Casamentos que a checagem de atualização já fez. Mod instalado à mão que
+  // foi reconhecido na fonte ganha o id dali: é o que dá categoria e "Abrir
+  // página do mod" a quem nunca instalou nada pelo app.
+  const casamentos = loadForgeMatchCache(clientRoot);
   const mods: ModInfo[] = [];
 
   // Resolve o nome de exibição de um mod "ligado" (ex: arquivo solto do mesmo install) —
@@ -1312,7 +1316,7 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       forgeModId:
         registryEntry?.forgeId && registryEntry.forgeSourceKey === activeSource.key
           ? registryEntry.forgeId
-          : undefined,
+          : idDoCasamento(casamentos, cleanName),
       sptVersion: metadata.sptVersion,
       requiresGuids: metadata.requiresGuids,
       packageId: registryEntry?.packageId,
@@ -3191,6 +3195,146 @@ export function cachedIdFor(entry: MatchCacheEntry | undefined, sourceKey: strin
   const direto = entry.ids[sourceKey];
   if (direto) return direto;
   return LEGACY_ID_SOURCES.has(sourceKey) ? entry.ids[LEGACY_SOURCE_KEY] : undefined;
+}
+
+/** Id numérico da fonte ativa gravado pela checagem de atualização, se houver. */
+function idDoCasamento(cache: Record<string, MatchCacheEntry>, pasta: string): number | undefined {
+  const id = Number(cachedIdFor(cache[pasta], activeSource.key));
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+/* ==========================================================================
+ * Categorias
+ *
+ * Duas coisas diferentes moram no mesmo arquivo da instância:
+ * - "fonte": a categoria que o catálogo dá a cada mod (Traders, Quests...),
+ *   guardada por id numérico e por fonte, porque muda quase nunca e baixar
+ *   de novo a cada abertura seria requisição jogada fora;
+ * - "custom": as categorias que o usuário criou e em qual delas pôs cada mod.
+ *   Isso é dado DELE, então fica na instância (vai junto se ele copiar a pasta
+ *   e, na 0.8.0, entra nos perfis).
+ * ========================================================================== */
+
+const CATEGORIES_FILE = ".spt-mod-manager-categories.json";
+
+export interface CategoriasCustom {
+  categories: { id: string; name: string }[];
+  /** chave da linha na árvore (packageId ou solo:tipo:id) -> id da categoria */
+  assign: Record<string, string>;
+}
+
+interface ArquivoCategorias {
+  fonte: Record<string, Record<string, string>>; // fonte -> id do mod -> título
+  custom: CategoriasCustom;
+}
+
+function lerArquivoCategorias(root: string): ArquivoCategorias {
+  const vazio: ArquivoCategorias = { fonte: {}, custom: { categories: [], assign: {} } };
+  try {
+    const file = path.join(root, CATEGORIES_FILE);
+    if (!fs.existsSync(file)) return vazio;
+    const bruto = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return { fonte: validaFonte(bruto?.fonte), custom: validaCustom(bruto?.custom) };
+  } catch {
+    return vazio;
+  }
+}
+
+function gravarArquivoCategorias(root: string, dados: ArquivoCategorias): void {
+  fs.writeFileSync(path.join(root, CATEGORIES_FILE), JSON.stringify(dados, null, 2));
+}
+
+function validaFonte(bruto: unknown): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  if (!bruto || typeof bruto !== "object") return out;
+  for (const [fonte, mapa] of Object.entries(bruto as Record<string, unknown>)) {
+    if (!mapa || typeof mapa !== "object") continue;
+    out[fonte] = {};
+    for (const [id, titulo] of Object.entries(mapa as Record<string, unknown>)) {
+      if (typeof titulo === "string" && titulo.trim()) out[fonte][id] = titulo;
+    }
+  }
+  return out;
+}
+
+/**
+ * Confere o que vem do disco E do renderer: nome vazio, id repetido ou
+ * atribuição pra categoria que não existe são descartados em vez de quebrar
+ * a lista inteira.
+ */
+export function validaCustom(bruto: unknown): CategoriasCustom {
+  const out: CategoriasCustom = { categories: [], assign: {} };
+  if (!bruto || typeof bruto !== "object") return out;
+  const b = bruto as { categories?: unknown; assign?: unknown };
+  const ids = new Set<string>();
+  if (Array.isArray(b.categories)) {
+    for (const c of b.categories) {
+      const id = typeof c?.id === "string" ? c.id.trim() : "";
+      const name = typeof c?.name === "string" ? c.name.trim().slice(0, 80) : "";
+      if (!id || !name || ids.has(id)) continue;
+      ids.add(id);
+      out.categories.push({ id, name });
+    }
+  }
+  if (b.assign && typeof b.assign === "object") {
+    for (const [chave, cat] of Object.entries(b.assign as Record<string, unknown>)) {
+      if (typeof cat === "string" && ids.has(cat)) out.assign[chave] = cat;
+    }
+  }
+  return out;
+}
+
+export function loadCustomCategories(root: string): CategoriasCustom {
+  return lerArquivoCategorias(root).custom;
+}
+
+export function saveCustomCategories(root: string, custom: unknown): CategoriasCustom {
+  const dados = lerArquivoCategorias(root);
+  dados.custom = validaCustom(custom);
+  gravarArquivoCategorias(root, dados);
+  return dados.custom;
+}
+
+/**
+ * Título da categoria de cada mod na fonte ativa, por id numérico.
+ * Só pergunta à fonte pelos ids que ainda não estão guardados, em lote.
+ * Sem rede, devolve o que já tinha: categoria é enfeite, não pode travar nada.
+ */
+export async function fetchModCategories(root: string, ids: number[]): Promise<Record<string, string>> {
+  const dados = lerArquivoCategorias(root);
+  const daFonte = (dados.fonte[activeSource.key] ??= {});
+  const faltando = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0).map(String))].filter(
+    (id) => !(id in daFonte)
+  );
+
+  if (faltando.length > 0) {
+    const budget = newForgeBudget(faltando.length);
+    let achou = false;
+    for (const fatia of fatiarPorTamanho(faltando, 1500, 50)) {
+      const url = new URL(`${activeSource.apiBase}/mods`);
+      url.searchParams.set("filter[id]", fatia.join(","));
+      url.searchParams.set("per_page", "50");
+      const json = await forgeFetchJson(url.toString(), budget);
+      for (const mod of Array.isArray(json?.data) ? json.data : []) {
+        const titulo = mod?.category?.title;
+        if (mod?.id !== undefined && typeof titulo === "string" && titulo.trim()) {
+          daFonte[String(mod.id)] = titulo.trim();
+          achou = true;
+        }
+      }
+    }
+    if (achou) {
+      try {
+        gravarArquivoCategorias(root, dados);
+      } catch {
+        // sem gravar, a próxima abertura pergunta de novo; nada quebra
+      }
+    }
+  }
+
+  const out: Record<string, string> = {};
+  for (const id of ids) if (daFonte[String(id)]) out[String(id)] = daFonte[String(id)];
+  return out;
 }
 
 /**

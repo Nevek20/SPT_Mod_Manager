@@ -14,8 +14,57 @@ import {
   AppUpdateInfo, ModDependencyInfo, ForgeUpdateItem } from "./types";
 import { Lang, translate, translateBackendMessage, LANG_LABELS, SUPPORTED_LANGS, detectSystemLang } from "./i18n";
 import { Diagnostico, montaRelato, urlIssueGithub } from "./reportError";
+import {
+  GroupMode,
+  UNCATEGORIZED,
+  groupNodes,
+  seedFromSource,
+  assignNodes,
+  removeCategory,
+  renameCategory,
+  moveCategory,
+  newCategoryId
+} from "./modCategories";
+import type { CustomCategories } from "./types";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
+const THEME_STORAGE_KEY = "spt-mod-manager.theme";
+const WELCOMED_STORAGE_KEY = "spt-mod-manager.welcomed";
+const GROUP_STORAGE_KEY = "spt-mod-manager.groupBy";
+const COLLAPSED_STORAGE_KEY = "spt-mod-manager.collapsedCategories";
+
+function lerLocal<T>(chave: string, padrao: T, valida: (v: unknown) => v is T): T {
+  try {
+    const bruto = localStorage.getItem(chave);
+    if (bruto === null) return padrao;
+    const v = JSON.parse(bruto);
+    return valida(v) ? v : padrao;
+  } catch {
+    return padrao;
+  }
+}
+function gravarLocal(chave: string, valor: unknown) {
+  try {
+    localStorage.setItem(chave, JSON.stringify(valor));
+  } catch {
+    // preferência de exibição: sem armazenamento, vale só nesta sessão
+  }
+}
+const ehModoGrupo = (v: unknown): v is GroupMode => v === "none" || v === "source" || v === "custom";
+const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+type TemaEscolhido = "system" | "dark" | "light";
+
+/** Lê a escolha salva; qualquer coisa estranha vira "system", o padrão. */
+function lerTemaSalvo(): TemaEscolhido {
+  try {
+    const salvo = localStorage.getItem(THEME_STORAGE_KEY);
+    if (salvo === "dark" || salvo === "light" || salvo === "system") return salvo;
+  } catch {
+    // Sem acesso ao armazenamento: segue o sistema.
+  }
+  return "system";
+}
 
 interface Toast {
   id: number;
@@ -50,8 +99,6 @@ type SortDirection = "asc" | "desc";
  * A espera dobra a cada tentativa e leva um sorteio junto: sem ele, as imagens
  * que falharam juntas tentariam de novo todas no mesmo instante, reproduzindo
  * a rajada que causou o problema.
- * 
- * :) make yourself comfortable in pain
  */
 function ForgeThumb({ src }: { src?: string }) {
   const [tentativa, setTentativa] = useState(0);
@@ -151,6 +198,72 @@ export default function App() {
     return translateBackendMessage(msg, lang);
   }
 
+  // Tema: "system" segue o Windows e muda junto se a pessoa trocar o tema do PC
+  // com o app aberto. O CSS só troca variáveis pelo atributo data-theme.
+  const [tema, setTema] = useState<TemaEscolhido>(lerTemaSalvo);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const aplica = () => {
+      const efetivo = tema === "system" ? (media.matches ? "dark" : "light") : tema;
+      document.documentElement.dataset.theme = efetivo;
+    };
+    aplica();
+    if (tema !== "system") return;
+    media.addEventListener("change", aplica);
+    return () => media.removeEventListener("change", aplica);
+  }, [tema]);
+  function mudarTema(proximo: TemaEscolhido) {
+    setTema(proximo);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, proximo);
+    } catch {
+      // Sem armazenamento: vale só pra esta sessão.
+    }
+  }
+
+  const [configAberta, setConfigAberta] = useState(false);
+
+  // Boas-vindas: só na PRIMEIRA abertura de verdade. Quem já usa o app tem uma
+  // instância salva e nunca vê isso, nem depois de atualizar pra esta versão.
+  const [boasVindas, setBoasVindas] = useState(false);
+  function concluirBoasVindas() {
+    setBoasVindas(false);
+    try {
+      localStorage.setItem(WELCOMED_STORAGE_KEY, "1");
+    } catch {
+      // Sem armazenamento: aparece de novo na próxima abertura, sem prejuízo.
+    }
+  }
+  // Carregados quando a tela de configurações abre: versão do app e do SPT não
+  // mudam com o app aberto, mas a instância pode ter sido trocada.
+  const [versaoApp, setVersaoApp] = useState<string | null>(null);
+  const [sptSemverConfig, setSptSemverConfig] = useState<string | undefined>(undefined);
+  const [checagemApp, setChecagemApp] = useState<"idle" | "checking" | "done" | "failed">("idle");
+
+  async function abrirConfig() {
+    setConfigAberta(true);
+    setChecagemApp("idle");
+    const [diag, semver] = await Promise.all([
+      window.modManagerAPI.getDiagnostics(),
+      window.modManagerAPI.getSptSemver().catch(() => undefined)
+    ]);
+    setVersaoApp(diag.appVersion);
+    setSptSemverConfig(semver);
+  }
+
+  async function verificarAtualizacaoDoApp() {
+    setChecagemApp("checking");
+    try {
+      const info = await window.modManagerAPI.checkAppUpdate();
+      setAppUpdate(info);
+      // Se a pessoa tinha dispensado o aviso e pediu pra checar de novo, mostra.
+      setUpdateDismissed(false);
+      setChecagemApp("done");
+    } catch {
+      setChecagemApp("failed");
+    }
+  }
+
   const [sptPath, setSptPath] = useState<string | null>(null);
   const [serverRoot, setServerRoot] = useState<string | null>(null);
   const [isSplitInstance, setIsSplitInstance] = useState(false);
@@ -214,9 +327,9 @@ export default function App() {
     const diag = diagnostico ?? (await window.modManagerAPI.getDiagnostics());
     if (!diagnostico) setDiagnostico(diag);
     setErroCopiado(false);
-
     // A versão do SPT vem do SPT.Server.exe (4.1.6). O sptVersion do cabeçalho
-    // no SPT 4.x é a versão do JOGO ("Tarkov 0.16.9..."), que não diz qual SPT a pessoa usa. 
+    // não serve aqui: no SPT 4.x ele cai na versão do JOGO ("Tarkov 0.16.9..."),
+    // e o relato saía "SPT Tarkov 0.16.9", que não responde qual SPT a pessoa usa.
     const sptSemver = await window.modManagerAPI.getSptSemver().catch(() => undefined);
     setErroAberto({ texto, raw, relato: montaRelato(raw, diag, sptSemver || sptVersionInput.trim() || undefined) });
   }
@@ -420,6 +533,127 @@ export default function App() {
 
   const modTree = useMemo(() => buildModTree(filteredMods, typeFilter), [filteredMods, typeFilter]);
 
+  // ---- Categorias ----
+  const [groupMode, setGroupMode] = useState<GroupMode>(() => lerLocal(GROUP_STORAGE_KEY, "none", ehModoGrupo));
+  const [recolhidas, setRecolhidas] = useState<Set<string>>(
+    () => new Set(lerLocal(COLLAPSED_STORAGE_KEY, [] as string[], ehListaDeTexto))
+  );
+  const [titulosFonte, setTitulosFonte] = useState<Record<string, string>>({});
+  const [buscandoCategorias, setBuscandoCategorias] = useState(false);
+  const [custom, setCustom] = useState<CustomCategories>({ categories: [], assign: {} });
+  const [editandoCategoria, setEditandoCategoria] = useState<{ id: string; valor: string } | null>(null);
+  // Ids que já foram perguntados à fonte, pra não repetir a cada reescaneamento.
+  const idsPerguntados = useRef(new Set<number>());
+
+  useEffect(() => {
+    if (!sptPath) return;
+    idsPerguntados.current = new Set();
+    setTitulosFonte({});
+    window.modManagerAPI.getCustomCategories().then(setCustom);
+  }, [sptPath]);
+
+  // Pergunta à fonte só pelos mods que ainda não tem categoria conhecida, e só
+  // quando o agrupamento está ligado: quem usa a lista plana não gasta rede.
+  useEffect(() => {
+    if (groupMode === "none" || !sptPath) return;
+    const novos = mods
+      .map((m) => m.forgeModId)
+      .filter((id): id is number => id !== undefined && !idsPerguntados.current.has(id));
+    if (novos.length === 0) return;
+    novos.forEach((id) => idsPerguntados.current.add(id));
+    setBuscandoCategorias(true);
+    window.modManagerAPI
+      .fetchModCategories(novos)
+      .then((titulos) => setTitulosFonte((prev) => ({ ...prev, ...titulos })))
+      .catch(() => undefined)
+      .finally(() => setBuscandoCategorias(false));
+  }, [mods, groupMode, sptPath]);
+
+  function salvarCustom(proximo: CustomCategories) {
+    setCustom(proximo);
+    window.modManagerAPI.saveCustomCategories(proximo).catch(() => undefined);
+  }
+
+  async function mudarAgrupamento(modo: GroupMode) {
+    setGroupMode(modo);
+    gravarLocal(GROUP_STORAGE_KEY, modo);
+    // Primeira vez em "Minhas categorias": começa com uma cópia das da fonte.
+    if (modo === "custom" && custom.categories.length === 0 && Object.keys(custom.assign).length === 0) {
+      const ids = mods.map((m) => m.forgeModId).filter((id): id is number => id !== undefined);
+      let titulos = titulosFonte;
+      if (ids.some((id) => !(String(id) in titulos))) {
+        setBuscandoCategorias(true);
+        titulos = { ...titulos, ...(await window.modManagerAPI.fetchModCategories(ids).catch(() => ({}))) };
+        ids.forEach((id) => idsPerguntados.current.add(id));
+        setTitulosFonte(titulos);
+        setBuscandoCategorias(false);
+      }
+      const semente = seedFromSource(buildModTree(mods, "all"), titulos);
+      if (semente.categories.length > 0) salvarCustom(semente);
+    }
+  }
+
+  const grupos = useMemo(
+    () => groupNodes(modTree, groupMode, titulosFonte, custom),
+    [modTree, groupMode, titulosFonte, custom]
+  );
+
+  function chaveRecolhida(id: string) {
+    return `${groupMode}|${id}`;
+  }
+  function alternarCategoria(id: string) {
+    setRecolhidas((prev) => {
+      const prox = new Set(prev);
+      const k = chaveRecolhida(id);
+      if (prox.has(k)) prox.delete(k);
+      else prox.add(k);
+      gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
+      return prox;
+    });
+  }
+  const todasRecolhidas = grupos.length > 0 && grupos.every((g) => recolhidas.has(chaveRecolhida(g.id)));
+  function alternarTodas() {
+    setRecolhidas((prev) => {
+      const prox = new Set(prev);
+      for (const g of grupos) {
+        if (todasRecolhidas) prox.delete(chaveRecolhida(g.id));
+        else prox.add(chaveRecolhida(g.id));
+      }
+      gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
+      return prox;
+    });
+  }
+
+  function criarCategoria() {
+    const id = newCategoryId(t("categories.new"));
+    salvarCustom({ ...custom, categories: [...custom.categories, { id, name: t("categories.new") }] });
+    setEditandoCategoria({ id, valor: t("categories.new") });
+  }
+
+  function confirmarRenomeCategoria() {
+    if (!editandoCategoria) return;
+    salvarCustom(renameCategory(custom, editandoCategoria.id, editandoCategoria.valor));
+    setEditandoCategoria(null);
+  }
+
+  async function apagarCategoria(id: string, nome: string) {
+    if (!(await confirmar(t("categories.deleteConfirm", { name: nome })))) return;
+    salvarCustom(removeCategory(custom, id));
+  }
+
+  function moverParaCategoria(nodeKeys: string[], categoriaId: string) {
+    salvarCustom(assignNodes(custom, nodeKeys, categoriaId));
+  }
+
+  /** Chaves de linha da árvore das partes selecionadas (a seleção é por mod). */
+  function chavesDeLinhaSelecionadas(): string[] {
+    const out: string[] = [];
+    for (const node of buildModTree(mods, "all")) {
+      if (node.parts.some((p) => selectedKeys.has(selectionKey(p)))) out.push(node.key);
+    }
+    return out;
+  }
+
   const typeFilterOptions = useMemo(() => {
     const base: TypeFilter[] = ["all", "server", "client"];
     // Híbrido/desconhecido só ocupa espaço quando a instalação tem algum.
@@ -450,6 +684,15 @@ export default function App() {
     (async () => {
       const instance = await window.modManagerAPI.getSptPath();
       setSptPath(instance?.path ?? null);
+      if (!instance?.path) {
+        let jaViu = false;
+        try {
+          jaViu = localStorage.getItem(WELCOMED_STORAGE_KEY) === "1";
+        } catch {
+          // segue como primeira vez
+        }
+        if (!jaViu) setBoasVindas(true);
+      }
       setServerRoot(instance?.serverRoot ?? null);
       setIsSplitInstance(instance?.split ?? false);
       if (instance?.path) {
@@ -1280,6 +1523,14 @@ export default function App() {
   // Quantas partes cada pacote tem instaladas. Serve pra avisar na linha do mod que ele
   // faz parte de um conjunto — sem isso, ver a outra metade desabilitar junto parece bug.
   const listProps = {
+    categoryMenu:
+      groupMode === "custom"
+        ? {
+            options: custom.categories,
+            currentOf: (nodeKey: string) => custom.assign[nodeKey] ?? UNCATEGORIZED,
+            onMove: (nodeKey: string, catId: string) => moverParaCategoria([nodeKey], catId)
+          }
+        : undefined,
     onToggle: handleToggle,
     onUninstall: handleUninstall,
     onOpenFolder: handleOpenFolder,
@@ -1301,35 +1552,6 @@ export default function App() {
     t
   };
 
-  // Virou seletor: com sete idiomas, um botão pra cada não cabe na barra — e
-  // ia continuar não cabendo a cada contribuição nova.
-  const langToggle = (
-    <div className="lang-picker">
-      {/* O crédito de tradução fica colado no seletor de idioma em vez de num
-          rodapé solto: é o único ponto da interface onde "tradução" já é o
-          assunto, então não precisa explicar o que ele está fazendo ali. */}
-      <span className="lang-credit">
-        {t("credits.translations")}{" "}
-        <button
-          className="link-button"
-          onClick={() => window.modManagerAPI.openReleasePage("https://github.com/GAVRIEL-911")}
-        >
-          GΛVRIEL
-        </button>
-      </span>
-      <select
-        className="lang-select"
-        value={lang}
-        onChange={(e) => changeLang(e.target.value as Lang)}
-        aria-label="Language"
-        title={t("settings.language")}
-      >
-        {SUPPORTED_LANGS.map((code) => (
-          <option key={code} value={code}>{LANG_LABELS[code]}</option>
-        ))}
-      </select>
-    </div>
-  );
 
   return (
     <>
@@ -1451,7 +1673,10 @@ export default function App() {
 
       {!sptPath ? (
         <div className="empty-state">
-          {langToggle}
+          {/* Sem instância ainda: a engrenagem já dá acesso a idioma e tema. */}
+          <button className="gear-button empty-state-gear" onClick={abrirConfig} title={t("settings.title")} aria-label={t("settings.title")}>
+            ⚙
+          </button>
           <h1>SPT Mod Manager</h1>
           <p>{t("empty.selectFolder")}</p>
           <button onClick={handleSelectFolder}>{t("empty.selectFolderButton")}</button>
@@ -1473,23 +1698,19 @@ export default function App() {
           <header>
             <div>
               <h1>SPT Mod Manager</h1>
-              {isSplitInstance ? (
-                <span className="instance-path" title={`Client: ${sptPath}\nServer: ${serverRoot}`}>
-                  {t("header.splitInstance", { client: sptPath ?? "", server: serverRoot ?? "" })}
-                </span>
-              ) : (
-                <span className="instance-path" title={sptPath ?? ""}>{sptPath}</span>
-              )}
             </div>
+            {/* Instância, idioma e versões foram pra engrenagem: são coisas que se
+                configura uma vez, e disputavam espaço com o que se usa todo dia. */}
             <div className="header-actions">
-              {langToggle}
               <button onClick={handleOpenBrowse} className="primary" title={t("header.browseForgeTitle")}>
                 {t("header.browseForge")}
               </button>
               <button onClick={handleOpenModHub} title={t("header.openHubTitle")}>{t("header.openHub")}</button>
-              <button onClick={handleSelectFolder} title={t("header.changeInstanceTitle")}>{t("header.changeInstance")}</button>
               <button onClick={handleInstall} disabled={loading} className="primary" title={t("header.installButtonTitle")}>
                 {loading ? t("header.installing") : t("header.installButton")}
+              </button>
+              <button className="gear-button" onClick={abrirConfig} title={t("settings.title")} aria-label={t("settings.title")}>
+                ⚙
               </button>
             </div>
           </header>
@@ -1502,12 +1723,6 @@ export default function App() {
             <span className="summary-item">Client: <strong>{summary.client}</strong></span>
             <span className="summary-item summary-active">{t("summary.active")} <strong>{summary.active}</strong></span>
             <span className="summary-item summary-disabled">{t("summary.disabled")} <strong>{summary.disabled}</strong></span>
-            {sptVersion && (
-              <span className="summary-item" title={t("summary.versionTooltip")}>
-                {sptVersion}
-              </span>
-            )}
-            <span className="summary-item summary-valid" title={t("summary.validInstanceTitle")}>✔ {t("summary.validInstance")}</span>
           </div>
 
           <input
@@ -1529,6 +1744,23 @@ export default function App() {
               <option value="manual">{t("filters.originManual")}</option>
               <option value="manager">{t("filters.originManager")}</option>
             </select>
+
+            <span className="filter-separator" />
+
+            <select
+              value={groupMode}
+              onChange={(e) => mudarAgrupamento(e.target.value as GroupMode)}
+              title={t("categories.groupBy")}
+              aria-label={t("categories.groupBy")}
+            >
+              <option value="none">{t("categories.groupNone")}</option>
+              <option value="source">{t("categories.groupSource")}</option>
+              <option value="custom">{t("categories.groupCustom")}</option>
+            </select>
+            {groupMode !== "none" && (
+              <button onClick={alternarTodas}>{todasRecolhidas ? t("categories.expandAll") : t("categories.collapseAll")}</button>
+            )}
+            {groupMode === "custom" && <button onClick={criarCategoria}>+ {t("categories.new")}</button>}
 
             <span className="filter-separator" />
 
@@ -1779,6 +2011,24 @@ export default function App() {
                 <button onClick={() => runBulk("enable")} disabled={mutating}>{t("bulk.enable")}</button>
                 <button onClick={() => runBulk("disable")} disabled={mutating}>{t("bulk.disable")}</button>
                 <button onClick={() => runBulk("remove")} className="danger" disabled={mutating}>{t("bulk.remove")}</button>
+                {groupMode === "custom" && (
+                  <select
+                    className="bulk-move"
+                    value=""
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      moverParaCategoria(chavesDeLinhaSelecionadas(), e.target.value);
+                      clearSelection();
+                    }}
+                    aria-label={t("categories.moveTo")}
+                  >
+                    <option value="">{t("categories.moveTo")}...</option>
+                    {custom.categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                    <option value={UNCATEGORIZED}>{t("categories.uncategorized")}</option>
+                  </select>
+                )}
                 <button onClick={clearSelection}>{t("bulk.cancelSelection")}</button>
               </div>
             </div>
@@ -1803,7 +2053,77 @@ export default function App() {
             ))}
           </div>
 
-          <ModList nodes={modTree} {...listProps} />
+          {groupMode === "none" ? (
+            <ModList nodes={modTree} {...listProps} />
+          ) : (
+            <>
+              {buscandoCategorias && <p className="category-loading">{t("categories.loading")}</p>}
+              {(() => {
+                let deslocamento = 0;
+                return grupos
+                  // Com busca ativa, categoria vazia só atrapalha a leitura.
+                  .filter((g) => g.nodes.length > 0 || (groupMode === "custom" && !searchQuery.trim()))
+                  .map((g) => {
+                    const recolhida = recolhidas.has(chaveRecolhida(g.id));
+                    const inicio = deslocamento;
+                    deslocamento += g.nodes.length;
+                    const nome = g.id === UNCATEGORIZED ? t("categories.uncategorized") : g.name;
+                    const editavel = groupMode === "custom" && g.id !== UNCATEGORIZED;
+                    const editando = editandoCategoria?.id === g.id;
+                    return (
+                      <section key={g.id} className="category-group">
+                        <div className="category-header">
+                          <button
+                            className="category-toggle"
+                            onClick={() => alternarCategoria(g.id)}
+                            aria-expanded={!recolhida}
+                          >
+                            <span className="category-chevron">{recolhida ? "▶" : "▼"}</span>
+                            {!editando && <span className="category-name">{nome}</span>}
+                            {!editando && <span className="category-count">{t("categories.count", { count: g.nodes.length })}</span>}
+                          </button>
+                          {editando && (
+                            <input
+                              className="rename-input category-rename"
+                              autoFocus
+                              value={editandoCategoria!.valor}
+                              onChange={(e) => setEditandoCategoria({ id: g.id, valor: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") confirmarRenomeCategoria();
+                                if (e.key === "Escape") setEditandoCategoria(null);
+                              }}
+                              onBlur={confirmarRenomeCategoria}
+                            />
+                          )}
+                          {editavel && !editando && (
+                            <div className="category-actions">
+                              <button onClick={() => setEditandoCategoria({ id: g.id, valor: g.name })} title={t("categories.rename")}>
+                                ✎
+                              </button>
+                              <button onClick={() => salvarCustom(moveCategory(custom, g.id, -1))} title={t("categories.moveUp")}>
+                                ↑
+                              </button>
+                              <button onClick={() => salvarCustom(moveCategory(custom, g.id, 1))} title={t("categories.moveDown")}>
+                                ↓
+                              </button>
+                              <button className="danger" onClick={() => apagarCategoria(g.id, g.name)} title={t("categories.delete")}>
+                                ✕
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {!recolhida &&
+                          (g.nodes.length > 0 ? (
+                            <ModList nodes={g.nodes} numberOffset={inicio} {...listProps} />
+                          ) : (
+                            <p className="category-empty">{t("categories.empty")}</p>
+                          ))}
+                      </section>
+                    );
+                  });
+              })()}
+            </>
+          )}
         </div>
       )}
 
@@ -2052,6 +2372,163 @@ export default function App() {
         </div>
       )}
 
+      {boasVindas && (
+        <div className="modal-backdrop">
+          <div className="modal-box welcome-box">
+            <h2 className="welcome-title">{t("welcome.title")}</h2>
+            <p className="settings-note">{t("welcome.pickLanguage")}</p>
+            {/* Já vem marcado o idioma do Windows (detectSystemLang); a pessoa só
+                confirma. Trocar aqui muda a interface na hora, inclusive esta caixa. */}
+            <div className="welcome-langs">
+              {SUPPORTED_LANGS.map((code) => (
+                <button key={code} className={lang === code ? "on" : ""} onClick={() => changeLang(code)}>
+                  {LANG_LABELS[code]}
+                </button>
+              ))}
+            </div>
+            <p className="settings-note">
+              {t("credits.translations")}{" "}
+              <button
+                className="link-button welcome-credit"
+                onClick={() => window.modManagerAPI.openReleasePage("https://github.com/GAVRIEL-911")}
+              >
+                GΛVRIEL
+              </button>
+            </p>
+            <div className="welcome-actions">
+              <button className="primary" autoFocus onClick={() => { changeLang(lang); concluirBoasVindas(); }}>
+                {t("welcome.continue")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {configAberta && (
+        <div className="modal-backdrop settings-backdrop" onClick={() => setConfigAberta(false)}>
+          <aside className="settings-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-header">
+              <h2>{t("settings.title")}</h2>
+              <button className="link-button settings-close" onClick={() => setConfigAberta(false)} aria-label={t("common.close")}>
+                ✕
+              </button>
+            </div>
+
+            {sptPath && (
+              <section className="settings-section">
+                <h3>{t("settings.instance")}</h3>
+                <div className="settings-row">
+                  <span>{t("settings.clientPath")}</span>
+                  <span className="settings-value mono" title={sptPath}>{sptPath}</span>
+                </div>
+                {isSplitInstance && (
+                  <div className="settings-row">
+                    <span>{t("settings.serverPath")}</span>
+                    <span className="settings-value mono" title={serverRoot ?? ""}>{serverRoot}</span>
+                  </div>
+                )}
+                <div className="settings-row">
+                  <span>{t("settings.sptVersion")}</span>
+                  <span className="settings-value mono">{sptSemverConfig || t("settings.unknown")}</span>
+                </div>
+                {sptVersion && (
+                  <div className="settings-row">
+                    <span>{t("settings.gameVersion")}</span>
+                    {/* O texto vem como "Tarkov 0.16.9.40743": o rótulo já diz o que é. */}
+                    <span className="settings-value mono">{sptVersion.replace(/^Tarkov\s+/i, "")}</span>
+                  </div>
+                )}
+                <div className="settings-row settings-row-end">
+                  <button
+                    onClick={() => {
+                      setConfigAberta(false);
+                      handleSelectFolder();
+                    }}
+                    title={t("header.changeInstanceTitle")}
+                  >
+                    {t("header.changeInstance")}
+                  </button>
+                </div>
+              </section>
+            )}
+
+            <section className="settings-section">
+              <h3>{t("settings.appearance")}</h3>
+              <div className="settings-row">
+                <span>{t("settings.theme")}</span>
+                <div className="segmented" role="radiogroup" aria-label={t("settings.theme")}>
+                  {(["system", "dark", "light"] as const).map((opcao) => (
+                    <button
+                      key={opcao}
+                      role="radio"
+                      aria-checked={tema === opcao}
+                      className={tema === opcao ? "on" : ""}
+                      onClick={() => mudarTema(opcao)}
+                    >
+                      {t(opcao === "system" ? "settings.themeSystem" : opcao === "dark" ? "settings.themeDark" : "settings.themeLight")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="settings-row">
+                <span>{t("settings.language")}</span>
+                <select value={lang} onChange={(e) => changeLang(e.target.value as Lang)} aria-label={t("settings.language")}>
+                  {SUPPORTED_LANGS.map((code) => (
+                    <option key={code} value={code}>{LANG_LABELS[code]}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="settings-note">
+                {t("credits.translations")}{" "}
+                <button
+                  className="link-button"
+                  onClick={() => window.modManagerAPI.openReleasePage("https://github.com/GAVRIEL-911")}
+                >
+                  GΛVRIEL
+                </button>
+              </p>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.mods")}</h3>
+              <div className="settings-row">
+                <span>{t("settings.modSource")}</span>
+                <select
+                  value={activeSourceKey}
+                  onChange={(e) => handleChangeSource(e.target.value)}
+                  title={t("browse.sourceTitle")}
+                >
+                  {modSources.map((src) => (
+                    <option key={src.key} value={src.key}>{src.label}</option>
+                  ))}
+                </select>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.about")}</h3>
+              <div className="settings-row">
+                <span>SPT Mod Manager</span>
+                <span className="settings-value mono">{versaoApp ?? ""}</span>
+              </div>
+              <div className="settings-row settings-row-end">
+                {checagemApp === "done" && appUpdate && (
+                  <span className="settings-note">
+                    {appUpdate.updateAvailable
+                      ? t("settings.updateAvailable", { version: appUpdate.latestVersion ?? "" })
+                      : t("settings.upToDate")}
+                  </span>
+                )}
+                {checagemApp === "failed" && <span className="settings-note">{t("settings.updateCheckFailed")}</span>}
+                <button onClick={verificarAtualizacaoDoApp} disabled={checagemApp === "checking"}>
+                  {checagemApp === "checking" ? t("settings.checking") : t("settings.checkAppUpdate")}
+                </button>
+              </div>
+            </section>
+          </aside>
+        </div>
+      )}
+
       {erroAberto && (
         <div className="modal-backdrop" onClick={() => setErroAberto(null)}>
           <div className="modal-box error-box" onClick={(e) => e.stopPropagation()}>
@@ -2229,6 +2706,8 @@ export default function App() {
 
 function ModList({
   nodes,
+  numberOffset = 0,
+  categoryMenu,
   onToggle,
   onUninstall,
   onOpenFolder,
@@ -2250,6 +2729,13 @@ function ModList({
   t
 }: {
   nodes: ModTreeNode[];
+  /** Numeração contínua entre categorias: a segunda começa onde a primeira parou. */
+  numberOffset?: number;
+  categoryMenu?: {
+    options: { id: string; name: string }[];
+    currentOf: (nodeKey: string) => string;
+    onMove: (nodeKey: string, categoryId: string) => void;
+  };
   onToggle: (mod: ModInfo) => void;
   onUninstall: (mod: ModInfo) => void;
   onOpenFolder: (mod: ModInfo) => void;
@@ -2332,7 +2818,7 @@ function ModList({
               disabled={disabled}
               title={t("modlist.checkboxTitle")}
             />
-            <span className="mod-number">{String(index + 1).padStart(2, "0")}</span>
+            <span className="mod-number">{String(numberOffset + index + 1).padStart(2, "0")}</span>
             {node.single ? (
               <span className="tree-toggle-spacer" />
             ) : (
@@ -2467,6 +2953,25 @@ function ModList({
                             {node.parts.filter((x) => x.type === part.type).length > 1 ? part.name : part.type})
                           </button>
                         ))}
+                  {categoryMenu && (
+                    // Select em vez de submenu: com 20 categorias, um submenu que
+                    // abre pro lado sai da tela; o select nativo sempre cabe.
+                    <select
+                      className="menu-category-select"
+                      value={categoryMenu.currentOf(node.key)}
+                      onChange={(e) => {
+                        categoryMenu.onMove(node.key, e.target.value);
+                        onSetOpenMenuKey(null);
+                      }}
+                      aria-label={t("categories.moveTo")}
+                      title={t("categories.moveTo")}
+                    >
+                      {categoryMenu.options.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                      <option value={UNCATEGORIZED}>{t("categories.uncategorized")}</option>
+                    </select>
+                  )}
                   <button onClick={() => onRenameStart(mod)}>{t("modlist.rename")}</button>
                   <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>{t("modlist.reinstall")}</button>
                   <button className="danger" onClick={() => { onUninstall(mod); onSetOpenMenuKey(null); }}>{t("bulk.remove")}</button>

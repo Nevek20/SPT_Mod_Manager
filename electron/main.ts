@@ -36,7 +36,10 @@ import {
   findForgeDownloadsForNames,
   checkAppUpdate,
   finalizeUnrecognizedInstall,
-  discardPendingInstall
+  discardPendingInstall,
+  fetchModCategories,
+  loadCustomCategories,
+  saveCustomCategories
 } from "./modManager";
 import { InstanceConfig, ModInfo } from "./types";
 
@@ -212,6 +215,23 @@ ipcMain.handle("scan-mods", () => {
     ...mod,
     sptCompatibility: checkSptCompatibility(mod.sptVersion, instanceVersion ?? undefined)
   }));
+});
+
+ipcMain.handle("fetch-mod-categories", async (_event, ids: number[]) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath || !Array.isArray(ids)) return {};
+  return fetchModCategories(sptPath, ids.filter((id) => typeof id === "number"));
+});
+
+ipcMain.handle("get-custom-categories", () => {
+  const sptPath = store.get("sptPath");
+  return sptPath ? loadCustomCategories(sptPath) : { categories: [], assign: {} };
+});
+
+ipcMain.handle("save-custom-categories", (_event, custom: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { categories: [], assign: {} };
+  return saveCustomCategories(sptPath, custom);
 });
 
 ipcMain.handle("get-spt-version", () => {

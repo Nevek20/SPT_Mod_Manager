@@ -46,6 +46,13 @@ export interface ModInfo {
   forgeModId?: number;
 }
 
+/** Categorias que o usuário criou, e em qual delas está cada linha da lista. */
+export interface CustomCategories {
+  categories: { id: string; name: string }[];
+  /** chave da linha na árvore (packageId ou solo:tipo:id) -> id da categoria */
+  assign: Record<string, string>;
+}
+
 export interface ModSourceInfo {
   key: string;
   label: string;
@@ -205,6 +212,9 @@ export interface ModManagerAPI {
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   getDiagnostics: () => Promise<{ appVersion: string; os: string; homeDir: string; reportPage: string | null }>;
   copyText: (texto: string) => Promise<{ success: boolean }>;
+  fetchModCategories: (ids: number[]) => Promise<Record<string, string>>;
+  getCustomCategories: () => Promise<CustomCategories>;
+  saveCustomCategories: (custom: CustomCategories) => Promise<CustomCategories>;
   openForgeModPage: (modId: number) => Promise<{ success: boolean; message?: string }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string; version?: string }[]
