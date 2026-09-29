@@ -137,6 +137,13 @@ console.log("\nminhas categorias");
     ]
   );
 
+  const tudoOrganizado = assignNodes(semente, [chaveMao], traders);
+  check(
+    "com tudo organizado, sem categoria some",
+    groupNodes(arvore, "custom", titulos, tudoOrganizado).some((g) => g.id === UNCATEGORIZED),
+    false
+  );
+
   check("renomear troca so o nome", renameCategory(semente, bots, "  IA  ").categories[0], { id: bots, name: "IA" });
   check("renomear pra vazio nao muda nada", renameCategory(semente, bots, "   ").categories[0].name, "Bots");
   check("descer troca a ordem", moveCategory(semente, bots, 1).categories.map((c) => c.name), ["Traders", "Bots"]);

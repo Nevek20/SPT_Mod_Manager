@@ -346,7 +346,9 @@ const pt: Dict = {
   "categories.moveUp": "Subir",
   "categories.moveDown": "Descer",
   "categories.empty": "Nenhum mod aqui. Arraste mods pra cá, ou use \"Mover para categoria\" no menu de um mod.",
-  "categories.loading": "Buscando categorias na fonte..."
+  "categories.loading": "Buscando categorias na fonte...",
+  "categories.edit": "Editar categorias",
+  "categories.doneEditing": "Concluir"
 };
 
 const en: Dict = {
@@ -652,7 +654,9 @@ const en: Dict = {
   "categories.moveUp": "Move up",
   "categories.moveDown": "Move down",
   "categories.empty": "No mods here yet. Drag mods here, or use \"Move to category\" in a mod's menu.",
-  "categories.loading": "Getting categories from the source..."
+  "categories.loading": "Getting categories from the source...",
+  "categories.edit": "Edit categories",
+  "categories.doneEditing": "Done"
 };
 
 /**
@@ -943,7 +947,9 @@ const zh: Dict = {
   "categories.moveUp": "上移",
   "categories.moveDown": "下移",
   "categories.empty": "这里还没有模组。把模组拖到这里，或在模组菜单中使用“移动到分类”。",
-  "categories.loading": "正在从来源获取分类…"
+  "categories.loading": "正在从来源获取分类…",
+  "categories.edit": "编辑分类",
+  "categories.doneEditing": "完成"
 };
 
 const ru: Dict = {
@@ -1224,7 +1230,9 @@ const ru: Dict = {
   "categories.moveUp": "Выше",
   "categories.moveDown": "Ниже",
   "categories.empty": "Здесь пока нет модов. Перетащите моды сюда или используйте «Переместить в категорию» в меню мода.",
-  "categories.loading": "Загрузка категорий из источника…"
+  "categories.loading": "Загрузка категорий из источника…",
+  "categories.edit": "Редактировать категории",
+  "categories.doneEditing": "Готово"
 };
 
 const fr: Dict = {
@@ -1505,7 +1513,9 @@ const fr: Dict = {
   "categories.moveUp": "Monter",
   "categories.moveDown": "Descendre",
   "categories.empty": "Aucun mod ici. Glissez des mods ici, ou utilisez « Déplacer vers la catégorie » dans le menu d'un mod.",
-  "categories.loading": "Récupération des catégories depuis la source…"
+  "categories.loading": "Récupération des catégories depuis la source…",
+  "categories.edit": "Modifier les catégories",
+  "categories.doneEditing": "Terminer"
 };
 
 const ja: Dict = {
@@ -1786,7 +1796,9 @@ const ja: Dict = {
   "categories.moveUp": "上へ",
   "categories.moveDown": "下へ",
   "categories.empty": "まだ Mod がありません。ここに Mod をドラッグするか、Mod のメニューで「カテゴリへ移動」を使ってください。",
-  "categories.loading": "取得元からカテゴリを取得中…"
+  "categories.loading": "取得元からカテゴリを取得中…",
+  "categories.edit": "カテゴリを編集",
+  "categories.doneEditing": "完了"
 };
 
 const de: Dict = {
@@ -2067,7 +2079,9 @@ const de: Dict = {
   "categories.moveUp": "Nach oben",
   "categories.moveDown": "Nach unten",
   "categories.empty": "Noch keine Mods. Zieh Mods hierher oder nutze „In Kategorie verschieben“ im Menü eines Mods.",
-  "categories.loading": "Kategorien werden von der Quelle geladen…"
+  "categories.loading": "Kategorien werden von der Quelle geladen…",
+  "categories.edit": "Kategorien bearbeiten",
+  "categories.doneEditing": "Fertig"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

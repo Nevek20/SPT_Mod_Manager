@@ -86,7 +86,8 @@ export function groupNodes(
     else semCategoria.push(node);
   }
   const grupos: CategoryGroup[] = custom.categories.map((c) => ({ id: c.id, name: c.name, nodes: porId.get(c.id)! }));
-  grupos.push({ id: UNCATEGORIZED, name: "", nodes: semCategoria });
+  // "Sem categoria" vazio é só ruído: quando tudo já está organizado, some.
+  if (semCategoria.length) grupos.push({ id: UNCATEGORIZED, name: "", nodes: semCategoria });
   return grupos;
 }
 
