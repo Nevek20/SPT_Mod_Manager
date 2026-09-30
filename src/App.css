@@ -1963,3 +1963,54 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
   color: var(--accent-strong);
   background: var(--accent-wash);
 }
+
+/* Faixas de rolagem que aparecem enquanto se arrasta um mod. */
+.drag-scroll-zone {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s;
+}
+
+.drag-scroll-zone.visible {
+  opacity: 0.55;
+  visibility: visible;
+}
+
+.drag-scroll-up {
+  top: 0;
+  align-items: flex-start;
+  background: linear-gradient(to bottom, var(--accent-wash), transparent);
+}
+
+.drag-scroll-down {
+  bottom: 0;
+  align-items: flex-end;
+  background: linear-gradient(to top, var(--accent-wash), transparent);
+}
+
+.drag-scroll-zone span {
+  margin: 14px 0;
+  padding: 4px 22px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  color: var(--accent-strong);
+  font-size: 14px;
+}
+
+.drag-scroll-zone.visible.active {
+  opacity: 1;
+}
+
+/* Sem animação: o pulo da seta parecia tremedeira. A cor cheia já avisa. */
+.drag-scroll-zone.active span {
+  background: var(--accent);
+  color: #1a1509;
+}

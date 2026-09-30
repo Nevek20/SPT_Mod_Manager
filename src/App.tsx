@@ -52,6 +52,8 @@ function gravarLocal(chave: string, valor: unknown) {
 }
 /** Tipo de dado do arrasto interno de mod entre categorias. */
 const ARRASTO_MOD = "application/x-spt-mod-node";
+/** Altura, a partir de cada borda, onde segurar o mod faz a lista rolar sozinha. */
+const ZONA_ROLAGEM_PX = 150;
 const ehModoGrupo = (v: unknown): v is GroupMode => v === "none" || v === "source" || v === "custom";
 const ehMapaDeBooleanos = (v: unknown): v is Record<string, boolean> =>
   !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((x) => typeof x === "boolean");
@@ -678,6 +680,85 @@ export default function App() {
   function moverParaCategoria(nodeKeys: string[], categoriaId: string) {
     salvarCustom(assignNodes(custom, nodeKeys, categoriaId));
   }
+
+  // ---- Rolagem automática durante o arrasto ----
+  // Enquanto um arrasto nativo está acontecendo, o Chromium (e portanto o
+  // Electron) não entrega a rodinha do mouse pra página: não dá pra rolar e
+  // soltar o mod numa categoria que está fora da tela. O jeito padrão, o mesmo
+  // do Explorer e dos navegadores, é rolar sozinho quando o cursor chega perto
+  // da borda de cima ou de baixo. Quanto mais perto da borda, mais rápido.
+  // As faixas com seta (ver o JSX) mostram onde fica essa zona, pra pessoa
+  // não precisar adivinhar.
+  //
+  // As faixas ficam SEMPRE no DOM e só trocam de classe, direto pelo ref, sem
+  // passar pelo React. Qualquer re-render durante o arrasto (inserir as faixas,
+  // guardar a zona num state) fazia o Chromium cancelar o arrasto na hora.
+  const faixaCima = useRef<HTMLDivElement>(null);
+  const faixaBaixo = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const ZONA = ZONA_ROLAGEM_PX;
+    const VELOCIDADE_MAX = 28; // px por quadro
+    let ativo = false;
+    let y = 0;
+    let quadro = 0;
+    let zonaAtual: "up" | "down" | null = null;
+    const marcaZona = (z: "up" | "down" | null) => {
+      if (z === zonaAtual) return;
+      zonaAtual = z;
+      faixaCima.current?.classList.toggle("active", z === "up");
+      faixaBaixo.current?.classList.toggle("active", z === "down");
+    };
+    const mostraFaixas = (visivel: boolean) => {
+      faixaCima.current?.classList.toggle("visible", visivel);
+      faixaBaixo.current?.classList.toggle("visible", visivel);
+    };
+
+    const passo = () => {
+      if (!ativo) return;
+      const altura = window.innerHeight;
+      let delta = 0;
+      if (y < ZONA) delta = -VELOCIDADE_MAX * ((ZONA - y) / ZONA);
+      else if (y > altura - ZONA) delta = VELOCIDADE_MAX * ((y - (altura - ZONA)) / ZONA);
+      marcaZona(delta < 0 ? "up" : delta > 0 ? "down" : null);
+      if (delta !== 0) window.scrollBy(0, delta);
+      quadro = requestAnimationFrame(passo);
+    };
+    const inicio = (e: globalThis.DragEvent) => {
+      if (!e.dataTransfer?.types.includes(ARRASTO_MOD)) return;
+      ativo = true;
+      y = e.clientY;
+      mostraFaixas(true);
+      quadro = requestAnimationFrame(passo);
+    };
+    const move = (e: globalThis.DragEvent) => {
+      if (ativo) y = e.clientY;
+    };
+    const fim = () => {
+      if (!ativo) return;
+      ativo = false;
+      cancelAnimationFrame(quadro);
+      marcaZona(null);
+      mostraFaixas(false);
+    };
+    // Fase de CAPTURA no window: as categorias chamam stopPropagation no
+    // dragover (pra não acordar a caixa de "soltar arquivo pra instalar"), e
+    // escutando na borbulha o cursor sumia assim que entrava numa categoria.
+    // Era por isso que a lista subia, mas não descia: o rodapé da tela quase
+    // sempre está em cima de uma categoria.
+    // O dragstart é o único na borbulha: na captura ele chega ANTES da linha
+    // gravar o tipo do arrasto, e aí não dá pra saber se é um mod.
+    window.addEventListener("dragstart", inicio);
+    window.addEventListener("dragover", move, true);
+    window.addEventListener("dragend", fim, true);
+    window.addEventListener("drop", fim, true);
+    return () => {
+      fim();
+      window.removeEventListener("dragstart", inicio);
+      window.removeEventListener("dragover", move, true);
+      window.removeEventListener("dragend", fim, true);
+      window.removeEventListener("drop", fim, true);
+    };
+  }, []);
 
   // ---- Arrastar mod pra categoria ----
   // Tipo próprio no dataTransfer: é o que separa este arrastar do arrastar de
@@ -2452,6 +2533,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* pointer-events: none no CSS: as faixas são só aviso, o soltar tem que
+          continuar chegando nas categorias que estão por baixo delas. */}
+      <div ref={faixaCima} className="drag-scroll-zone drag-scroll-up" style={{ height: ZONA_ROLAGEM_PX }} aria-hidden="true">
+        <span>▲</span>
+      </div>
+      <div ref={faixaBaixo} className="drag-scroll-zone drag-scroll-down" style={{ height: ZONA_ROLAGEM_PX }} aria-hidden="true">
+        <span>▼</span>
+      </div>
 
       {boasVindas && (
         <div className="modal-backdrop">
