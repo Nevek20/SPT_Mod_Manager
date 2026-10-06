@@ -348,7 +348,9 @@ const pt: Dict = {
   "categories.empty": "Nenhum mod aqui. Arraste mods pra cá, ou use \"Mover para categoria\" no menu de um mod.",
   "categories.loading": "Buscando categorias na fonte...",
   "categories.edit": "Editar categorias",
-  "categories.doneEditing": "Concluir"
+  "categories.doneEditing": "Concluir",
+  "settings.supportNote": "O SPT Mod Manager é e vai continuar de graça. Se ele te poupou tempo, dá pra agradecer com um café.",
+  "settings.supportButton": "Me pague um café"
 };
 
 const en: Dict = {
@@ -656,7 +658,9 @@ const en: Dict = {
   "categories.empty": "No mods here yet. Drag mods here, or use \"Move to category\" in a mod's menu.",
   "categories.loading": "Getting categories from the source...",
   "categories.edit": "Edit categories",
-  "categories.doneEditing": "Done"
+  "categories.doneEditing": "Done",
+  "settings.supportNote": "SPT Mod Manager is and will stay free. If it saved you some time, you can say thanks with a coffee.",
+  "settings.supportButton": "Buy me a coffee"
 };
 
 /**
@@ -949,7 +953,9 @@ const zh: Dict = {
   "categories.empty": "这里还没有模组。把模组拖到这里，或在模组菜单中使用“移动到分类”。",
   "categories.loading": "正在从来源获取分类…",
   "categories.edit": "编辑分类",
-  "categories.doneEditing": "完成"
+  "categories.doneEditing": "完成",
+  "settings.supportNote": "SPT Mod Manager 现在免费，将来也会一直免费。如果它为你节省了时间，可以请我喝杯咖啡表示感谢。",
+  "settings.supportButton": "请我喝杯咖啡"
 };
 
 const ru: Dict = {
@@ -1232,7 +1238,9 @@ const ru: Dict = {
   "categories.empty": "Здесь пока нет модов. Перетащите моды сюда или используйте «Переместить в категорию» в меню мода.",
   "categories.loading": "Загрузка категорий из источника…",
   "categories.edit": "Редактировать категории",
-  "categories.doneEditing": "Готово"
+  "categories.doneEditing": "Готово",
+  "settings.supportNote": "SPT Mod Manager бесплатный и останется бесплатным. Если он сэкономил вам время, можно сказать спасибо чашкой кофе.",
+  "settings.supportButton": "Угостить кофе"
 };
 
 const fr: Dict = {
@@ -1515,7 +1523,9 @@ const fr: Dict = {
   "categories.empty": "Aucun mod ici. Glissez des mods ici, ou utilisez « Déplacer vers la catégorie » dans le menu d'un mod.",
   "categories.loading": "Récupération des catégories depuis la source…",
   "categories.edit": "Modifier les catégories",
-  "categories.doneEditing": "Terminer"
+  "categories.doneEditing": "Terminer",
+  "settings.supportNote": "SPT Mod Manager est et restera gratuit. S'il vous a fait gagner du temps, vous pouvez dire merci avec un café.",
+  "settings.supportButton": "M'offrir un café"
 };
 
 const ja: Dict = {
@@ -1798,7 +1808,9 @@ const ja: Dict = {
   "categories.empty": "まだ Mod がありません。ここに Mod をドラッグするか、Mod のメニューで「カテゴリへ移動」を使ってください。",
   "categories.loading": "取得元からカテゴリを取得中…",
   "categories.edit": "カテゴリを編集",
-  "categories.doneEditing": "完了"
+  "categories.doneEditing": "完了",
+  "settings.supportNote": "SPT Mod Manager は無料で、これからもずっと無料です。役に立ったら、コーヒー1杯でお礼をいただけると嬉しいです。",
+  "settings.supportButton": "コーヒーをおごる"
 };
 
 const de: Dict = {
@@ -2081,7 +2093,9 @@ const de: Dict = {
   "categories.empty": "Noch keine Mods. Zieh Mods hierher oder nutze „In Kategorie verschieben“ im Menü eines Mods.",
   "categories.loading": "Kategorien werden von der Quelle geladen…",
   "categories.edit": "Kategorien bearbeiten",
-  "categories.doneEditing": "Fertig"
+  "categories.doneEditing": "Fertig",
+  "settings.supportNote": "SPT Mod Manager ist und bleibt kostenlos. Wenn er dir Zeit gespart hat, kannst du mit einem Kaffee danke sagen.",
+  "settings.supportButton": "Spendier mir einen Kaffee"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

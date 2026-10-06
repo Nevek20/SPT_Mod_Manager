@@ -377,7 +377,11 @@ ipcMain.handle("copy-text", (_event, texto: string) => {
 });
 
 /** Páginas de crédito linkadas no rodapé. Ver a allowlist logo abaixo. */
-const CREDIT_URLS = ["https://github.com/GAVRIEL-911"];
+const CREDIT_URLS = [
+  "https://github.com/GAVRIEL-911",
+  // Botão "Buy me a coffee" do Sobre, nas configurações.
+  "https://ko-fi.com/tioemir"
+];
 
 ipcMain.handle("open-release-page", (_event, url: string) => {
   // Só abre a página do mod na Forge ou o release no próprio repo — a URL vem do

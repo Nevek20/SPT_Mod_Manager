@@ -50,6 +50,8 @@ function gravarLocal(chave: string, valor: unknown) {
     // preferência de exibição: sem armazenamento, vale só nesta sessão
   }
 }
+const KOFI_URL = "https://ko-fi.com/tioemir";
+
 /** Tipo de dado do arrasto interno de mod entre categorias. */
 const ARRASTO_MOD = "application/x-spt-mod-node";
 /** Altura, a partir de cada borda, onde segurar o mod faz a lista rolar sozinha. */
@@ -2696,6 +2698,14 @@ export default function App() {
                 {checagemApp === "failed" && <span className="settings-note">{t("settings.updateCheckFailed")}</span>}
                 <button onClick={verificarAtualizacaoDoApp} disabled={checagemApp === "checking"}>
                   {checagemApp === "checking" ? t("settings.checking") : t("settings.checkAppUpdate")}
+                </button>
+              </div>
+              {/* Discreto de propósito: fica no Sobre, onde só chega quem foi
+                  procurar, e nunca aparece como aviso na tela principal. */}
+              <div className="settings-support">
+                <p className="settings-note">{t("settings.supportNote")}</p>
+                <button className="kofi-button" onClick={() => window.modManagerAPI.openReleasePage(KOFI_URL)}>
+                  ☕ {t("settings.supportButton")}
                 </button>
               </div>
             </section>
