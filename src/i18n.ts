@@ -356,7 +356,8 @@ const pt: Dict = {
   "settings.animations": "Animações",
   "settings.on": "Ligadas",
   "settings.off": "Desligadas",
-  "settings.themeSand": "Areia"
+  "settings.themeSand": "Areia",
+  "settings.smoothScrollRestart": "A rolagem suave muda na próxima vez que abrir o app."
 };
 
 const en: Dict = {
@@ -672,7 +673,8 @@ const en: Dict = {
   "settings.animations": "Animations",
   "settings.on": "On",
   "settings.off": "Off",
-  "settings.themeSand": "Sand"
+  "settings.themeSand": "Sand",
+  "settings.smoothScrollRestart": "Smooth scrolling changes the next time you open the app."
 };
 
 /**
@@ -973,7 +975,8 @@ const zh: Dict = {
   "settings.animations": "动画",
   "settings.on": "开",
   "settings.off": "关",
-  "settings.themeSand": "沙色"
+  "settings.themeSand": "沙色",
+  "settings.smoothScrollRestart": "平滑滚动将在下次打开应用时生效。"
 };
 
 const ru: Dict = {
@@ -1264,7 +1267,8 @@ const ru: Dict = {
   "settings.animations": "Анимации",
   "settings.on": "Вкл.",
   "settings.off": "Выкл.",
-  "settings.themeSand": "Песочная"
+  "settings.themeSand": "Песочная",
+  "settings.smoothScrollRestart": "Плавная прокрутка изменится при следующем запуске приложения."
 };
 
 const fr: Dict = {
@@ -1555,7 +1559,8 @@ const fr: Dict = {
   "settings.animations": "Animations",
   "settings.on": "Activées",
   "settings.off": "Désactivées",
-  "settings.themeSand": "Sable"
+  "settings.themeSand": "Sable",
+  "settings.smoothScrollRestart": "Le défilement fluide change au prochain lancement de l'app."
 };
 
 const ja: Dict = {
@@ -1846,7 +1851,8 @@ const ja: Dict = {
   "settings.animations": "アニメーション",
   "settings.on": "オン",
   "settings.off": "オフ",
-  "settings.themeSand": "サンド"
+  "settings.themeSand": "サンド",
+  "settings.smoothScrollRestart": "スムーズスクロールは次回アプリを開いたときに反映されます。"
 };
 
 const de: Dict = {
@@ -2137,7 +2143,8 @@ const de: Dict = {
   "settings.animations": "Animationen",
   "settings.on": "An",
   "settings.off": "Aus",
-  "settings.themeSand": "Sand"
+  "settings.themeSand": "Sand",
+  "settings.smoothScrollRestart": "Weiches Scrollen ändert sich beim nächsten Start der App."
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

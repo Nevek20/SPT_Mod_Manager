@@ -213,6 +213,7 @@ export interface ModManagerAPI {
   openReleasePage: (url: string) => Promise<{ success: boolean }>;
   getDiagnostics: () => Promise<{ appVersion: string; os: string; homeDir: string; reportPage: string | null }>;
   copyText: (texto: string) => Promise<{ success: boolean }>;
+  setMotion: (valor: "on" | "off") => Promise<{ success: boolean }>;
   fetchModCategories: (ids: number[]) => Promise<Record<string, string>>;
   getCustomCategories: () => Promise<CustomCategories>;
   saveCustomCategories: (custom: CustomCategories) => Promise<CustomCategories>;

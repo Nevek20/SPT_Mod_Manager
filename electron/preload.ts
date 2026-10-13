@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   openReleasePage: (url: string) => ipcRenderer.invoke("open-release-page", url),
   getDiagnostics: () => ipcRenderer.invoke("get-diagnostics"),
   copyText: (texto: string) => ipcRenderer.invoke("copy-text", texto),
+  setMotion: (valor: "on" | "off") => ipcRenderer.invoke("set-motion", valor),
   fetchModCategories: (ids: number[]) => ipcRenderer.invoke("fetch-mod-categories", ids),
   getCustomCategories: () => ipcRenderer.invoke("get-custom-categories"),
   saveCustomCategories: (custom: unknown) => ipcRenderer.invoke("save-custom-categories", custom),
