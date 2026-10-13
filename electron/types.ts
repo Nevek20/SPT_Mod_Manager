@@ -38,7 +38,6 @@ export interface InstanceConfig {
   forgeStatusCache: { name: string; status: "update" | "blocked" | "incompatible" | "info"; version?: string }[] | null;
   forgeCheckedAt: string | null;
   modSourceKey: string | null; // fonte de mods escolhida; null = padrão
-  motion: "on" | "off" | null; // animações escolhidas nas configurações; null = segue o Windows
 }
 
 export interface RegistryEntry {

@@ -50,18 +50,16 @@ const store = new Store<InstanceConfig>({
     sptVersionOverride: null,
     forgeStatusCache: null,
     forgeCheckedAt: null,
-    modSourceKey: null,
-    motion: null
+    modSourceKey: null
   }
 });
 
-// Rolagem suave da rodinha. O Chromium tem isso pronto, mas o Electron no
-// Windows rola "aos trancos" sem o switch, e ele só vale se for ligado ANTES do
-// app ficar pronto. Por isso a escolha de animações também é gravada aqui no
-// main (não só no localStorage da interface), e mudar vale da próxima abertura.
-if (store.get("motion") !== "off") {
-  app.commandLine.appendSwitch("enable-smooth-scrolling");
-}
+// Rolagem suave da rodinha, SEMPRE ligada. O Chromium tem isso pronto, mas o
+// Electron no Windows rola "aos trancos" sem o switch, que só vale se for ligado
+// antes do app ficar pronto. Não depende da opção de Animações: rolagem lisa é
+// conforto de leitura, não enfeite (a tentativa de fazer a rolagem em JS ficou
+// pior que a nativa e foi descartada).
+app.commandLine.appendSwitch("enable-smooth-scrolling");
 
 // Aplica a fonte salva antes de qualquer chamada de rede. Sem isto o app usaria
 // o padrão até a primeira troca, ignorando a escolha do usuário na sessão toda.
@@ -248,11 +246,6 @@ ipcMain.handle("save-custom-categories", (_event, custom: unknown) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { categories: [], assign: {} };
   return saveCustomCategories(sptPath, custom);
-});
-
-ipcMain.handle("set-motion", (_event, valor: unknown) => {
-  if (valor === "on" || valor === "off") store.set("motion", valor);
-  return { success: true };
 });
 
 ipcMain.handle("get-spt-version", () => {

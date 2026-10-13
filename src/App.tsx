@@ -265,23 +265,12 @@ export default function App() {
     if (animacoes) document.documentElement.dataset.motion = animacoes;
     else delete document.documentElement.dataset.motion;
   }, [animacoes]);
-  // Mantém o main sabendo da escolha (é ele que liga a rolagem suave na
-  // abertura), inclusive pra quem escolheu antes dessa gravação existir.
-  useEffect(() => {
-    if (animacoes) window.modManagerAPI.setMotion(animacoes).catch(() => undefined);
-    // só na abertura; as mudanças seguintes já avisam no mudarAnimacoes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const animacoesLigadas =
     animacoes === "on" || (animacoes === null && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  // A rolagem suave é ligada no main na abertura do app, então mudar aqui só
-  // vale da próxima vez. A nota avisa só depois de mexer, pra não poluir.
-  const [rolagemMudou, setRolagemMudou] = useState(false);
+
   function mudarAnimacoes(ligadas: boolean) {
     const v = ligadas ? "on" : "off";
-    if (v !== (animacoesLigadas ? "on" : "off")) setRolagemMudou(true);
     setAnimacoes(v);
-    window.modManagerAPI.setMotion(v).catch(() => undefined);
     try {
       localStorage.setItem(MOTION_STORAGE_KEY, v);
     } catch {
@@ -2781,7 +2770,6 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {rolagemMudou && <p className="settings-note">{t("settings.smoothScrollRestart")}</p>}
               <div className="settings-row">
                 <span>{t("settings.language")}</span>
                 <select value={lang} onChange={(e) => changeLang(e.target.value as Lang)} aria-label={t("settings.language")}>

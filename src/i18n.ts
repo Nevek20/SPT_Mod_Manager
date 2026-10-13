@@ -357,7 +357,6 @@ const pt: Dict = {
   "settings.on": "Ligadas",
   "settings.off": "Desligadas",
   "settings.themeSand": "Areia",
-  "settings.smoothScrollRestart": "A rolagem suave muda na próxima vez que abrir o app.",
   "browse.compatAll": "Qualquer versão do SPT",
   "browse.compatMinor": "Compatíveis com {version}",
   "forge.openVersions": "Abrir as versões deste mod na fonte"
@@ -677,7 +676,6 @@ const en: Dict = {
   "settings.on": "On",
   "settings.off": "Off",
   "settings.themeSand": "Sand",
-  "settings.smoothScrollRestart": "Smooth scrolling changes the next time you open the app.",
   "browse.compatAll": "Any SPT version",
   "browse.compatMinor": "Compatible with {version}",
   "forge.openVersions": "Open this mod's versions on the source"
@@ -982,7 +980,6 @@ const zh: Dict = {
   "settings.on": "开",
   "settings.off": "关",
   "settings.themeSand": "沙色",
-  "settings.smoothScrollRestart": "平滑滚动将在下次打开应用时生效。",
   "browse.compatAll": "任意 SPT 版本",
   "browse.compatMinor": "兼容 {version}",
   "forge.openVersions": "在来源网站打开此模组的版本页"
@@ -1277,7 +1274,6 @@ const ru: Dict = {
   "settings.on": "Вкл.",
   "settings.off": "Выкл.",
   "settings.themeSand": "Песочная",
-  "settings.smoothScrollRestart": "Плавная прокрутка изменится при следующем запуске приложения.",
   "browse.compatAll": "Любая версия SPT",
   "browse.compatMinor": "Совместимые с {version}",
   "forge.openVersions": "Открыть версии этого мода на сайте источника"
@@ -1572,7 +1568,6 @@ const fr: Dict = {
   "settings.on": "Activées",
   "settings.off": "Désactivées",
   "settings.themeSand": "Sable",
-  "settings.smoothScrollRestart": "Le défilement fluide change au prochain lancement de l'app.",
   "browse.compatAll": "Toute version de SPT",
   "browse.compatMinor": "Compatibles avec {version}",
   "forge.openVersions": "Ouvrir les versions de ce mod sur la source"
@@ -1867,7 +1862,6 @@ const ja: Dict = {
   "settings.on": "オン",
   "settings.off": "オフ",
   "settings.themeSand": "サンド",
-  "settings.smoothScrollRestart": "スムーズスクロールは次回アプリを開いたときに反映されます。",
   "browse.compatAll": "すべての SPT バージョン",
   "browse.compatMinor": "{version} 対応",
   "forge.openVersions": "取得元でこの Mod のバージョンを開く"
@@ -2162,7 +2156,6 @@ const de: Dict = {
   "settings.on": "An",
   "settings.off": "Aus",
   "settings.themeSand": "Sand",
-  "settings.smoothScrollRestart": "Weiches Scrollen ändert sich beim nächsten Start der App.",
   "browse.compatAll": "Jede SPT-Version",
   "browse.compatMinor": "Kompatibel mit {version}",
   "forge.openVersions": "Versionen dieses Mods auf der Quelle öffnen"
