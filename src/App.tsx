@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Fragment, createContext, useContext, type DragEvent, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { buildModTree, type ModTreeNode } from "./modTree";
 import type { ModSourceInfo } from "./types";
 import {
@@ -24,10 +25,14 @@ import {
   removeCategory,
   renameCategory,
   moveCategory,
-  newCategoryId
+  newCategoryId,
+  forgeIdOf
 } from "./modCategories";
 import type { CustomCategories } from "./types";
 import { CompatFilter, sptConstraintFor, minorLabel } from "./browseFilters";
+import { parseChangelogHtml, changelogHasText, type ChangelogNode } from "./changelog";
+import type { ModChangelog, DownloadCacheInfo, DownloadQueueJob } from "./types";
+import { DOWNLOAD_CACHE_OPTIONS_GB, MAX_DOWNLOADS_OPTIONS } from "./types";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 const THEME_STORAGE_KEY = "spt-mod-manager.theme";
@@ -178,6 +183,273 @@ function NomeComPagina({ nome, modId, titulo }: { nome: string; modId?: number; 
   );
 }
 
+/** Desenha a árvore do changelog. Só tags da lista fechada, texto escapado pelo React. */
+function renderChangelog(nodes: ChangelogNode[], prefixo = "c"): ReactNode[] {
+  return nodes.map((n, i) => {
+    const key = `${prefixo}-${i}`;
+    if (typeof n === "string") return <Fragment key={key}>{n}</Fragment>;
+    const filhos = renderChangelog(n.children, key);
+    switch (n.tag) {
+      case "h":
+        return <h5 key={key}>{filhos}</h5>;
+      case "br":
+        return <br key={key} />;
+      case "hr":
+        return <hr key={key} />;
+      case "a":
+        // Não é clicável: abrir endereço de fora passaria por cima da allowlist
+        // de links do app. O endereço fica no title pra quem quiser copiar.
+        return (
+          <span key={key} className="changelog-link" title={n.href}>
+            {filhos}
+          </span>
+        );
+      default: {
+        const Tag = n.tag;
+        return <Tag key={key}>{filhos}</Tag>;
+      }
+    }
+  });
+}
+
+type EstadoChangelog =
+  | { status: "loading" }
+  | { status: "ok"; data: ModChangelog }
+  | { status: "error"; message: string };
+
+/**
+ * Idioma e tradução pro balão do changelog, que aparece tanto no painel de
+ * atualizações quanto na lista de mods: sem isso, cada nível da lista teria que
+ * repassar lang/t/tMsg por props.
+ */
+const ChangelogI18n = createContext<{
+  lang: Lang;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  tMsg: (msg: string | undefined | null) => string;
+}>({ lang: "en", t: (k) => k, tMsg: (m) => m ?? "" });
+
+/**
+ * Changelog já carregado, por mod e intervalo. Abrir pelo chip da lista e depois
+ * pelo painel não pede de novo. Erro não fica guardado: tentar de novo é o
+ * jeito de a pessoa sair dele.
+ */
+const cacheChangelog = new Map<string, ModChangelog>();
+/** Só um balão aberto por vez: abrir outro fecha o anterior. */
+let fechaBalaoAberto: (() => void) | null = null;
+
+const BALAO_LARGURA = 440;
+const BALAO_ALTURA = 380;
+
+function IconeNota() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Ícone de changelog com balão (pedido do trex0113, no estilo do Vortex).
+ * Abre no clique, não no hover: passar o mouse pela lista não pode ficar
+ * abrindo balão. Carrega só quando abre, uma vez: checar atualização de 80 mods
+ * não vira 80 pedidos de changelog que ninguém pediu.
+ */
+function ChangelogButton({ modId, nome, de, para }: { modId: number; nome: string; de?: string; para?: string }) {
+  const { lang, t, tMsg } = useContext(ChangelogI18n);
+  const chave = `${modId}|${de ?? ""}|${para ?? ""}`;
+  const [aberto, setAberto] = useState(false);
+  const [estado, setEstado] = useState<EstadoChangelog | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  const botao = useRef<HTMLButtonElement>(null);
+  const balao = useRef<HTMLDivElement>(null);
+
+  const fechar = useCallback(() => setAberto(false), []);
+
+  function posicionar() {
+    const r = botao.current?.getBoundingClientRect();
+    if (!r) return;
+    const margem = 8;
+    const abaixo = window.innerHeight - r.bottom - margem;
+    const acima = r.top - margem;
+    // Embaixo por padrão; em cima só quando não cabe e em cima tem mais espaço
+    // (último mod da lista, por exemplo).
+    const vaiAcima = abaixo < Math.min(BALAO_ALTURA, 240) && acima > abaixo;
+    const maxHeight = Math.max(160, Math.min(BALAO_ALTURA, vaiAcima ? acima : abaixo));
+    const left = Math.max(margem, Math.min(r.left, window.innerWidth - BALAO_LARGURA - margem));
+    const top = vaiAcima ? r.top - 6 - maxHeight : r.bottom + 6;
+    setPos({ top, left, maxHeight });
+  }
+
+  function alternar() {
+    if (aberto) {
+      setAberto(false);
+      return;
+    }
+    fechaBalaoAberto?.();
+    fechaBalaoAberto = fechar;
+    posicionar();
+    setAberto(true);
+    const guardado = cacheChangelog.get(chave);
+    if (guardado) {
+      setEstado({ status: "ok", data: guardado });
+      return;
+    }
+    if (estado?.status === "loading") return;
+    setEstado({ status: "loading" });
+    window.modManagerAPI
+      .fetchModChangelog(modId, de, para)
+      .then((r) => {
+        if (r.success && r.result) {
+          cacheChangelog.set(chave, r.result);
+          setEstado({ status: "ok", data: r.result });
+        } else {
+          setEstado({ status: "error", message: r.message ?? "" });
+        }
+      })
+      .catch((err) => setEstado({ status: "error", message: err instanceof Error ? err.message : String(err) }));
+  }
+
+  useEffect(() => {
+    if (!aberto) {
+      if (fechaBalaoAberto === fechar) fechaBalaoAberto = null;
+      return;
+    }
+    const foraDoBalao = (alvo: EventTarget | null) =>
+      !(alvo instanceof Node && (balao.current?.contains(alvo) || botao.current?.contains(alvo)));
+    const onMouseDown = (e: MouseEvent) => {
+      if (foraDoBalao(e.target)) setAberto(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setAberto(false);
+        botao.current?.focus();
+      }
+    };
+    // O balão é fixo na tela: se a lista rolar por baixo dele, ele ficaria
+    // apontando pro mod errado. Rolar dentro do próprio balão não conta.
+    const onScroll = (e: Event) => {
+      if (foraDoBalao(e.target)) setAberto(false);
+    };
+    const onResize = () => setAberto(false);
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [aberto, fechar]);
+
+  const data = (iso?: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  return (
+    <>
+      <button
+        ref={botao}
+        className={`changelog-button${aberto ? " active" : ""}`}
+        title={t("changelog.show")}
+        aria-label={t("changelog.show")}
+        aria-expanded={aberto}
+        onClick={alternar}
+      >
+        <IconeNota />
+      </button>
+      {aberto &&
+        pos &&
+        createPortal(
+          <div
+            ref={balao}
+            className="changelog-popover"
+            role="dialog"
+            aria-label={t("changelog.show")}
+            style={{ top: pos.top, left: pos.left, width: BALAO_LARGURA, maxHeight: pos.maxHeight }}
+          >
+            <div className="changelog-popover-head">
+              <strong>{t("changelog.show")}</strong>
+              <span className="changelog-popover-mod">
+                {nome}
+                {de && para ? ` · ${de} → ${para}` : para ? ` · ${para}` : ""}
+              </span>
+            </div>
+            <div className="changelog-popover-body">
+              {estado?.status === "loading" && <p className="changelog-muted">{t("changelog.loading")}</p>}
+              {estado?.status === "error" && <p className="changelog-error">{tMsg(estado.message)}</p>}
+              {estado?.status === "ok" && estado.data.entries.length === 0 && (
+                <p className="changelog-muted">{t("changelog.none")}</p>
+              )}
+              {estado?.status === "ok" &&
+                estado.data.entries.map((e) => {
+                  const nodes = parseChangelogHtml(e.html);
+                  return (
+                    <div key={e.version} className="changelog-entry">
+                      <div className="changelog-entry-head">
+                        <strong>{e.version}</strong>
+                        {e.publishedAt && <span className="changelog-date">{data(e.publishedAt)}</span>}
+                      </div>
+                      {changelogHasText(nodes) ? (
+                        <div className="changelog-body">{renderChangelog(nodes)}</div>
+                      ) : (
+                        <p className="changelog-muted">{t("changelog.noNotes")}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              {(estado?.status === "error" || (estado?.status === "ok" && estado.data.olderCount > 0)) && (
+                <button
+                  className="link-button changelog-more"
+                  onClick={() => void window.modManagerAPI.openForgeModPage(modId, "versions")}
+                >
+                  {estado.status === "error" ? t("forge.openVersions") : t("changelog.older")}
+                </button>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+function IconeFila({ tipo }: { tipo: "up" | "down" | "pause" | "play" | "x" }) {
+  return (
+    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+      {tipo === "up" && <path d="M2 8l4-4 4 4" fill="none" stroke="currentColor" strokeWidth="1.6" />}
+      {tipo === "down" && <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" />}
+      {tipo === "pause" && (
+        <>
+          <rect x="2.2" y="1.5" width="2.6" height="9" fill="currentColor" />
+          <rect x="7.2" y="1.5" width="2.6" height="9" fill="currentColor" />
+        </>
+      )}
+      {tipo === "play" && <path d="M3 1.5v9l7-4.5z" fill="currentColor" />}
+      {tipo === "x" && <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" />}
+    </svg>
+  );
+}
+
+/** Tempo restante curto: "17s", "3 min", "1 h 5 min". */
+function formatEta(segundos: number): string {
+  const s = Math.max(1, Math.round(segundos));
+  if (s < 60) return `${s}s`;
+  const min = Math.round(s / 60);
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
 function selectionKey(mod: ModInfo): string {
   return `${mod.type}:${mod.id}`;
 }
@@ -297,15 +569,44 @@ export default function App() {
   const [sptSemverConfig, setSptSemverConfig] = useState<string | undefined>(undefined);
   const [checagemApp, setChecagemApp] = useState<"idle" | "checking" | "done" | "failed">("idle");
 
+  const [cacheInfo, setCacheInfo] = useState<DownloadCacheInfo | null>(null);
+  const [maxDownloadsSel, setMaxDownloadsSel] = useState<number | null>(null);
+  const [limpandoCache, setLimpandoCache] = useState(false);
+
   async function abrirConfig() {
     setConfigAberta(true);
     setChecagemApp("idle");
-    const [diag, semver] = await Promise.all([
+    const [diag, semver, cache, simultaneos] = await Promise.all([
       window.modManagerAPI.getDiagnostics(),
-      window.modManagerAPI.getSptSemver().catch(() => undefined)
+      window.modManagerAPI.getSptSemver().catch(() => undefined),
+      window.modManagerAPI.getDownloadCacheInfo().catch(() => null),
+      window.modManagerAPI.getMaxDownloads().catch(() => null)
     ]);
     setVersaoApp(diag.appVersion);
     setSptSemverConfig(semver);
+    setCacheInfo(cache);
+    setMaxDownloadsSel(simultaneos);
+  }
+
+  async function mudarLimiteCache(gb: number) {
+    try {
+      setCacheInfo(await window.modManagerAPI.setDownloadCacheLimit(gb));
+    } catch {
+      // Fica o valor anterior no seletor.
+    }
+  }
+
+  async function limparCache() {
+    setLimpandoCache(true);
+    try {
+      const r = await window.modManagerAPI.clearDownloadCache();
+      setCacheInfo(r);
+      pushToast(r.kept > 0 ? t("settings.cacheClearedInUse", { count: r.kept }) : t("settings.cacheCleared"), true);
+    } catch {
+      pushToast(t("settings.cacheClearFailed"), false);
+    } finally {
+      setLimpandoCache(false);
+    }
   }
 
   async function verificarAtualizacaoDoApp() {
@@ -424,17 +725,28 @@ export default function App() {
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [selectedVersionByModId, setSelectedVersionByModId] = useState<Map<number, number>>(new Map());
-  const [installingModId, setInstallingModId] = useState<number | null>(null);
+  // Vários de uma vez agora que existe fila: cada linha do Navegar sabe se é dela.
+  const [installingModIds, setInstallingModIds] = useState<Set<number>>(new Set());
+  function marcarInstalando(id: number, sim: boolean) {
+    setInstallingModIds((prev) => {
+      const next = new Set(prev);
+      if (sim) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
 
   interface QueueItem {
     id: string;
     name: string;
-    status: "queued" | "active" | "done" | "error";
+    status: "queued" | "active" | "done" | "error" | "cancelled";
     receivedBytes?: number;
     totalBytes?: number;
     startedAt?: number;
     message?: string;
     raw?: string;
+    /** Veio do cache de downloads: não teve download, só instalação. */
+    fromCache?: boolean;
   }
   const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
 
@@ -454,12 +766,72 @@ export default function App() {
     window.modManagerAPI.checkAppUpdate().then(setAppUpdate);
   }, []);
 
+  // A fila de verdade mora no backend (um download por vez, instalação sempre
+  // sozinha). Aqui só se espelha o que ele manda.
+  const [filaBackend, setFilaBackend] = useState<DownloadQueueJob[]>([]);
+  // Recolhida: só o cabeçalho, pra não cobrir a janela do Navegar.
+  const [filaRecolhida, setFilaRecolhida] = useState(false);
   useEffect(() => {
-    const unsubscribe = window.modManagerAPI.onDownloadProgress(({ jobId, receivedBytes, totalBytes }) => {
-      setDownloadQueue((prev) => prev.map((q) => (q.id === jobId ? { ...q, receivedBytes, totalBytes } : q)));
-    });
-    return unsubscribe;
+    void window.modManagerAPI.getDownloadQueue().then(setFilaBackend).catch(() => undefined);
+    return window.modManagerAPI.onDownloadQueue(setFilaBackend);
   }, []);
+
+  /**
+   * Dependência -> mod principal que entrou na fila junto com ela. Cancelar a
+   * dependência pergunta se cancela o principal também: às vezes a pessoa só
+   * quer a dependência (é um fix sozinha), às vezes não quer nenhum dos dois.
+   */
+  const principalDoJob = useRef(new Map<string, { nome: string; jobId: string }>());
+  const [perguntaLote, setPerguntaLote] = useState<{ jobId: string; dep: string; principal: string; principalJobId: string } | null>(
+    null
+  );
+
+  function novoJobId(): string {
+    return `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function controlarDownload(acao: "pause" | "resume" | "up" | "down", job: DownloadQueueJob) {
+    void window.modManagerAPI.controlDownload(acao, job.id);
+  }
+
+  function cancelarDownload(job: DownloadQueueJob) {
+    const principal = principalDoJob.current.get(job.id);
+    // Só pergunta se o principal ainda está na fila: já instalado, não há o que cancelar.
+    if (principal && filaBackend.some((j) => j.id === principal.jobId && j.state !== "installing")) {
+      setPerguntaLote({ jobId: job.id, dep: job.name, principal: principal.nome, principalJobId: principal.jobId });
+      return;
+    }
+    void window.modManagerAPI.controlDownload("cancel", job.id);
+  }
+
+  function responderPerguntaLote(cancelarPrincipal: boolean) {
+    if (!perguntaLote) return;
+    void window.modManagerAPI.controlDownload("cancel", perguntaLote.jobId);
+    if (cancelarPrincipal) void window.modManagerAPI.controlDownload("cancel", perguntaLote.principalJobId);
+    setPerguntaLote(null);
+  }
+
+  function cancelarFila() {
+    void window.modManagerAPI.cancelWaitingDownloads();
+  }
+
+  /** Mostra o fim de um download da fila por alguns segundos. */
+  function registrarFimDownload(id: string, nome: string, result: InstallResult) {
+    principalDoJob.current.delete(id);
+    const status: QueueItem["status"] = result.cancelled ? "cancelled" : result.success ? "done" : "error";
+    setDownloadQueue((prev) => [
+      ...prev,
+      {
+        id,
+        name: nome,
+        status,
+        message: result.cancelled ? undefined : tMsg(result.message),
+        raw: result.message,
+        fromCache: result.fromCache
+      }
+    ]);
+    setTimeout(() => setDownloadQueue((prev) => prev.filter((q) => q.id !== id)), status === "error" ? 6000 : 3000);
+  }
 
   function pushQueueItem(name: string): string {
     const id = `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -486,7 +858,8 @@ export default function App() {
     if (!Number.isFinite(bytes) || bytes < 0) return "—";
     if (bytes < 1024) return `${Math.round(bytes)} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
   const pushToast = useCallback((text: string, ok: boolean, raw?: string) => {
@@ -982,13 +1355,21 @@ export default function App() {
   // Ponto único por onde toda instalação passa. Se o backend responder pedindo
   // confirmação (estrutura de arquivo incomum), abre o modal e "pausa" aqui até o
   // usuário decidir — quem chamou só recebe o resultado final (instalado ou cancelado).
+  // Uma pergunta de "arquivo estranho" por vez: com a fila, dois downloads podem
+  // pedir confirmação quase juntos, e o segundo sobrescrevia o primeiro.
+  const filaConfirmacao = useRef<Promise<unknown>>(Promise.resolve());
   async function installArchiveWithConfirmFlow(installCall: Promise<InstallResult>): Promise<InstallResult> {
     const result = await installCall;
     if (!result.needsConfirmation || !result.tmpDir) return result;
-    return new Promise<InstallResult>((resolve) => {
-      confirmResolverRef.current = resolve;
-      setPendingConfirm({ tmpDir: result.tmpDir!, archivePath: result.archivePath ?? "", rootEntries: result.rootEntries ?? [] });
-    });
+    const vez = filaConfirmacao.current.then(
+      () =>
+        new Promise<InstallResult>((resolve) => {
+          confirmResolverRef.current = resolve;
+          setPendingConfirm({ tmpDir: result.tmpDir!, archivePath: result.archivePath ?? "", rootEntries: result.rootEntries ?? [] });
+        })
+    );
+    filaConfirmacao.current = vez.catch(() => undefined);
+    return vez;
   }
 
   async function handleConfirmProceed() {
@@ -1185,35 +1566,45 @@ export default function App() {
         setLookupInProgress(false);
         setForgeProgress(null);
 
-        // Fase 2: instala só o que foi encontrado, um de cada vez, com contagem visível.
+        // Fase 2: tudo entra na fila de uma vez (a pessoa vê o que vem e pode
+        // cancelar ou reordenar o download), mas cada um só INSTALA depois do
+        // anterior: a ordem da lista continua sendo a ordem de instalação.
         const installable = targets.filter((name) => found[name]);
         const notFound = targets.filter((name) => !found[name]);
         let installedCount = 0;
         const failed: string[] = [];
 
+        const idsImport = installable.map(() => novoJobId());
+        const promessasImport = installable.map((name, i) => {
+          const lookup = found[name]!;
+          return installArchiveWithConfirmFlow(
+            window.modManagerAPI.installForgeMod(
+              idsImport[i],
+              lookup.downloadLink,
+              lookup.forgeName ?? name,
+              {
+                // Os mesmos campos que a instalação pelo catálogo grava. Faltavam
+                // author e id aqui, então mod restaurado por lista aparecia sem
+                // autor e sem vínculo por id: só o nome da pasta na interface.
+                id: lookup.modId,
+                name: lookup.forgeName,
+                author: lookup.author,
+                version: lookup.version,
+                // Grava o identificador da Forge: a partir daqui esse mod é reconhecido
+                // por ID exato, sem depender de casamento por nome.
+                guid: lookup.guid
+              },
+              i > 0 ? [idsImport[i - 1]] : []
+            )
+          );
+        });
         for (let i = 0; i < installable.length; i++) {
           const name = installable[i];
-          const lookup = found[name]!;
           setInstallProgress({ done: i + 1, total: installable.length });
-          const queueId = pushQueueItem(lookup.forgeName ?? name);
-          markQueueActive(queueId);
-          const installResult = await installArchiveWithConfirmFlow(
-            window.modManagerAPI.installForgeMod(queueId, lookup.downloadLink, lookup.forgeName ?? name, {
-              // Os mesmos campos que a instalação pelo catálogo grava. Faltavam
-              // author e id aqui, então mod restaurado por lista aparecia sem
-              // autor e sem vínculo por id — só o nome da pasta na interface.
-              id: lookup.modId,
-              name: lookup.forgeName,
-              author: lookup.author,
-              version: lookup.version,
-              // Grava o identificador da Forge: a partir daqui esse mod é reconhecido
-              // por ID exato, sem depender de casamento por nome.
-              guid: lookup.guid
-            })
-          );
-          markQueueDone(queueId, installResult.success, tMsg(installResult.message), installResult.message);
+          const installResult = await promessasImport[i];
+          registrarFimDownload(idsImport[i], found[name]!.forgeName ?? name, installResult);
           if (installResult.success) installedCount++;
-          else failed.push(name);
+          else if (!installResult.cancelled) failed.push(name);
         }
         setInstallProgress(null);
 
@@ -1459,17 +1850,22 @@ export default function App() {
   // recomendada, então dá pra passar pelo mesmo instalador usado na busca da Forge —
   // em vez de abrir o navegador e deixar o .zip no Downloads pra instalar na mão.
   /** Baixa e instala UMA atualização, sem reescanear. Devolve o resultado do backend. */
-  async function instalarAtualizacao(u: ForgeUpdateItem) {
-    const queueId = pushQueueItem(u.name);
-    markQueueActive(queueId);
+  async function instalarAtualizacao(u: ForgeUpdateItem, opts?: { id: string; after: string[] }) {
+    const queueId = opts?.id ?? novoJobId();
     const result = await installArchiveWithConfirmFlow(
-      window.modManagerAPI.installForgeMod(queueId, u.downloadLink!, u.name, {
-        name: u.name,
-        version: u.recommendedVersion,
-        guid: u.guid
-      })
+      window.modManagerAPI.installForgeMod(
+        queueId,
+        u.downloadLink!,
+        u.name,
+        {
+          name: u.name,
+          version: u.recommendedVersion,
+          guid: u.guid
+        },
+        opts?.after ?? []
+      )
     );
-    markQueueDone(queueId, result.success, tMsg(result.message), result.message);
+    registrarFimDownload(queueId, u.name, result);
     if (result.success) setAtualizadosNoPainel((prev) => new Set(prev).add(u.name));
     return result;
   }
@@ -1479,7 +1875,7 @@ export default function App() {
     const previousKeys = new Set(mods.map(selectionKey));
     const result = await instalarAtualizacao(u);
     setUpdatingModName(null);
-    pushToast(tMsg(result.message), result.success, result.message);
+    if (!result.cancelled) pushToast(tMsg(result.message), result.success, result.message);
     if (result.success) {
       // A etiqueta antiga fala da versão que acabou de sair do disco.
       forgetForgeStatus([u.name]);
@@ -1506,11 +1902,16 @@ export default function App() {
     const previousKeys = new Set(mods.map(selectionKey));
     const ok: string[] = [];
     const falhas: string[] = [];
-    for (const u of pendentes) {
-      setUpdatingModName(u.name);
-      const result = await instalarAtualizacao(u);
-      (result.success ? ok : falhas).push(u.name);
-    }
+    // Tudo entra na fila de uma vez, mas cada um só instala depois do anterior:
+    // a lista já está na ordem das dependências (B antes de A quando A precisa do B novo).
+    const ids = pendentes.map(() => novoJobId());
+    const resultados = await Promise.all(
+      pendentes.map((u, i) => instalarAtualizacao(u, { id: ids[i], after: i > 0 ? [ids[i - 1]] : [] }))
+    );
+    resultados.forEach((result, i) => {
+      if (result.success) ok.push(pendentes[i].name);
+      else if (!result.cancelled) falhas.push(pendentes[i].name);
+    });
     setUpdatingModName(null);
     setAtualizandoTodos(false);
     if (ok.length > 0) {
@@ -1545,15 +1946,16 @@ export default function App() {
   async function instalarDoCatalogo(
     nome: string,
     link: string,
-    registro: { id?: number; name: string; author?: string; version?: string; guid?: string }
+    registro: { id?: number; name: string; author?: string; version?: string; guid?: string },
+    opts?: { id?: string; after?: string[]; principal?: { nome: string; jobId: string } }
   ): Promise<boolean> {
-    const queueId = pushQueueItem(nome);
-    markQueueActive(queueId);
+    const queueId = opts?.id ?? novoJobId();
+    if (opts?.principal) principalDoJob.current.set(queueId, opts.principal);
     const result = await installArchiveWithConfirmFlow(
-      window.modManagerAPI.installForgeMod(queueId, link, nome, registro)
+      window.modManagerAPI.installForgeMod(queueId, link, nome, registro, opts?.after ?? [])
     );
-    markQueueDone(queueId, result.success, tMsg(result.message), result.message);
-    pushToast(tMsg(result.message), result.success, result.message);
+    registrarFimDownload(queueId, nome, result);
+    if (!result.cancelled) pushToast(tMsg(result.message), result.success, result.message);
     return result.success;
   }
 
@@ -1563,33 +1965,49 @@ export default function App() {
     version: { id: number; version: string; link: string },
     deps: ModDependencyInfo[]
   ) {
-    setInstallingModId(mod.id);
+    marcarInstalando(mod.id, true);
     const previousKeys = new Set(mods.map(selectionKey));
 
     // Guarda o que realmente entrou, pra marcar as linhas depois. Sem isto, a
     // dependência baixada junto continuava com o botão "Instalar" até o usuário
     // buscar de novo — o mod estava no disco e a tela dizia que não.
     const depsInstaladas = new Map<number, string | undefined>();
-    for (const d of deps) {
-      if (!d.downloadLink) continue;
-      pushToast(t("deps.installingDependency", { name: d.name }), true);
-      const okDep = await instalarDoCatalogo(d.name, d.downloadLink, {
-        id: d.id || undefined,
-        name: d.name,
-        version: d.version,
-        guid: d.guid
-      });
-      if (okDep && d.id) depsInstaladas.set(d.id, d.version);
-    }
-
-    const ok = await instalarDoCatalogo(mod.name, version.link, {
-      id: mod.id,
-      name: mod.name,
-      author: mod.author,
-      version: version.version,
-      guid: mod.guid
-    });
-    setInstallingModId(null);
+    // Dependências e mod entram juntos na fila (dá pra ver e cancelar qualquer
+    // um), cada dependência instala depois da anterior e o mod por último.
+    const comLink = deps.filter((d) => d.downloadLink);
+    const idsDeps = comLink.map(() => novoJobId());
+    const idMod = novoJobId();
+    if (comLink.length > 0) pushToast(t("deps.installingDependency", { name: comLink.map((d) => d.name).join(", ") }), true);
+    const promessasDeps = comLink.map((d, i) =>
+      instalarDoCatalogo(
+        d.name,
+        d.downloadLink!,
+        {
+          id: d.id || undefined,
+          name: d.name,
+          version: d.version,
+          guid: d.guid
+        },
+        { id: idsDeps[i], after: i > 0 ? [idsDeps[i - 1]] : [], principal: { nome: mod.name, jobId: idMod } }
+      ).then((okDep) => {
+        if (okDep && d.id) depsInstaladas.set(d.id, d.version);
+      })
+    );
+    const promessaMod = instalarDoCatalogo(
+      mod.name,
+      version.link,
+      {
+        id: mod.id,
+        name: mod.name,
+        author: mod.author,
+        version: version.version,
+        guid: mod.guid
+      },
+      { id: idMod, after: idsDeps }
+    );
+    await Promise.all(promessasDeps);
+    const ok = await promessaMod;
+    marcarInstalando(mod.id, false);
 
     // As dependências são marcadas mesmo que o mod principal falhe: elas
     // entraram, e a tela tem que dizer a verdade sobre cada uma.
@@ -1631,11 +2049,11 @@ export default function App() {
       pushToast(t("browse.noVersionPublished", { name: mod.name }), false);
       return;
     }
-    setInstallingModId(mod.id);
+    marcarInstalando(mod.id, true);
     // Pergunta à fonte o que ESTA versão exige. Falha de rede devolve lista
     // vazia e a instalação segue: a checagem é auxílio, não pedágio.
     const deps = await window.modManagerAPI.fetchModDependencies(mod.id, version.version);
-    setInstallingModId(null);
+    marcarInstalando(mod.id, false);
 
     // Só interrompe se houver algo a fazer. Dependência já satisfeita aparece no
     // diálogo, mas sozinha não justifica abrir diálogo nenhum.
@@ -1765,8 +2183,9 @@ export default function App() {
   };
 
 
+  const i18nChangelog = { lang, t, tMsg };
   return (
-    <>
+    <ChangelogI18n.Provider value={i18nChangelog}>
       <ToastStack
         toasts={toasts}
         detalhesLabel={t("error.details")}
@@ -1803,7 +2222,7 @@ export default function App() {
         </div>
       )}
 
-      {downloadQueue.length > 0 && (
+      {(downloadQueue.length > 0 || filaBackend.length > 0) && (
         <div className="download-queue-panel">
           {lookupInProgress && (
             <div className="download-queue-item queue-summary-card">
@@ -1837,33 +2256,122 @@ export default function App() {
               </div>
             </div>
           )}
+          {filaBackend.length > 0 && (() => {
+            const baixando = filaBackend.filter((j) => j.state === "downloading").length;
+            const esperando = filaBackend.filter((j) => j.state === "queued" || j.state === "paused").length;
+            const atual = filaBackend.find((j) => j.state === "downloading" && j.total > 0);
+            return (
+              <div className="download-queue-item queue-summary-card queue-panel-head">
+                <span>
+                  {t("queue.header", { downloading: baixando, waiting: esperando })}
+                  {filaRecolhida && atual ? ` · ${Math.round((atual.received / atual.total) * 100)}%` : ""}
+                </span>
+                <div className="queue-head-actions">
+                  {esperando > 0 && !filaRecolhida && (
+                    <button className="queue-link" onClick={cancelarFila}>
+                      {t("queue.cancelWaiting")}
+                    </button>
+                  )}
+                  <button
+                    className="queue-btn"
+                    title={filaRecolhida ? t("queue.expand") : t("queue.collapse")}
+                    aria-label={filaRecolhida ? t("queue.expand") : t("queue.collapse")}
+                    aria-expanded={!filaRecolhida}
+                    onClick={() => setFilaRecolhida((v) => !v)}
+                  >
+                    <IconeFila tipo={filaRecolhida ? "up" : "down"} />
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+          {!filaRecolhida && filaBackend.map((job, indice) => {
+            const movivel = (j: DownloadQueueJob) => j.state === "queued" || j.state === "paused";
+            const podeSubir = movivel(job) && filaBackend.slice(0, indice).some(movivel);
+            const podeDescer = movivel(job) && filaBackend.slice(indice + 1).some(movivel);
+            const pct = job.total > 0 ? Math.min(100, Math.round((job.received / job.total) * 100)) : null;
+            const eta = job.state === "downloading" && job.speed > 0 && job.total > 0 ? (job.total - job.received) / job.speed : 0;
+            return (
+              <div key={job.id} className={`download-queue-item queue-status-${job.state}`}>
+                <div className="queue-item-head">
+                  <div className="queue-item-name" title={job.name}>{job.name}</div>
+                  <div className="queue-actions">
+                    {movivel(job) && (
+                      <>
+                        <button className="queue-btn" disabled={!podeSubir} title={t("queue.moveUp")} aria-label={t("queue.moveUp")} onClick={() => controlarDownload("up", job)}>
+                          <IconeFila tipo="up" />
+                        </button>
+                        <button className="queue-btn" disabled={!podeDescer} title={t("queue.moveDown")} aria-label={t("queue.moveDown")} onClick={() => controlarDownload("down", job)}>
+                          <IconeFila tipo="down" />
+                        </button>
+                      </>
+                    )}
+                    {job.state === "downloading" && !job.fromCache && (
+                      <button className="queue-btn" title={t("queue.pause")} aria-label={t("queue.pause")} onClick={() => controlarDownload("pause", job)}>
+                        <IconeFila tipo="pause" />
+                      </button>
+                    )}
+                    {job.state === "paused" && (
+                      <button className="queue-btn" title={t("queue.resume")} aria-label={t("queue.resume")} onClick={() => controlarDownload("resume", job)}>
+                        <IconeFila tipo="play" />
+                      </button>
+                    )}
+                    {job.state !== "installing" && (
+                      <button
+                        className="queue-btn danger"
+                        title={job.state === "queued" ? t("queue.remove") : t("queue.cancel")}
+                        aria-label={job.state === "queued" ? t("queue.remove") : t("queue.cancel")}
+                        onClick={() => cancelarDownload(job)}
+                      >
+                        <IconeFila tipo="x" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {(job.state === "downloading" || job.state === "paused") && !job.fromCache && (
+                  <div className="queue-item-body">
+                    <div className="queue-progress-track">
+                      <div className="queue-progress-fill" style={{ width: `${pct ?? 0}%` }} />
+                    </div>
+                    <div className="queue-item-meta">
+                      <span>{job.state === "paused" ? t("queue.pausedAt", { pct: pct ?? 0 }) : pct !== null ? `${pct}%` : ""}</span>
+                      <span>
+                        {formatBytes(job.received)}
+                        {job.total > 0 ? ` / ${formatBytes(job.total)}` : ""}
+                      </span>
+                      {job.state === "downloading" && job.speed > 0 && (
+                        <span>
+                          {formatBytes(job.speed)}/s{eta > 0 ? ` · ${formatEta(eta)}` : ""}
+                        </span>
+                      )}
+                    </div>
+                    {job.restarted && <div className="queue-item-note">{t("queue.restarted")}</div>}
+                  </div>
+                )}
+                {job.state === "queued" && <div className="queue-item-body queue-item-status">{t("queue.waiting")}</div>}
+                {job.state === "waiting" && <div className="queue-item-body queue-item-status">{t("queue.waitingInstall")}</div>}
+                {(job.state === "installing" || (job.state === "downloading" && job.fromCache)) && (
+                  <div className="queue-item-body queue-item-status">
+                    {job.fromCache ? t("queue.installingFromCache") : t("queue.installing")}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {downloadQueue.map((item) => {
-            const hasProgress = (item.totalBytes ?? 0) > 0;
-            const pct = hasProgress ? Math.min(100, Math.round(((item.receivedBytes ?? 0) / item.totalBytes!) * 100)) : null;
-            const elapsedSec = item.startedAt ? (Date.now() - item.startedAt) / 1000 : 0;
-            const speedBps = item.status === "active" && elapsedSec > 0.5 ? (item.receivedBytes ?? 0) / elapsedSec : 0;
             return (
               <div key={item.id} className={`download-queue-item queue-status-${item.status}`}>
                 <div className="queue-item-name" title={item.name}>{item.name}</div>
                 {item.status === "queued" && <div className="queue-item-status">{t("queue.waiting")}</div>}
-                {item.status === "active" &&
-                  (hasProgress ? (
-                    <>
-                      <div className="queue-progress-track">
-                        <div className="queue-progress-fill" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="queue-item-meta">
-                        <span>{pct}%</span>
-                        <span>
-                          {formatBytes(item.receivedBytes ?? 0)} / {formatBytes(item.totalBytes ?? 0)}
-                        </span>
-                        {speedBps > 0 && <span>{formatBytes(speedBps)}/s</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="queue-item-status">{t("queue.installing")}</div>
-                  ))}
-                {item.status === "done" && <div className="queue-item-status queue-status-done-text">✔ {t("queue.done")}</div>}
+                {/* Arquivo local (arrastado ou escolhido): não tem download, só instalação. */}
+                {item.status === "active" && <div className="queue-item-status">{t("queue.installing")}</div>}
+                {item.status === "done" && (
+                  <div className="queue-item-status queue-status-done-text">
+                    ✔ {t("queue.done")}
+                    {item.fromCache && <span className="queue-from-cache"> · {t("queue.fromCache")}</span>}
+                  </div>
+                )}
+                {item.status === "cancelled" && <div className="queue-item-status">{t("queue.cancelled")}</div>}
                 {item.status === "error" && (
                   <div className="queue-item-status queue-status-error-text">
                     ✕ {item.message ?? t("queue.failed")}
@@ -2129,6 +2637,9 @@ export default function App() {
                     <p key={`update-${u.name}`}>
                       <NomeComPagina nome={u.name} modId={u.modId} titulo={t("forge.openVersions")} />: {u.currentVersion} →{" "}
                       <strong>{u.recommendedVersion}</strong>
+                      {u.modId !== undefined && (
+                        <ChangelogButton modId={u.modId} nome={u.name} de={u.currentVersion} para={u.recommendedVersion} />
+                      )}
                       {/* Sai do bloqueio depois que os de cima atualizarem: a lista já está
                           na ordem de instalação, e a nota diz isso em voz alta. */}
                       {u.reason === "unblocked_after_update" && (
@@ -2609,8 +3120,8 @@ export default function App() {
                               </option>
                             ))}
                           </select>
-                          <button onClick={() => handleInstallFromForge(mod)} disabled={installingModId === mod.id} className="primary">
-                            {installingModId === mod.id
+                          <button onClick={() => handleInstallFromForge(mod)} disabled={installingModIds.has(mod.id)} className="primary">
+                            {installingModIds.has(mod.id)
                               ? t("browse.installing")
                               : mod.installed
                                 ? t("browse.reinstallButton")
@@ -2806,6 +3317,47 @@ export default function App() {
               {/* A fonte mora só aqui. No Browse ela parecia um filtro da busca,
                   mas também decide de onde vem a checagem de atualizações. */}
               <p className="settings-note">{t("browse.sourceNote")}</p>
+              <div className="settings-row">
+                <span>{t("settings.downloadCache")}</span>
+                <select
+                  value={cacheInfo?.limitGB ?? 5}
+                  disabled={!cacheInfo}
+                  onChange={(e) => void mudarLimiteCache(Number(e.target.value))}
+                  aria-label={t("settings.downloadCache")}
+                >
+                  {DOWNLOAD_CACHE_OPTIONS_GB.map((gb) => (
+                    <option key={gb} value={gb}>{gb === 0 ? t("settings.cacheOff") : `${gb} GB`}</option>
+                  ))}
+                </select>
+              </div>
+              {cacheInfo && cacheInfo.limitGB > 0 && (
+                <div className="settings-row">
+                  <span className="settings-value">
+                    {t("settings.cacheUsage", { size: formatBytes(cacheInfo.usedBytes), count: cacheInfo.count })}
+                  </span>
+                  <button onClick={() => void limparCache()} disabled={limpandoCache || cacheInfo.count === 0}>
+                    {t("settings.cacheClear")}
+                  </button>
+                </div>
+              )}
+              <p className="settings-note">{t("settings.cacheNote")}</p>
+              <div className="settings-row">
+                <span>{t("settings.maxDownloads")}</span>
+                <select
+                  value={maxDownloadsSel ?? 1}
+                  disabled={maxDownloadsSel === null}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    void window.modManagerAPI.setMaxDownloads(n).then(setMaxDownloadsSel).catch(() => undefined);
+                  }}
+                  aria-label={t("settings.maxDownloads")}
+                >
+                  {MAX_DOWNLOADS_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="settings-note">{t("settings.maxDownloadsNote")}</p>
             </section>
 
             <section className="settings-section">
@@ -3011,7 +3563,27 @@ export default function App() {
         </div>
       )}
 
-    </>
+      {perguntaLote && (
+        <div className="modal-backdrop chain-cancel-backdrop" onClick={() => setPerguntaLote(null)}>
+          <div className="modal-box chain-cancel-modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>{t("queue.chainTitle", { name: perguntaLote.principal })}</strong>
+            </div>
+            <p className="compare-note">
+              {t("queue.chainBody", { dep: perguntaLote.dep, name: perguntaLote.principal })}
+            </p>
+            <div className="confirm-structure-actions">
+              <button onClick={() => setPerguntaLote(null)}>{t("queue.chainBack")}</button>
+              <button onClick={() => responderPerguntaLote(false)}>{t("queue.chainOnlyDep", { dep: perguntaLote.dep })}</button>
+              <button className="primary" onClick={() => responderPerguntaLote(true)}>
+                {t("queue.chainBoth")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </ChangelogI18n.Provider>
   );
 }
 
@@ -3166,8 +3738,13 @@ function ModList({
                 {mod.version && <span className="meta-chip">v{mod.version}</span>}
                 {mod.author && <span className="meta-chip">{t("browse.byAuthor", { author: mod.author })}</span>}
                 {forgeStatus?.status === "update" && (
-                  <span className="meta-chip forge-chip-update" title={t("modlist.forgeUpdateAvailableTitle")}>
-                    {t("modlist.forgeUpdateAvailable", { version: forgeStatus.version ?? "" })}
+                  <span className="forge-update-group">
+                    <span className="meta-chip forge-chip-update" title={t("modlist.forgeUpdateAvailableTitle")}>
+                      {t("modlist.forgeUpdateAvailable", { version: forgeStatus.version ?? "" })}
+                    </span>
+                    {forgeIdOf(node) !== undefined && (
+                      <ChangelogButton modId={forgeIdOf(node)!} nome={node.name} de={mod.version} para={forgeStatus.version} />
+                    )}
                   </span>
                 )}
                 {forgeStatus?.status === "blocked" && (

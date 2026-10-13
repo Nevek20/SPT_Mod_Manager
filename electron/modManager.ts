@@ -1,4 +1,6 @@
 import fs from "fs";
+import { DownloadCache } from "./downloadCache";
+import { QueueError, type QueueTask } from "./downloadQueue";
 import path from "path";
 import { readExeProductVersion } from "./peVersion";
 import { DEFAULT_SOURCE_KEY, getSourceByKey, type ModSource } from "./sources";
@@ -4430,78 +4432,245 @@ export async function getForgeCategories(): Promise<ForgeCategory[]> {
   }
 }
 
+export interface ModChangelogEntry {
+  version: string;
+  publishedAt?: string;
+  /** HTML cru da fonte. O renderer converte com whitelist, nunca injeta direto. */
+  html: string;
+}
+
+export interface ModChangelog {
+  entries: ModChangelogEntry[];
+  /** Versões no intervalo que ficaram de fora pelo limite (ver na página do mod). */
+  olderCount: number;
+}
+
+/** Máximo de versões mostradas de uma vez: pular 30 versões não cabe num painel. */
+export const CHANGELOG_MAX = 10;
+
+/**
+ * Escolhe, da lista de versões da fonte, as que a pessoa vai ganhar ao atualizar:
+ * mais nova que a instalada e até a recomendada (inclusive), da mais nova pra
+ * mais velha. Sem versão instalada conhecida, mostra só a recomendada: listar o
+ * histórico inteiro não diria nada sobre o que muda pra ela.
+ */
+export function selecionaVersoesChangelog(
+  versoes: { version?: unknown; description?: unknown; published_at?: unknown }[],
+  atual: string | undefined,
+  alvo: string | undefined,
+  max = CHANGELOG_MAX
+): ModChangelog {
+  const validas = versoes
+    .filter((v): v is { version: string; description?: unknown; published_at?: unknown } => typeof v.version === "string" && v.version.trim() !== "")
+    .map((v) => ({
+      version: v.version.trim(),
+      publishedAt: typeof v.published_at === "string" ? v.published_at : undefined,
+      html: typeof v.description === "string" ? v.description : ""
+    }));
+
+  let escolhidas = validas.filter((v) => {
+    if (alvo && compareVersions(v.version, alvo) > 0) return false;
+    if (atual) return compareVersions(v.version, atual) > 0;
+    return alvo ? compareVersions(v.version, alvo) === 0 : false;
+  });
+  // A fonte já manda em ordem, mas não custa garantir: a mais nova em cima.
+  escolhidas.sort((a, b) => compareVersions(b.version, a.version));
+  // Mesma versão publicada duas vezes (reupload) aparece uma vez só.
+  const vistas = new Set<string>();
+  escolhidas = escolhidas.filter((v) => (vistas.has(v.version) ? false : (vistas.add(v.version), true)));
+
+  return { entries: escolhidas.slice(0, max), olderCount: Math.max(0, escolhidas.length - max) };
+}
+
+export async function fetchModChangelog(modId: number, atual?: string, alvo?: string): Promise<ModChangelog> {
+  if (!Number.isInteger(modId) || modId <= 0) throw new Error("Invalid mod id.");
+  // 50 por página cobre o intervalo de quase todo mundo; se a versão instalada
+  // for mais velha que isso, o resto conta como "mais versões na página do mod".
+  const url = `${activeSource.apiBase}/mod/${modId}/versions?sort=-version&per_page=50&fields=version,description,published_at`;
+  const res = await forgeFetch(url);
+  if (!res.ok) throw new Error(`${activeSource.label} returned ${res.status} for the changelog.`);
+  const json: any = await lerJson(res, activeSource.label);
+  const lista = Array.isArray(json?.data) ? json.data : [];
+  const resultado = selecionaVersoesChangelog(lista, atual, alvo);
+  // Página cheia e a versão mais velha dela ainda é mais nova que a instalada:
+  // tem mais coisa depois, mesmo que não dê pra contar.
+  const ultima = lista[lista.length - 1]?.version;
+  const temMais = (json?.meta?.last_page ?? 1) > 1 && atual && typeof ultima === "string" && compareVersions(ultima, atual) > 0;
+  if (temMais && resultado.olderCount === 0) resultado.olderCount = 1;
+  return resultado;
+}
+
 // Baixa o arquivo de uma versão de mod da Forge pra uma pasta temporária e
 // reaproveita installModFromArchive (mesmo caminho de instalação usado pra
 // arquivos escolhidos manualmente). O nome/extensão do arquivo é resolvido
 // pelo Content-Disposition quando presente; senão, pela URL; senão, assume
 // .zip (formato mais comum na Forge).
-export async function installForgeModVersion(
+export type ForgeDownloadTask = QueueTask & { readonly fromCache: boolean; readonly restarted: boolean };
+
+/**
+ * Prepara o download + instalação de uma versão da fonte como tarefa da fila.
+ *
+ * download() pode ser chamada de novo depois de uma pausa: continua do byte onde
+ * parou pedindo "Range" ao servidor. Servidor que não aceita (responde 200 em vez
+ * de 206) faz o download recomeçar do zero, e a tarefa marca `restarted` pra
+ * fila avisar.
+ */
+export function criarTarefaDeDownload(
   clientRoot: string,
   serverRoot: string,
   downloadLink: string,
   suggestedName: string,
-  onProgress?: (receivedBytes: number, totalBytes: number) => void,
   forgeInfo?: ForgeInstallInfo
-): Promise<InstallResult> {
-  let tmpFilePath: string | undefined;
-  try {
-    // A pasta pode ter sumido desde que foi escolhida: trocar o SPT de lugar por
-    // fora do app é coisa que qualquer um faz eventualmente. Sem esta checagem,
-    // a falha só aparecia lá na frente, ao gravar o temporário.
-    if (!fs.existsSync(clientRoot)) {
-      return {
-        success: false,
-        message: `The instance folder no longer exists: ${clientRoot}. Pick the instance again under "Change instance".`
-      };
+): ForgeDownloadTask {
+  const cache = cacheDownloads?.enabled ? cacheDownloads : null;
+  const versao = forgeInfo?.version;
+  // O nome do arquivo baixado vira nome de pasta quando o zip traz DLL solta, por
+  // isso ele é o nome do mod e não um nome temporário (antes a pasta do mod
+  // nascia como ".tmp-forge-download-<data>-Nome" dentro do BepInEx/plugins).
+  const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").replace(/^[._]+/, "").slice(0, 60) || "forge-mod";
+
+  let fromCache = false;
+  let restarted = false;
+  let baixado = false;
+  let iniciado = false;
+  let emUso = false;
+  let liberado = false;
+  let noSlot = false; // baixando direto pra pasta do cache
+  let commitado = false;
+  let pastaTemp: string | undefined;
+  let arquivoFinal: string | undefined;
+  let arquivoParcial: string | undefined;
+  let recebido = 0;
+  let total = 0;
+
+  const liberar = () => {
+    if (emUso && !liberado && cache && versao) {
+      liberado = true;
+      cache.release(downloadLink, versao);
+    }
+  };
+  const apagaTemp = () => {
+    if (!pastaTemp) return;
+    try {
+      fs.rmSync(pastaTemp, { recursive: true, force: true });
+    } catch {
+      // best-effort: não trava a instalação por causa da limpeza do tmp
+    }
+    pastaTemp = undefined;
+  };
+
+  async function download(signal: AbortSignal, onProgress: (received: number, total: number) => void) {
+    if (baixado) return;
+    if (!iniciado) {
+      // A pasta pode ter sumido desde que foi escolhida: trocar o SPT de lugar por
+      // fora do app é coisa que qualquer um faz eventualmente.
+      if (!fs.existsSync(clientRoot)) {
+        throw new QueueError(
+          `The instance folder no longer exists: ${clientRoot}. Pick the instance again under "Change instance".`
+        );
+      }
+      // Já baixado antes, mesmo link e mesma versão: instala direto do disco.
+      let guardado: string | undefined;
+      try {
+        guardado = cache?.lookup(downloadLink, versao);
+      } catch {
+        guardado = undefined;
+      }
+      if (cache && guardado && versao) {
+        cache.acquire(downloadLink, versao);
+        emUso = true;
+        fromCache = true;
+        arquivoFinal = guardado;
+        const tamanho = fs.statSync(guardado).size;
+        recebido = total = tamanho;
+        baixado = true;
+        iniciado = true;
+        onProgress(tamanho, tamanho);
+        return;
+      }
     }
 
-    const res = await fetch(downloadLink);
+    // Continuação: o que já está no disco manda, não o contador em memória.
+    const continuando = iniciado && !!arquivoParcial && fs.existsSync(arquivoParcial);
+    if (continuando) recebido = fs.statSync(arquivoParcial!).size;
+    const headers: Record<string, string> = continuando && recebido > 0 ? { Range: `bytes=${recebido}-` } : {};
+
+    const res = await fetch(downloadLink, { signal, headers });
     if (!res.ok) {
-      return { success: false, message: `Couldn't download the mod from Forge (HTTP ${res.status}).` };
+      // 416: o pedaço guardado já é o arquivo inteiro (ou o servidor mudou o arquivo). Recomeça.
+      if (res.status === 416 && continuando) {
+        fs.rmSync(arquivoParcial!, { force: true });
+        recebido = 0;
+        restarted = true;
+        return download(signal, onProgress);
+      }
+      throw new QueueError(`Couldn't download the mod from Forge (HTTP ${res.status}).`);
     }
 
-    let ext = ".zip";
-    const disposition = res.headers.get("content-disposition");
-    const dispositionMatch = disposition && /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
-    const dispositionName = dispositionMatch ? decodeURIComponent(dispositionMatch[1]) : undefined;
-    const nameToInspect = dispositionName || new URL(downloadLink).pathname;
-    const inferredExt = path.extname(nameToInspect).toLowerCase();
-    if (inferredExt === ".zip" || inferredExt === ".7z" || inferredExt === ".rar") {
-      ext = inferredExt;
+    let anexar = false;
+    if (continuando && recebido > 0) {
+      const faixa = /bytes\s+(\d+)-\d+\/(\d+|\*)/i.exec(res.headers.get("content-range") ?? "");
+      if (res.status === 206 && faixa && Number(faixa[1]) === recebido) {
+        anexar = true;
+        total = faixa[2] !== "*" ? Number(faixa[2]) : recebido + Number(res.headers.get("content-length") || 0);
+      } else {
+        // Servidor ignorou o Range e mandou o arquivo inteiro de novo.
+        restarted = true;
+        recebido = 0;
+      }
     }
+    if (!anexar) total = Number(res.headers.get("content-length") || 0);
 
-    const safeName = suggestedName.replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "forge-mod";
-    tmpFilePath = path.join(clientRoot, `.tmp-forge-download-${Date.now()}-${safeName}${ext}`);
+    if (!iniciado) {
+      iniciado = true;
+      let ext = ".zip";
+      const disposition = res.headers.get("content-disposition");
+      const dispositionMatch = disposition && /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+      const dispositionName = dispositionMatch ? decodeURIComponent(dispositionMatch[1]) : undefined;
+      const nameToInspect = dispositionName || new URL(downloadLink).pathname;
+      const inferredExt = path.extname(nameToInspect).toLowerCase();
+      if (inferredExt === ".zip" || inferredExt === ".7z" || inferredExt === ".rar") ext = inferredExt;
+
+      // Direto pra pasta do cache quando dá; senão, temporário na pasta do SPT como antes.
+      let pastaDestino: string | undefined;
+      try {
+        pastaDestino = cache?.slotFor(downloadLink, versao, total);
+      } catch {
+        pastaDestino = undefined;
+      }
+      if (cache && pastaDestino && versao) {
+        cache.acquire(downloadLink, versao);
+        emUso = true;
+        noSlot = true;
+      } else {
+        pastaDestino = undefined;
+        pastaTemp = path.join(clientRoot, `.tmp-forge-download-${Date.now()}`);
+        fs.mkdirSync(pastaTemp, { recursive: true });
+      }
+      arquivoFinal = path.join(pastaDestino ?? pastaTemp!, `${safeName}${ext}`);
+      arquivoParcial = `${arquivoFinal}.partial`;
+    }
 
     // Grava em streaming DIRETO NO DISCO, pedaço a pedaço. Nunca segura o arquivo
-    // inteiro na memória: mods de conteúdo passam facilmente de 1 GB, e tanto
-    // juntar os pedaços no fim quanto usar arrayBuffer() precisariam do arquivo
-    // todo (ou o dobro dele) na RAM — que é o que fazia mod grande falhar.
-    const totalBytes = Number(res.headers.get("content-length") || 0);
+    // inteiro na memória: mods de conteúdo passam facilmente de 1 GB.
     const reader = res.body?.getReader();
-    if (!reader) {
-      return { success: false, message: "Failed to download/install from Forge: empty response." };
-    }
-    const fileHandle = fs.createWriteStream(tmpFilePath);
+    if (!reader) throw new QueueError("Failed to download/install from Forge: empty response.");
+    const fileHandle = fs.createWriteStream(arquivoParcial!, { flags: anexar ? "a" : "w" });
     // Stream de escrita reporta falha por EVENTO, não pela exceção do write().
-    // Sem um ouvinte, um 'error' no Node vira exceção global — e no Electron
-    // isso é a caixa cinza de "A JavaScript error occurred in the main process",
-    // que derruba o app inteiro por causa de um download que falhou. Aconteceu
-    // de verdade: a pasta do SPT tinha sido movida por fora e o ENOENT escapou.
+    // Sem um ouvinte, um 'error' no Node vira exceção global, e no Electron isso
+    // é a caixa cinza que derruba o app inteiro por causa de um download.
     let erroDeEscrita: Error | undefined;
     fileHandle.on("error", (err: Error) => {
       erroDeEscrita = err;
     });
 
-    let receivedBytes = 0;
     try {
+      onProgress(recebido, total);
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
-        // Respeita a contrapressão do disco: se o buffer encheu, espera drenar
-        // antes de pedir mais dados da rede.
         if (erroDeEscrita) throw erroDeEscrita;
         if (!fileHandle.write(Buffer.from(value))) {
           // Espera drenar OU o erro chegar: sem a segunda saída, um disco cheio
@@ -4511,31 +4680,150 @@ export async function installForgeModVersion(
             fileHandle.once("error", (err: Error) => reject(err));
           });
         }
-        receivedBytes += value.byteLength;
-        onProgress?.(receivedBytes, totalBytes);
+        recebido += value.byteLength;
+        onProgress(recebido, total);
       }
     } finally {
       await new Promise<void>((resolve) => {
-        // Fecha sem propagar: o erro real já foi capturado acima, e deixar o
-        // end() rejeitar aqui dentro do finally engoliria a causa original.
+        // Fecha sem propagar: o erro real já foi capturado acima.
         fileHandle.end(() => resolve());
       });
-    }
-    if (erroDeEscrita) throw erroDeEscrita;
-
-    return await installModFromArchive(clientRoot, serverRoot, tmpFilePath, suggestedName, forgeInfo);
-  } catch (err: any) {
-    return { success: false, message: `Failed to download/install from Forge: ${err.message || err}` };
-  } finally {
-    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
       try {
-        fs.unlinkSync(tmpFilePath);
+        await reader.cancel();
       } catch {
-        // best-effort — não trava a instalação por causa da limpeza do tmp
+        // já fechado
       }
     }
+    if (erroDeEscrita) throw erroDeEscrita;
+    // Conexão que caiu no meio às vezes termina "sem erro": sem esta conferência
+    // o arquivo cortado iria pra instalação (e pro cache).
+    if (total > 0 && recebido !== total) {
+      throw new Error(`download incomplete (${recebido} of ${total} bytes)`);
+    }
+    fs.renameSync(arquivoParcial!, arquivoFinal!);
+    baixado = true;
+  }
+
+  async function install(): Promise<InstallResult & { fromCache?: boolean }> {
+    try {
+      if (!baixado || !arquivoFinal) return { success: false, message: "Failed to download/install from Forge: nothing was downloaded." };
+      const result = await installModFromArchive(clientRoot, serverRoot, arquivoFinal, suggestedName, forgeInfo);
+      const instalou = result.success || !!result.needsConfirmation;
+      if (cache && versao) {
+        if (fromCache) {
+          // Arquivo que não instala não fica sendo reaproveitado.
+          if (!instalou) cache.discard(downloadLink, versao);
+        } else if (noSlot) {
+          if (instalou) {
+            cache.commit(downloadLink, versao, arquivoFinal, suggestedName);
+            commitado = true;
+          } else {
+            cache.discard(downloadLink, versao);
+          }
+        }
+      }
+      return fromCache ? { ...result, fromCache: true } : result;
+    } catch (err: any) {
+      if (cache && versao && noSlot && !commitado) cache.discard(downloadLink, versao);
+      return { success: false, message: `Failed to download/install from Forge: ${err?.message || err}` };
+    } finally {
+      liberar();
+      apagaTemp();
+    }
+  }
+
+  function discard() {
+    // Cancelado ou falhou baixando: o pedaço não fica nem no cache nem no SPT.
+    if (cache && versao && noSlot && !commitado) {
+      try {
+        cache.discard(downloadLink, versao);
+      } catch {
+        // best-effort
+      }
+    }
+    liberar();
+    apagaTemp();
+  }
+
+  return {
+    download,
+    install,
+    discard,
+    get fromCache() {
+      return fromCache;
+    },
+    get restarted() {
+      return restarted;
+    }
+  };
+}
+
+/**
+ * Sobras de download interrompido (app fechado com algo pausado ou baixando)
+ * na pasta do SPT. Ao abrir o app não existe download em andamento, então tudo
+ * que tiver esse nome é sobra.
+ */
+export function limparDownloadsInterrompidos(clientRoot: string): number {
+  let removidos = 0;
+  try {
+    for (const nome of fs.readdirSync(clientRoot)) {
+      if (!nome.startsWith(".tmp-forge-download-")) continue;
+      try {
+        fs.rmSync(path.join(clientRoot, nome), { recursive: true, force: true });
+        removidos++;
+      } catch {
+        // em uso por outro programa: fica pra próxima
+      }
+    }
+  } catch {
+    // pasta sumiu: nada a limpar
+  }
+  return removidos;
+}
+
+/**
+ * Baixa e instala direto, sem passar pela fila. A interface usa a fila; isto
+ * fica pros testes e pra quem precisar de uma instalação avulsa.
+ */
+export async function installForgeModVersion(
+  clientRoot: string,
+  serverRoot: string,
+  downloadLink: string,
+  suggestedName: string,
+  onProgress?: (receivedBytes: number, totalBytes: number, fromCache?: boolean) => void,
+  forgeInfo?: ForgeInstallInfo
+): Promise<InstallResult & { fromCache?: boolean }> {
+  const tarefa = criarTarefaDeDownload(clientRoot, serverRoot, downloadLink, suggestedName, forgeInfo);
+  try {
+    await tarefa.download(new AbortController().signal, (r, t) => onProgress?.(r, t, tarefa.fromCache));
+  } catch (err: any) {
+    tarefa.discard();
+    return {
+      success: false,
+      message: err instanceof QueueError ? err.message : `Failed to download/install from Forge: ${err?.message || err}`
+    };
+  }
+  return tarefa.install();
+}
+
+/* --------------------------------------------------------------------------
+ * Cache de downloads: configurado pelo main (que sabe onde fica a pasta de
+ * dados do app e qual limite a pessoa escolheu).
+ * ------------------------------------------------------------------------ */
+let cacheDownloads: DownloadCache | null = null;
+
+export function configureDownloadCache(dir: string, limitBytes: number) {
+  try {
+    cacheDownloads = new DownloadCache(dir, limitBytes);
+  } catch {
+    cacheDownloads = null;
   }
 }
+
+export function getDownloadCache(): DownloadCache | null {
+  return cacheDownloads;
+}
+
 /* ==========================================================================
  * Checagem de atualização do próprio Mod Manager (via releases do GitHub).
  *

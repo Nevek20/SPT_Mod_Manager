@@ -81,6 +81,43 @@ export interface ForgeUpdateItem {
   modId?: number;
 }
 
+export interface DownloadQueueJob {
+  id: string;
+  name: string;
+  state: "queued" | "downloading" | "paused" | "waiting" | "installing";
+  received: number;
+  total: number;
+  /** Bytes por segundo, média recente. */
+  speed: number;
+  fromCache: boolean;
+  /** O servidor não deixou continuar de onde parou: recomeçou do zero. */
+  restarted: boolean;
+}
+
+export const MAX_DOWNLOADS_OPTIONS = [1, 2, 3] as const;
+
+export interface DownloadCacheInfo {
+  /** Limite escolhido, em GB. 0 = desligado. */
+  limitGB: number;
+  usedBytes: number;
+  count: number;
+}
+
+/** Opções do seletor (espelho de CACHE_LIMIT_OPTIONS_GB do backend). */
+export const DOWNLOAD_CACHE_OPTIONS_GB = [0, 2, 5, 10, 20] as const;
+
+export interface ModChangelogEntry {
+  version: string;
+  publishedAt?: string;
+  /** HTML cru da fonte: passa pelo parseChangelogHtml antes de aparecer. */
+  html: string;
+}
+
+export interface ModChangelog {
+  entries: ModChangelogEntry[];
+  olderCount: number;
+}
+
 export interface ForgeUpdateCheckResult {
   sptVersionUsed: string;
   updates: ForgeUpdateItem[];
@@ -148,6 +185,10 @@ export interface ForgeCategory {
 export interface InstallResult {
   success: boolean;
   message: string;
+  /** Cancelado na fila pela pessoa: não é erro, não vira aviso vermelho. */
+  cancelled?: boolean;
+  /** Veio do cache de downloads. */
+  fromCache?: boolean;
   needsConfirmation?: boolean;
   tmpDir?: string;
   rootEntries?: string[];
@@ -219,6 +260,11 @@ export interface ModManagerAPI {
   getCustomCategories: () => Promise<CustomCategories>;
   saveCustomCategories: (custom: CustomCategories) => Promise<CustomCategories>;
   openForgeModPage: (modId: number, secao?: "versions") => Promise<{ success: boolean; message?: string }>;
+  fetchModChangelog: (
+    modId: number,
+    currentVersion?: string,
+    targetVersion?: string
+  ) => Promise<{ success: boolean; result?: ModChangelog; message?: string }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string; version?: string }[]
   ) => Promise<
@@ -234,9 +280,22 @@ export interface ModManagerAPI {
     jobId: string,
     downloadLink: string,
     suggestedName: string,
-    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string },
+    /** Ids da fila que precisam instalar antes deste (dependências, ordem de um lote). */
+    after?: string[]
   ) => Promise<InstallResult>;
-  onDownloadProgress: (callback: (data: { jobId: string; receivedBytes: number; totalBytes: number }) => void) => () => void;
+  /** A fila inteira a cada mudança (estado, ordem, progresso a cada ~150 ms). */
+  onDownloadQueue: (callback: (snapshot: DownloadQueueJob[]) => void) => () => void;
+  getDownloadQueue: () => Promise<DownloadQueueJob[]>;
+  controlDownload: (action: "pause" | "resume" | "cancel" | "up" | "down", jobId: string) => Promise<boolean>;
+  /** Cancela o que está esperando (na fila ou pausado). Devolve quantos. */
+  cancelWaitingDownloads: () => Promise<number>;
+  getMaxDownloads: () => Promise<number>;
+  setMaxDownloads: (n: number) => Promise<number>;
+  getDownloadCacheInfo: () => Promise<DownloadCacheInfo>;
+  /** Só aceita os valores de DOWNLOAD_CACHE_OPTIONS_GB. */
+  setDownloadCacheLimit: (gb: number) => Promise<DownloadCacheInfo>;
+  clearDownloadCache: () => Promise<DownloadCacheInfo & { kept: number }>;
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) => Promise<InstallResult>;
   abortUnrecognizedInstall: (tmpDir: string) => Promise<{ success: boolean; message: string }>;
 }

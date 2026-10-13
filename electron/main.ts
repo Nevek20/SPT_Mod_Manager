@@ -26,7 +26,8 @@ import {
   getForgeSptVersions,
   searchForgeMods,
   getForgeCategories,
-  installForgeModVersion,
+  criarTarefaDeDownload,
+  limparDownloadsInterrompidos,
   findForgeDownloadForName,
   fetchModDependencies,
   fetchModDependenciesBatch,
@@ -38,9 +39,14 @@ import {
   finalizeUnrecognizedInstall,
   discardPendingInstall,
   fetchModCategories,
+  fetchModChangelog,
   loadCustomCategories,
-  saveCustomCategories
+  saveCustomCategories,
+  configureDownloadCache,
+  getDownloadCache
 } from "./modManager";
+import { CACHE_DEFAULT_GB, CACHE_LIMIT_OPTIONS_GB, GB } from "./downloadCache";
+import { DownloadQueue, MAX_DOWNLOADS_OPTIONS } from "./downloadQueue";
 import { InstanceConfig, ModInfo } from "./types";
 
 const store = new Store<InstanceConfig>({
@@ -50,9 +56,25 @@ const store = new Store<InstanceConfig>({
     sptVersionOverride: null,
     forgeStatusCache: null,
     forgeCheckedAt: null,
-    modSourceKey: null
+    modSourceKey: null,
+    downloadCacheGB: CACHE_DEFAULT_GB,
+    maxDownloads: 1
   }
 });
+
+function maxDownloads(): number {
+  const v = store.get("maxDownloads");
+  return (MAX_DOWNLOADS_OPTIONS as readonly number[]).includes(v) ? v : 1;
+}
+
+function limiteCacheGB(): number {
+  const v = store.get("downloadCacheGB");
+  return (CACHE_LIMIT_OPTIONS_GB as readonly number[]).includes(v) ? v : CACHE_DEFAULT_GB;
+}
+
+// Cache dos downloads na pasta de dados do app, não na do SPT: vale pra todas as
+// instâncias e sobrevive a reinstalar o SPT.
+configureDownloadCache(path.join(app.getPath("userData"), "download-cache"), limiteCacheGB() * GB);
 
 // Rolagem suave da rodinha, SEMPRE ligada. O Chromium tem isso pronto, mas o
 // Electron no Windows rola "aos trancos" sem o switch, que só vale se for ligado
@@ -95,6 +117,19 @@ function getServerRoot(): string | null {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+// Fila de downloads: um (ou o que a pessoa escolher) baixando por vez, e
+// instalação sempre uma de cada vez. Cada mudança vai pra interface.
+const filaDownloads = new DownloadQueue(maxDownloads(), (snapshot) => {
+  mainWindow?.webContents.send("download-queue", snapshot);
+});
+
+// Fechou com algo pausado ou baixando: o pedaço não fica jogado na pasta do SPT.
+app.on("will-quit", () => filaDownloads.shutdown());
+{
+  const sptInicial = store.get("sptPath");
+  if (sptInicial) limparDownloadsInterrompidos(sptInicial);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -235,6 +270,19 @@ ipcMain.handle("fetch-mod-categories", async (_event, ids: number[]) => {
   const sptPath = store.get("sptPath");
   if (!sptPath || !Array.isArray(ids)) return {};
   return fetchModCategories(sptPath, ids.filter((id) => typeof id === "number"));
+});
+
+ipcMain.handle("fetch-mod-changelog", async (_event, modId: unknown, atual: unknown, alvo: unknown) => {
+  // Tudo vem do renderer: id inteiro positivo e versões como texto curto.
+  const versao = (v: unknown) => (typeof v === "string" && v.length <= 64 ? v : undefined);
+  if (typeof modId !== "number" || !Number.isInteger(modId) || modId <= 0) {
+    return { success: false, message: "Invalid mod id." };
+  }
+  try {
+    return { success: true, result: await fetchModChangelog(modId, versao(atual), versao(alvo)) };
+  } catch (err) {
+    return { success: false, message: `Couldn't load the changelog: ${err instanceof Error ? err.message : String(err)}` };
+  }
 });
 
 ipcMain.handle("get-custom-categories", () => {
@@ -495,32 +543,97 @@ ipcMain.handle(
   "install-forge-mod",
   async (
     _event,
-    jobId: string,
-    downloadLink: string,
-    suggestedName: string,
-    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
+    jobId: unknown,
+    downloadLink: unknown,
+    suggestedName: unknown,
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string },
+    after?: unknown
   ) => {
     const sptPath = store.get("sptPath");
     if (!sptPath) return { success: false, message: "No SPT instance configured." };
+    // Ids que precisam instalar antes deste (dependências). Vêm do renderer.
+    const depois = Array.isArray(after)
+      ? after.filter((x): x is string => typeof x === "string" && /^[\w-]{1,80}$/.test(x)).slice(0, 50)
+      : [];
+    if (typeof jobId !== "string" || !/^[\w-]{1,80}$/.test(jobId)) return { success: false, message: "Invalid download id." };
+    if (typeof downloadLink !== "string" || !/^https?:\/\//i.test(downloadLink)) {
+      return { success: false, message: "Invalid download link." };
+    }
+    const nome = typeof suggestedName === "string" && suggestedName.trim() ? suggestedName.slice(0, 200) : "mod";
 
-    // O que já existe deste mesmo mod, pra instalação saber que é atualização.
-    // Montado no processo principal e não no renderer pelo mesmo motivo da
-    // checagem de dependências: o scan é a fonte de verdade, e pedir ao
-    // renderer que remonte isso abriria espaço pra divergência silenciosa.
-    const previous = findPreviousInstall(sptPath, getServerRoot()!, forgeInfo ?? {});
-
-    return installForgeModVersion(
-      sptPath,
-      getServerRoot()!,
-      downloadLink,
-      suggestedName,
-      (receivedBytes, totalBytes) => {
-        mainWindow?.webContents.send("download-progress", { jobId, receivedBytes, totalBytes });
+    const info: Parameters<typeof criarTarefaDeDownload>[4] = { ...forgeInfo };
+    const tarefa = criarTarefaDeDownload(sptPath, getServerRoot()!, downloadLink, nome, info);
+    return filaDownloads.enqueue(jobId, nome, {
+      download: tarefa.download,
+      discard: tarefa.discard,
+      get fromCache() {
+        return tarefa.fromCache;
       },
-      { ...forgeInfo, previous }
-    );
+      get restarted() {
+        return tarefa.restarted;
+      },
+      install: () => {
+        // O que já existe deste mesmo mod, pra instalação saber que é atualização.
+        // Calculado na VEZ de instalar (já dentro do cadeado), não no clique: com
+        // fila, outra instalação pode ter mexido nesse mod enquanto este esperava.
+        // Montado aqui e não no renderer porque o scan é a fonte de verdade.
+        info!.previous = findPreviousInstall(sptPath, getServerRoot()!, forgeInfo ?? {});
+        return tarefa.install();
+      }
+    }, depois);
   }
 );
+
+ipcMain.handle("get-download-queue", () => filaDownloads.snapshot());
+
+ipcMain.handle("download-queue-control", (_event, acao: unknown, jobId: unknown) => {
+  if (typeof jobId !== "string") return false;
+  switch (acao) {
+    case "pause":
+      return filaDownloads.pause(jobId);
+    case "resume":
+      return filaDownloads.resume(jobId);
+    case "cancel":
+      return filaDownloads.cancel(jobId);
+    case "up":
+      return filaDownloads.move(jobId, -1);
+    case "down":
+      return filaDownloads.move(jobId, 1);
+    default:
+      return false;
+  }
+});
+
+ipcMain.handle("download-queue-cancel-waiting", () => filaDownloads.cancelWaiting());
+
+ipcMain.handle("get-max-downloads", () => maxDownloads());
+
+ipcMain.handle("set-max-downloads", (_event, n: unknown) => {
+  if (typeof n !== "number" || !(MAX_DOWNLOADS_OPTIONS as readonly number[]).includes(n)) return maxDownloads();
+  store.set("maxDownloads", n);
+  filaDownloads.setMaxDownloads(n);
+  return n;
+});
+
+function infoCache() {
+  const info = getDownloadCache()?.info();
+  return { limitGB: limiteCacheGB(), usedBytes: info?.usedBytes ?? 0, count: info?.count ?? 0 };
+}
+
+ipcMain.handle("get-download-cache-info", () => infoCache());
+
+ipcMain.handle("set-download-cache-limit", (_event, gb: unknown) => {
+  // Só os valores que a interface oferece: o número vem do renderer.
+  if (typeof gb !== "number" || !(CACHE_LIMIT_OPTIONS_GB as readonly number[]).includes(gb)) return infoCache();
+  store.set("downloadCacheGB", gb);
+  getDownloadCache()?.setLimit(gb * GB);
+  return infoCache();
+});
+
+ipcMain.handle("clear-download-cache", () => {
+  const r = getDownloadCache()?.clear() ?? { removed: 0, kept: 0 };
+  return { ...infoCache(), kept: r.kept };
+});
 
 ipcMain.handle("install-mod", async () => {
   const sptPath = store.get("sptPath");
@@ -532,7 +645,8 @@ ipcMain.handle("install-mod", async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelled." };
 
-  return installModFromArchive(sptPath, getServerRoot()!, result.filePaths[0]);
+  // Mesmo cadeado da fila: nunca duas instalações gravando o registro ao mesmo tempo.
+  return filaDownloads.exclusive(() => installModFromArchive(sptPath, getServerRoot()!, result.filePaths[0]));
 });
 
 ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
@@ -544,13 +658,13 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
     return { success: false, message: `File "${path.basename(filePath)}" isn't .zip, .7z, or .rar.` };
   }
 
-  return installModFromArchive(sptPath, getServerRoot()!, filePath);
+  return filaDownloads.exclusive(() => installModFromArchive(sptPath, getServerRoot()!, filePath));
 });
 
 ipcMain.handle("install-mod-confirm", (_event, tmpDir: string, archivePath: string) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
-  return finalizeUnrecognizedInstall(sptPath, getServerRoot()!, tmpDir, archivePath);
+  return filaDownloads.exclusive(() => finalizeUnrecognizedInstall(sptPath, getServerRoot()!, tmpDir, archivePath));
 });
 
 ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {

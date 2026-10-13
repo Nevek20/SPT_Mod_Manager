@@ -1073,11 +1073,13 @@ h2 {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 300px;
+  width: 330px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 900;
+  /* Acima das modais (1000): com a fila dá pra pausar e cancelar, e o lugar
+     onde mais se baixa é justamente a janela do Navegar. */
+  z-index: 1001;
   max-height: 70vh;
   overflow-y: auto;
 }
@@ -2154,4 +2156,297 @@ button {
 .blocked-updates summary {
   cursor: pointer;
   margin: 8px 0;
+}
+
+/* Changelog: ícone de nota que abre um balão (painel de atualizações e chip da lista). */
+.changelog-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 4px;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.changelog-button:hover:not(:disabled),
+.changelog-button.active {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.forge-update-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.forge-update-group .changelog-button {
+  margin: 0 0 0 2px;
+  width: 18px;
+  height: 18px;
+}
+
+.changelog-popover {
+  position: fixed;
+  z-index: 1010;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 16px);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  font-size: 0.88rem;
+  text-align: left;
+  animation: pop-in 0.12s ease-out;
+}
+
+.changelog-popover-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changelog-popover-mod {
+  color: var(--text-dim);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changelog-popover-body {
+  padding: 10px 14px 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.changelog-entry + .changelog-entry {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.changelog-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.changelog-date {
+  color: var(--text-faint);
+  font-size: 0.9em;
+}
+
+.changelog-body {
+  color: var(--text);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.changelog-body p,
+.changelog-body ul,
+.changelog-body ol,
+.changelog-body pre,
+.changelog-body blockquote {
+  margin: 4px 0;
+}
+
+.changelog-body ul,
+.changelog-body ol {
+  padding-left: 20px;
+}
+
+.changelog-body h5 {
+  margin: 8px 0 4px;
+  font-size: 1em;
+}
+
+.changelog-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 0 3px;
+  background: var(--badge-bg);
+  border-radius: var(--radius);
+}
+
+.changelog-body pre {
+  padding: 6px 8px;
+  background: var(--badge-bg);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.changelog-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.changelog-body blockquote {
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.changelog-body hr {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+}
+
+.changelog-link {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.changelog-muted {
+  margin: 4px 0;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.changelog-error {
+  margin: 4px 0;
+  color: var(--danger-strong);
+}
+
+.changelog-more {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.changelog-more:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+
+/* Fila de downloads: cabeçalho, botões por item e estados novos. */
+.queue-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.queue-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text-dim);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.queue-link:hover:not(:disabled) {
+  background: none;
+  color: var(--danger-strong);
+}
+
+.queue-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-item-head .queue-item-name {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.queue-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.queue-btn:hover:not(:disabled) {
+  background: var(--bg-panel-raised);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.queue-btn.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger-strong);
+}
+
+.queue-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.queue-item-body {
+  margin-top: 6px;
+}
+
+.queue-item-note {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.download-queue-item.queue-status-paused .queue-progress-fill {
+  background: var(--text-faint);
+}
+
+.download-queue-item.queue-status-queued,
+.download-queue-item.queue-status-cancelled {
+  opacity: 0.85;
+}
+
+.chain-cancel-modal {
+  max-width: 460px;
+}
+
+.chain-cancel-modal .confirm-structure-actions {
+  flex-wrap: wrap;
+}
+
+.queue-panel-head .queue-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* A pergunta nasce de um clique no painel da fila, que fica acima das modais. */
+.chain-cancel-backdrop {
+  z-index: 1002;
 }

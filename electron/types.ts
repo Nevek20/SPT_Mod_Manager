@@ -38,6 +38,8 @@ export interface InstanceConfig {
   forgeStatusCache: { name: string; status: "update" | "blocked" | "incompatible" | "info"; version?: string }[] | null;
   forgeCheckedAt: string | null;
   modSourceKey: string | null; // fonte de mods escolhida; null = padrão
+  downloadCacheGB: number; // limite do cache de downloads, 0 = desligado
+  maxDownloads: number; // downloads simultâneos na fila (1 a 3)
 }
 
 export interface RegistryEntry {

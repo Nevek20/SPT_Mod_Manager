@@ -40,7 +40,12 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   getDiagnostics: () => ipcRenderer.invoke("get-diagnostics"),
   copyText: (texto: string) => ipcRenderer.invoke("copy-text", texto),
   fetchModCategories: (ids: number[]) => ipcRenderer.invoke("fetch-mod-categories", ids),
+  fetchModChangelog: (modId: number, currentVersion?: string, targetVersion?: string) =>
+    ipcRenderer.invoke("fetch-mod-changelog", modId, currentVersion, targetVersion),
   getCustomCategories: () => ipcRenderer.invoke("get-custom-categories"),
+  getDownloadCacheInfo: () => ipcRenderer.invoke("get-download-cache-info"),
+  setDownloadCacheLimit: (gb: number) => ipcRenderer.invoke("set-download-cache-limit", gb),
+  clearDownloadCache: () => ipcRenderer.invoke("clear-download-cache"),
   saveCustomCategories: (custom: unknown) => ipcRenderer.invoke("save-custom-categories", custom),
   openForgeModPage: (modId: number, secao?: "versions") => ipcRenderer.invoke("open-forge-mod-page", modId, secao),
   findForgeDownloadsForNames: (entries: { name: string; guid?: string }[]) =>
@@ -55,14 +60,20 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
     jobId: string,
     downloadLink: string,
     suggestedName: string,
-    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string }
-  ) => ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName, forgeInfo),
+    forgeInfo?: { id?: number; name?: string; author?: string; version?: string; guid?: string },
+    after?: string[]
+  ) => ipcRenderer.invoke("install-forge-mod", jobId, downloadLink, suggestedName, forgeInfo, after),
   confirmUnrecognizedInstall: (tmpDir: string, archivePath: string) =>
     ipcRenderer.invoke("install-mod-confirm", tmpDir, archivePath),
   abortUnrecognizedInstall: (tmpDir: string) => ipcRenderer.invoke("install-mod-abort", tmpDir),
-  onDownloadProgress: (callback: (data: { jobId: string; receivedBytes: number; totalBytes: number }) => void) => {
-    const handler = (_event: unknown, data: { jobId: string; receivedBytes: number; totalBytes: number }) => callback(data);
-    ipcRenderer.on("download-progress", handler);
-    return () => ipcRenderer.removeListener("download-progress", handler);
-  }
+  onDownloadQueue: (callback: (snapshot: unknown[]) => void) => {
+    const handler = (_event: unknown, snapshot: unknown[]) => callback(snapshot);
+    ipcRenderer.on("download-queue", handler);
+    return () => ipcRenderer.removeListener("download-queue", handler);
+  },
+  getDownloadQueue: () => ipcRenderer.invoke("get-download-queue"),
+  controlDownload: (action: string, jobId: string) => ipcRenderer.invoke("download-queue-control", action, jobId),
+  cancelWaitingDownloads: () => ipcRenderer.invoke("download-queue-cancel-waiting"),
+  getMaxDownloads: () => ipcRenderer.invoke("get-max-downloads"),
+  setMaxDownloads: (n: number) => ipcRenderer.invoke("set-max-downloads", n)
 });
