@@ -18,6 +18,7 @@ import {
   UNCATEGORIZED,
   groupNodes,
   assignNodes,
+  withAliases,
   removeCategory,
   renameCategory,
   moveCategory
@@ -115,14 +116,15 @@ console.log("\nminhas categorias");
 
   const bots = semente.categories[0].id;
   const traders = semente.categories[1].id;
-  const chaveSain = arvore.find((n) => n.name === "SAIN")!.key;
-  const chaveMao = arvore.find((n) => n.name === "FeitoAMao")!.key;
+  const linhaSain = arvore.find((n) => n.name === "SAIN")!;
+  const linhaMao = arvore.find((n) => n.name === "FeitoAMao")!;
+  const chaveSain = linhaSain.key;
 
-  const movido = assignNodes(semente, [chaveMao], traders);
+  const movido = assignNodes(semente, [linhaMao], traders);
   check("mover poe na categoria escolhida", nomes(groupNodes(arvore, "custom", titulos, movido))[1], ["Traders", ["Painter", "FeitoAMao"]]);
   check(
     "mover pra sem categoria tira a atribuicao",
-    assignNodes(movido, [chaveSain], UNCATEGORIZED).assign[chaveSain],
+    assignNodes(movido, [linhaSain], UNCATEGORIZED).assign[chaveSain],
     undefined
   );
 
@@ -137,7 +139,7 @@ console.log("\nminhas categorias");
     ]
   );
 
-  const tudoOrganizado = assignNodes(semente, [chaveMao], traders);
+  const tudoOrganizado = assignNodes(semente, [linhaMao], traders);
   check(
     "com tudo organizado, sem categoria some",
     groupNodes(arvore, "custom", titulos, tudoOrganizado).some((g) => g.id === UNCATEGORIZED),
@@ -155,6 +157,40 @@ console.log("\nminhas categorias");
     nomes(groupNodes(arvore, "custom", titulos, vazia))[2],
     ["Nova", []]
   );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\ncategoria sobrevive a atualizacao (relato da 0.7.0)");
+// ---------------------------------------------------------------------------
+{
+  // Antes da atualizacao: mod solo, sem packageId. Chave "solo:server:Painter".
+  const antes = buildModTree([mod("Painter", "server", { forgeModId: 1025 })], "all");
+  const org = assignNodes({ categories: [{ id: "tr", name: "Traders" }], assign: {} }, antes, "tr");
+
+  // Atualizou pelo app: ganhou packageId, entao a chave da arvore mudou.
+  const depois = buildModTree([mod("Painter", "server", { forgeModId: 1025, packageId: "src:sp-mod:1025" })], "all");
+  check("a chave da arvore mudou mesmo", depois[0].key !== antes[0].key, true);
+  check("e a categoria continua", groupNodes(depois, "custom", {}, org)[0].name, "Traders");
+
+  // Versao nova mudou o nome da pasta, mas e o mesmo mod no catalogo.
+  const renomeado = buildModTree([mod("Painter-4.1", "server", { forgeModId: 1025 })], "all");
+  check("pasta renomeada entre versoes continua na categoria", groupNodes(renomeado, "custom", {}, org)[0].name, "Traders");
+
+  // Mod sem id do catalogo: o GUID segura.
+  const comGuid = buildModTree([mod("Coisa", "client", { guid: "com.autor.coisa" })], "all");
+  const orgGuid = assignNodes({ categories: [{ id: "x", name: "X" }], assign: {} }, comGuid, "x");
+  const guidRenomeado = buildModTree([mod("Coisa-2", "client", { guid: "COM.Autor.Coisa" })], "all");
+  check("sem id, o GUID segura (sem diferenciar maiuscula)", groupNodes(guidRenomeado, "custom", {}, orgGuid)[0].name, "X");
+
+  // O que foi organizado ANTES desta versao so tinha a chave da arvore.
+  const legado = { categories: [{ id: "tr", name: "Traders" }], assign: { [antes[0].key]: "tr" } };
+  const convertido = withAliases(legado, antes);
+  check("o que era so chave ganha o id do catalogo", convertido.assign["forge:1025"], "tr");
+  check("e depois da atualizacao continua na categoria", groupNodes(depois, "custom", {}, convertido)[0].name, "Traders");
+  check("sem nada a acrescentar, devolve o mesmo objeto (nao grava a toa)", withAliases(convertido, antes) === convertido, true);
+
+  const tirado = assignNodes(org, depois, UNCATEGORIZED);
+  check("tirar da categoria apaga todos os nomes", Object.keys(tirado.assign).length, 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -133,11 +133,21 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* Animações: o Windows com "efeitos de animação" desligado desliga aqui também,
+   a menos que a pessoa tenha LIGADO explicitamente nas configurações. E quem
+   desligou nas configurações não vê nenhuma, seja qual for o Windows. */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  :root:not([data-motion="on"]) * {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
 }
 
 button {
@@ -2029,4 +2039,81 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
 .kofi-button {
   border-color: var(--accent);
   color: var(--accent-strong);
+}
+
+/* ==========================================================================
+   Animações (desligáveis nas configurações)
+   Curtas de propósito: ajudam o olho a acompanhar o que abriu e fechou, mas
+   nunca seguram a pessoa esperando.
+   ========================================================================== */
+
+@keyframes surge {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Conteúdo que abre: categoria, partes de um pacote. */
+.category-body,
+.mod-parts {
+  animation: surge 0.16s ease-out;
+}
+
+/* Setas giram em vez de trocar de caractere. */
+.category-chevron,
+.tree-toggle-icon {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.category-chevron.open,
+.tree-toggle-icon.open {
+  transform: rotate(90deg);
+}
+
+.modal-backdrop {
+  animation: fade-in 0.14s ease-out;
+}
+
+.modal-box {
+  animation: pop-in 0.16s ease-out;
+}
+
+/* O painel de configurações já entra deslizando; o pop não combina com ele. */
+.settings-panel.modal-box,
+.settings-backdrop .settings-panel {
+  animation: settings-in 0.16s ease-out;
+}
+
+.category-group {
+  animation: fade-in 0.18s ease-out;
+}
+
+button {
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }

@@ -81,7 +81,7 @@ export function groupNodes(
   const existentes = new Set(custom.categories.map((c) => c.id));
   const porId = new Map<string, ModTreeNode[]>(custom.categories.map((c) => [c.id, []]));
   for (const node of nodes) {
-    const cat = custom.assign[node.key];
+    const cat = categoryOf(custom, node);
     if (cat && existentes.has(cat)) porId.get(cat)!.push(node);
     else semCategoria.push(node);
   }
@@ -99,14 +99,71 @@ export function newCategoryId(base = "cat"): string {
   return `${limpo}-${Date.now().toString(36)}-${contador}`;
 }
 
+/**
+ * Todos os jeitos de reconhecer a mesma linha depois que ela mudar.
+ *
+ * A chave da árvore sozinha não sobrevive a uma atualização: o mod que era
+ * "solo:server:Pasta" ganha um packageId ao ser atualizado pelo app, e o que
+ * muda de nome de pasta entre versões vira outra chave. Por isso a categoria
+ * fica gravada sob vários nomes: o id do catálogo (não muda nunca), o GUID
+ * (não muda entre versões), cada pasta e a chave da árvore. Basta um bater.
+ */
+export function aliasesOf(node: ModTreeNode): string[] {
+  const out = new Set<string>([node.key]);
+  const id = forgeIdOf(node);
+  if (id !== undefined) out.add(`forge:${id}`);
+  for (const part of node.parts) {
+    if (part.guid) out.add(`guid:${part.guid.toLowerCase()}`);
+    out.add(`part:${part.type}:${part.id}`);
+    // A chave que esta parte teria como mod solo (antes de ganhar packageId):
+    // sem ela, tirar da categoria deixava a chave antiga esquecida no arquivo.
+    out.add(`solo:${part.type}:${part.id}`);
+  }
+  return [...out];
+}
+
+/** Categoria de uma linha, procurando por qualquer um dos nomes dela. */
+export function categoryOf(custom: CustomCategories, node: ModTreeNode): string | undefined {
+  for (const alias of aliasesOf(node)) {
+    const cat = custom.assign[alias];
+    if (cat) return cat;
+  }
+  return undefined;
+}
+
 /** Move linhas pra uma categoria (ou pra "Sem categoria"). Devolve um objeto novo. */
-export function assignNodes(custom: CustomCategories, nodeKeys: string[], categoryId: string): CustomCategories {
+export function assignNodes(custom: CustomCategories, nodes: ModTreeNode[], categoryId: string): CustomCategories {
   const assign = { ...custom.assign };
-  for (const key of nodeKeys) {
-    if (categoryId === UNCATEGORIZED) delete assign[key];
-    else assign[key] = categoryId;
+  for (const node of nodes) {
+    for (const alias of aliasesOf(node)) {
+      if (categoryId === UNCATEGORIZED) delete assign[alias];
+      else assign[alias] = categoryId;
+    }
   }
   return { categories: custom.categories, assign };
+}
+
+/**
+ * Completa os nomes de quem já está numa categoria. Serve pra duas coisas:
+ * atualizar o que foi gravado antes dos apelidos existirem (só com a chave da
+ * árvore), e gravar o id do catálogo de um mod que só foi reconhecido depois.
+ * Devolve o MESMO objeto quando não há nada a acrescentar, pra não gravar à toa.
+ */
+export function withAliases(custom: CustomCategories, nodes: ModTreeNode[]): CustomCategories {
+  let assign: Record<string, string> | null = null;
+  for (const node of nodes) {
+    const cat = categoryOf(custom, node);
+    if (!cat) continue;
+    for (const alias of aliasesOf(node)) {
+      if (custom.assign[alias] === cat) continue;
+      // Um apelido que já aponta pra OUTRA categoria não é sobrescrito aqui:
+      // isso só acontece por escolha do usuário, no assignNodes.
+      if (custom.assign[alias] !== undefined) continue;
+      assign ??= { ...custom.assign };
+      assign[alias] = cat;
+    }
+  }
+  return assign ? { categories: custom.categories, assign } : custom;
 }
 
 /** Apaga uma categoria; os mods dela voltam pra "Sem categoria", nada é removido do disco. */

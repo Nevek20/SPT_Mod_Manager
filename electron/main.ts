@@ -321,6 +321,7 @@ ipcMain.handle(
       // lista fechada e ignora o resto.
       sort?: ForgeSort;
       page?: number;
+      fikaOnly?: boolean;
     }
   ) => {
     try {

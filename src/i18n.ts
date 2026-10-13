@@ -350,7 +350,12 @@ const pt: Dict = {
   "categories.edit": "Editar categorias",
   "categories.doneEditing": "Concluir",
   "settings.supportNote": "O SPT Mod Manager é e vai continuar de graça. Se ele te poupou tempo, dá pra agradecer com um café.",
-  "settings.supportButton": "Me pague um café"
+  "settings.supportButton": "Me pague um café",
+  "browse.fikaOnly": "Só compatíveis com Fika",
+  "browse.fikaOnlyTitle": "Mostra só mods que o autor marcou como compatíveis com o Fika (multiplayer)",
+  "settings.animations": "Animações",
+  "settings.on": "Ligadas",
+  "settings.off": "Desligadas"
 };
 
 const en: Dict = {
@@ -660,7 +665,12 @@ const en: Dict = {
   "categories.edit": "Edit categories",
   "categories.doneEditing": "Done",
   "settings.supportNote": "SPT Mod Manager is and will stay free. If it saved you some time, you can say thanks with a coffee.",
-  "settings.supportButton": "Buy me a coffee"
+  "settings.supportButton": "Buy me a coffee",
+  "browse.fikaOnly": "Fika compatible only",
+  "browse.fikaOnlyTitle": "Show only mods the author marked as compatible with Fika (multiplayer)",
+  "settings.animations": "Animations",
+  "settings.on": "On",
+  "settings.off": "Off"
 };
 
 /**
@@ -955,7 +965,12 @@ const zh: Dict = {
   "categories.edit": "编辑分类",
   "categories.doneEditing": "完成",
   "settings.supportNote": "SPT Mod Manager 现在免费，将来也会一直免费。如果它为你节省了时间，可以请我喝杯咖啡表示感谢。",
-  "settings.supportButton": "请我喝杯咖啡"
+  "settings.supportButton": "请我喝杯咖啡",
+  "browse.fikaOnly": "仅限兼容 Fika",
+  "browse.fikaOnlyTitle": "只显示作者标记为兼容 Fika（多人联机）的模组",
+  "settings.animations": "动画",
+  "settings.on": "开",
+  "settings.off": "关"
 };
 
 const ru: Dict = {
@@ -1240,7 +1255,12 @@ const ru: Dict = {
   "categories.edit": "Редактировать категории",
   "categories.doneEditing": "Готово",
   "settings.supportNote": "SPT Mod Manager бесплатный и останется бесплатным. Если он сэкономил вам время, можно сказать спасибо чашкой кофе.",
-  "settings.supportButton": "Угостить кофе"
+  "settings.supportButton": "Угостить кофе",
+  "browse.fikaOnly": "Только совместимые с Fika",
+  "browse.fikaOnlyTitle": "Показывать только моды, которые автор отметил как совместимые с Fika (мультиплеер)",
+  "settings.animations": "Анимации",
+  "settings.on": "Вкл.",
+  "settings.off": "Выкл."
 };
 
 const fr: Dict = {
@@ -1525,7 +1545,12 @@ const fr: Dict = {
   "categories.edit": "Modifier les catégories",
   "categories.doneEditing": "Terminer",
   "settings.supportNote": "SPT Mod Manager est et restera gratuit. S'il vous a fait gagner du temps, vous pouvez dire merci avec un café.",
-  "settings.supportButton": "M'offrir un café"
+  "settings.supportButton": "M'offrir un café",
+  "browse.fikaOnly": "Compatibles Fika uniquement",
+  "browse.fikaOnlyTitle": "Afficher seulement les mods que l'auteur a marqués compatibles avec Fika (multijoueur)",
+  "settings.animations": "Animations",
+  "settings.on": "Activées",
+  "settings.off": "Désactivées"
 };
 
 const ja: Dict = {
@@ -1810,7 +1835,12 @@ const ja: Dict = {
   "categories.edit": "カテゴリを編集",
   "categories.doneEditing": "完了",
   "settings.supportNote": "SPT Mod Manager は無料で、これからもずっと無料です。役に立ったら、コーヒー1杯でお礼をいただけると嬉しいです。",
-  "settings.supportButton": "コーヒーをおごる"
+  "settings.supportButton": "コーヒーをおごる",
+  "browse.fikaOnly": "Fika 対応のみ",
+  "browse.fikaOnlyTitle": "作者が Fika（マルチプレイ）対応とした Mod のみ表示",
+  "settings.animations": "アニメーション",
+  "settings.on": "オン",
+  "settings.off": "オフ"
 };
 
 const de: Dict = {
@@ -2095,7 +2125,12 @@ const de: Dict = {
   "categories.edit": "Kategorien bearbeiten",
   "categories.doneEditing": "Fertig",
   "settings.supportNote": "SPT Mod Manager ist und bleibt kostenlos. Wenn er dir Zeit gespart hat, kannst du mit einem Kaffee danke sagen.",
-  "settings.supportButton": "Spendier mir einen Kaffee"
+  "settings.supportButton": "Spendier mir einen Kaffee",
+  "browse.fikaOnly": "Nur Fika-kompatibel",
+  "browse.fikaOnlyTitle": "Nur Mods zeigen, die der Autor als Fika-kompatibel (Mehrspieler) markiert hat",
+  "settings.animations": "Animationen",
+  "settings.on": "An",
+  "settings.off": "Aus"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

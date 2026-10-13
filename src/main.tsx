@@ -10,6 +10,8 @@ try {
   const escolhido = salvo === "dark" || salvo === "light" ? salvo : "system";
   document.documentElement.dataset.theme =
     escolhido === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : escolhido;
+  const movimento = localStorage.getItem("spt-mod-manager.motion");
+  if (movimento === "on" || movimento === "off") document.documentElement.dataset.motion = movimento;
 } catch {
   // Sem armazenamento: o App aplica o tema do sistema logo em seguida.
 }

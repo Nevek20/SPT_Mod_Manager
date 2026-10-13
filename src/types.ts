@@ -205,6 +205,7 @@ export interface ModManagerAPI {
     markVersion?: string;
     perPage?: number;
     page?: number;
+    fikaOnly?: boolean;
   }) => Promise<{ success: boolean; result?: ForgeSearchResult; message?: string }>;
   getForgeCategories: () => Promise<ForgeCategory[]>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;

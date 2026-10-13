@@ -19,6 +19,8 @@ import {
   UNCATEGORIZED,
   groupNodes,
   assignNodes,
+  categoryOf,
+  withAliases,
   removeCategory,
   renameCategory,
   moveCategory,
@@ -28,6 +30,7 @@ import type { CustomCategories } from "./types";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 const THEME_STORAGE_KEY = "spt-mod-manager.theme";
+const MOTION_STORAGE_KEY = "spt-mod-manager.motion";
 const WELCOMED_STORAGE_KEY = "spt-mod-manager.welcomed";
 const GROUP_STORAGE_KEY = "spt-mod-manager.groupBy";
 const COLLAPSED_STORAGE_KEY = "spt-mod-manager.collapsedCategories";
@@ -229,6 +232,32 @@ export default function App() {
     }
   }
 
+  // Animações: "on"/"off" só quando a pessoa escolheu. Sem escolha, segue o
+  // Windows (o CSS lê o prefers-reduced-motion).
+  const [animacoes, setAnimacoes] = useState<"on" | "off" | null>(() => {
+    try {
+      const v = localStorage.getItem(MOTION_STORAGE_KEY);
+      return v === "on" || v === "off" ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (animacoes) document.documentElement.dataset.motion = animacoes;
+    else delete document.documentElement.dataset.motion;
+  }, [animacoes]);
+  const animacoesLigadas =
+    animacoes === "on" || (animacoes === null && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  function mudarAnimacoes(ligadas: boolean) {
+    const v = ligadas ? "on" : "off";
+    setAnimacoes(v);
+    try {
+      localStorage.setItem(MOTION_STORAGE_KEY, v);
+    } catch {
+      // vale só nesta sessão
+    }
+  }
+
   const [configAberta, setConfigAberta] = useState(false);
 
   // Boas-vindas: só na PRIMEIRA abertura de verdade. Quem já usa o app tem uma
@@ -368,6 +397,7 @@ export default function App() {
   const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
   const [browseOnlyCompatible, setBrowseOnlyCompatible] = useState(false);
   const [browseHideInstalled, setBrowseHideInstalled] = useState(false);
+  const [browseFikaOnly, setBrowseFikaOnly] = useState(false);
   const [browseResults, setBrowseResults] = useState<ForgeCatalogMod[]>([]);
   const [browsePage, setBrowsePage] = useState(1);
   const [browseLastPage, setBrowseLastPage] = useState(1);
@@ -639,27 +669,30 @@ export default function App() {
       return prox;
     });
   }
-  // "Recolher tudo" fecha as categorias E os pacotes de várias partes; é o
-  // "esconder/mostrar tudo" que o inganshin pediu, e vale até sem agrupamento.
+  // "Recolher tudo" age no nível de cima da lista: com agrupamento, fecha as
+  // CATEGORIAS e não mexe nos pacotes de dentro (fechar os dois de uma vez
+  // obrigava a reabrir pacote por pacote depois). Sem agrupamento, os pacotes
+  // são o nível de cima, então é neles que ele age.
   const pacotesVisiveis = modTree.filter((n) => !n.single);
   const todasRecolhidas =
-    (groupMode === "none" || grupos.every((g) => recolhidas.has(chaveRecolhida(g.id)))) &&
-    pacotesVisiveis.every((n) => !pacoteAberto(n)) &&
-    (groupMode !== "none" || pacotesVisiveis.length > 0);
+    groupMode !== "none"
+      ? grupos.length > 0 && grupos.every((g) => recolhidas.has(chaveRecolhida(g.id)))
+      : pacotesVisiveis.length > 0 && pacotesVisiveis.every((n) => !pacoteAberto(n));
   function alternarTodas() {
     const abrir = todasRecolhidas;
-    if (groupMode !== "none") {
-      setRecolhidas((prev) => {
-        const prox = new Set(prev);
-        for (const g of grupos) {
-          if (abrir) prox.delete(chaveRecolhida(g.id));
-          else prox.add(chaveRecolhida(g.id));
-        }
-        gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
-        return prox;
-      });
+    if (groupMode === "none") {
+      definirPacotes(pacotesVisiveis, abrir);
+      return;
     }
-    definirPacotes(pacotesVisiveis, abrir);
+    setRecolhidas((prev) => {
+      const prox = new Set(prev);
+      for (const g of grupos) {
+        if (abrir) prox.delete(chaveRecolhida(g.id));
+        else prox.add(chaveRecolhida(g.id));
+      }
+      gravarLocal(COLLAPSED_STORAGE_KEY, [...prox]);
+      return prox;
+    });
   }
 
   function criarCategoria() {
@@ -679,9 +712,24 @@ export default function App() {
     salvarCustom(removeCategory(custom, id));
   }
 
+  // A árvore inteira, sem filtro: mover e conferir categoria precisam achar a
+  // linha mesmo quando ela está escondida pela busca.
+  const arvoreCompleta = useMemo(() => buildModTree(mods, "all"), [mods]);
+  const linhaPorChave = useMemo(() => new Map(arvoreCompleta.map((n) => [n.key, n])), [arvoreCompleta]);
+
   function moverParaCategoria(nodeKeys: string[], categoriaId: string) {
-    salvarCustom(assignNodes(custom, nodeKeys, categoriaId));
+    const linhas = nodeKeys.map((k) => linhaPorChave.get(k)).filter((n): n is ModTreeNode => !!n);
+    salvarCustom(assignNodes(custom, linhas, categoriaId));
   }
+
+  // Grava os outros nomes de cada linha que já tem categoria (id do catálogo,
+  // GUID, pastas). É o que faz a categoria sobreviver a uma atualização, e
+  // também converte o que foi organizado antes desta versão.
+  useEffect(() => {
+    if (custom.categories.length === 0 || arvoreCompleta.length === 0) return;
+    const completo = withAliases(custom, arvoreCompleta);
+    if (completo !== custom) salvarCustom(completo);
+  }, [custom, arvoreCompleta]);
 
   // ---- Rolagem automática durante o arrasto ----
   // Enquanto um arrasto nativo está acontecendo, o Chromium (e portanto o
@@ -783,7 +831,7 @@ export default function App() {
   /** Chaves de linha da árvore das partes selecionadas (a seleção é por mod). */
   function chavesDeLinhaSelecionadas(): string[] {
     const out: string[] = [];
-    for (const node of buildModTree(mods, "all")) {
+    for (const node of arvoreCompleta) {
       if (node.parts.some((p) => selectedKeys.has(selectionKey(p)))) out.push(node.key);
     }
     return out;
@@ -1303,7 +1351,8 @@ export default function App() {
     hideInstalled = browseHideInstalled,
     // Vem por parâmetro porque quem troca o seletor precisa buscar com o valor
     // novo, e o estado do React só reflete isso no render seguinte.
-    sort = browseSort
+    sort = browseSort,
+    fikaOnly = browseFikaOnly
   ) {
     setBrowseLoading(true);
     setBrowseError(null);
@@ -1328,6 +1377,7 @@ export default function App() {
         // quem já tem muita coisa — a página 1 vem por downloads, justamente os
         // populares. Pedindo o máximo permitido, sobra lista depois de esconder.
         perPage: hideInstalled ? 50 : undefined,
+        fikaOnly: fikaOnly || undefined,
         page
       });
     } catch (err) {
@@ -1666,7 +1716,10 @@ export default function App() {
       modoEdicao
         ? {
             options: custom.categories,
-            currentOf: (nodeKey: string) => custom.assign[nodeKey] ?? UNCATEGORIZED,
+            currentOf: (nodeKey: string) => {
+              const linha = linhaPorChave.get(nodeKey);
+              return (linha && categoryOf(custom, linha)) || UNCATEGORIZED;
+            },
             onMove: (nodeKey: string, catId: string) => moverParaCategoria([nodeKey], catId)
           }
         : undefined,
@@ -2253,7 +2306,7 @@ export default function App() {
                             onClick={() => alternarCategoria(g.id)}
                             aria-expanded={!recolhida}
                           >
-                            <span className="category-chevron">{recolhida ? "▶" : "▼"}</span>
+                            <span className={`category-chevron ${recolhida ? "" : "open"}`}>▶</span>
                             {!editando && <span className="category-name">{nome}</span>}
                             {!editando && <span className="category-count">{t("categories.count", { count: g.nodes.length })}</span>}
                           </button>
@@ -2287,12 +2340,15 @@ export default function App() {
                             </div>
                           )}
                         </div>
-                        {!recolhida &&
-                          (g.nodes.length > 0 ? (
-                            <ModList nodes={g.nodes} numberOffset={inicio} {...listProps} />
-                          ) : (
-                            <p className="category-empty">{t("categories.empty")}</p>
-                          ))}
+                        {!recolhida && (
+                          <div className="category-body">
+                            {g.nodes.length > 0 ? (
+                              <ModList nodes={g.nodes} numberOffset={inicio} {...listProps} />
+                            ) : (
+                              <p className="category-empty">{t("categories.empty")}</p>
+                            )}
+                          </div>
+                        )}
                       </section>
                     );
                   });
@@ -2379,6 +2435,21 @@ export default function App() {
                     disabled={browseLoading}
                   />
                   {t("browse.hideInstalled")}
+                </label>
+                <label className="forge-browse-checkbox" title={t("browse.fikaOnlyTitle")}>
+                  <input
+                    type="checkbox"
+                    checked={browseFikaOnly}
+                    onChange={(e) => {
+                      setBrowseFikaOnly(e.target.checked);
+                      // Filtro do servidor, igual ao de compatibilidade: refaz na hora.
+                      if (browseResults.length > 0 || browseQuery.trim()) {
+                        runForgeSearch(1, undefined, undefined, undefined, e.target.checked);
+                      }
+                    }}
+                    disabled={browseLoading}
+                  />
+                  {t("browse.fikaOnly")}
                 </label>
               </div>
             </div>
@@ -2639,6 +2710,22 @@ export default function App() {
                       onClick={() => mudarTema(opcao)}
                     >
                       {t(opcao === "system" ? "settings.themeSystem" : opcao === "dark" ? "settings.themeDark" : "settings.themeLight")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="settings-row">
+                <span>{t("settings.animations")}</span>
+                <div className="segmented" role="radiogroup" aria-label={t("settings.animations")}>
+                  {([true, false] as const).map((ligadas) => (
+                    <button
+                      key={String(ligadas)}
+                      role="radio"
+                      aria-checked={animacoesLigadas === ligadas}
+                      className={animacoesLigadas === ligadas ? "on" : ""}
+                      onClick={() => mudarAnimacoes(ligadas)}
+                    >
+                      {t(ligadas ? "settings.on" : "settings.off")}
                     </button>
                   ))}
                 </div>
@@ -3005,7 +3092,7 @@ function ModList({
                 aria-expanded={expanded}
                 title={t(expanded ? "modlist.collapseParts" : "modlist.expandParts")}
               >
-                {expanded ? "▾" : "▸"}
+                <span className={`tree-toggle-icon ${expanded ? "open" : ""}`}>▸</span>
               </button>
             )}
             <div className="mod-info">

@@ -4303,6 +4303,8 @@ export async function searchForgeMods(params: {
   markVersion?: string;
   page?: number;
   perPage?: number;
+  /** Só mods marcados como compatíveis com o Fika (multiplayer). Filtro do servidor. */
+  fikaOnly?: boolean;
   /** Raiz da instância, pra marcar o que já está instalado. Sem ela, nada é marcado. */
   sptPath?: string;
   /** Raiz do servidor, quando a instalação é dividida. A marcação confere as
@@ -4313,15 +4315,19 @@ export async function searchForgeMods(params: {
   url.searchParams.set("include", "category,versions");
   // Só passa adiante o que está na lista fechada: o valor chega do renderer e
   // vai direto pro parâmetro da API.
-  if (params.sort && (FORGE_SORTS as readonly string[]).includes(params.sort)) {
-    url.searchParams.set("sort", params.sort);
-  }
-  url.searchParams.set("sort", params.sort || "-downloads");
+  // Só passa adiante o que está na lista fechada. Antes havia uma segunda linha
+  // logo abaixo que gravava params.sort de novo SEM conferir, desfazendo a
+  // checagem: qualquer texto vindo do renderer ia parar no parâmetro da API.
+  const ordem = params.sort && (FORGE_SORTS as readonly string[]).includes(params.sort) ? params.sort : "-downloads";
+  url.searchParams.set("sort", ordem);
   url.searchParams.set("page", String(params.page || 1));
   url.searchParams.set("per_page", String(params.perPage || 24));
   if (params.query) url.searchParams.set("query", params.query);
   if (params.categorySlug) url.searchParams.set("filter[category_slug]", params.categorySlug);
   if (params.sptVersionConstraint) url.searchParams.set("filter[spt_version]", params.sptVersionConstraint);
+  // Conferido na API: filter[fika_compatibility]=true devolve só os marcados
+  // (576 de 1979 em out/2026), então o filtro é do servidor e a paginação fica certa.
+  if (params.fikaOnly === true) url.searchParams.set("filter[fika_compatibility]", "true");
 
   const res = await forgeFetch(url.toString());
   const json: any = await lerJson(res, activeSource.label);
