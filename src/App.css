@@ -65,7 +65,8 @@
 /* Tema claro. Só troca as variáveis: todo o resto do CSS já lê delas, então um
    tema novo (todo preto, "Tarkov"...) é só mais um bloco destes. O âmbar
    escurece um pouco pra manter contraste sobre fundo branco. */
-:root[data-theme="light"] {
+:root[data-theme="light"],
+:root[data-theme="sand"] {
   color-scheme: light;
   --bg: #eef0f3;
   --bg-panel: #ffffff;
@@ -93,6 +94,21 @@
   --badge-bg: transparent;
   --overlay: rgba(238, 240, 243, 0.92);
   --overlay-soft: rgba(20, 22, 26, 0.45);
+}
+
+/* Areia: o claro com fundo quente, tipo filtro de luz azul (Night Shift).
+   Herda tudo do claro e só troca as superfícies e o texto. */
+:root[data-theme="sand"] {
+  --bg: #e9e2d6;
+  --bg-panel: #f8f4ec;
+  --bg-panel-raised: #efe8dc;
+  --border: #d6cbb8;
+  --border-soft: #e2d9c9;
+  --border-strong: #c2b49c;
+  --text: #2a241b;
+  --text-dim: #5f5446;
+  --text-faint: #8f8270;
+  --bulk-bar-bg: #f0dcc0;
 }
 
 * {

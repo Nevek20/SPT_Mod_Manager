@@ -355,7 +355,8 @@ const pt: Dict = {
   "browse.fikaOnlyTitle": "Mostra só mods que o autor marcou como compatíveis com o Fika (multiplayer)",
   "settings.animations": "Animações",
   "settings.on": "Ligadas",
-  "settings.off": "Desligadas"
+  "settings.off": "Desligadas",
+  "settings.themeSand": "Areia"
 };
 
 const en: Dict = {
@@ -670,7 +671,8 @@ const en: Dict = {
   "browse.fikaOnlyTitle": "Show only mods the author marked as compatible with Fika (multiplayer)",
   "settings.animations": "Animations",
   "settings.on": "On",
-  "settings.off": "Off"
+  "settings.off": "Off",
+  "settings.themeSand": "Sand"
 };
 
 /**
@@ -970,7 +972,8 @@ const zh: Dict = {
   "browse.fikaOnlyTitle": "只显示作者标记为兼容 Fika（多人联机）的模组",
   "settings.animations": "动画",
   "settings.on": "开",
-  "settings.off": "关"
+  "settings.off": "关",
+  "settings.themeSand": "沙色"
 };
 
 const ru: Dict = {
@@ -1260,7 +1263,8 @@ const ru: Dict = {
   "browse.fikaOnlyTitle": "Показывать только моды, которые автор отметил как совместимые с Fika (мультиплеер)",
   "settings.animations": "Анимации",
   "settings.on": "Вкл.",
-  "settings.off": "Выкл."
+  "settings.off": "Выкл.",
+  "settings.themeSand": "Песочная"
 };
 
 const fr: Dict = {
@@ -1550,7 +1554,8 @@ const fr: Dict = {
   "browse.fikaOnlyTitle": "Afficher seulement les mods que l'auteur a marqués compatibles avec Fika (multijoueur)",
   "settings.animations": "Animations",
   "settings.on": "Activées",
-  "settings.off": "Désactivées"
+  "settings.off": "Désactivées",
+  "settings.themeSand": "Sable"
 };
 
 const ja: Dict = {
@@ -1840,7 +1845,8 @@ const ja: Dict = {
   "browse.fikaOnlyTitle": "作者が Fika（マルチプレイ）対応とした Mod のみ表示",
   "settings.animations": "アニメーション",
   "settings.on": "オン",
-  "settings.off": "オフ"
+  "settings.off": "オフ",
+  "settings.themeSand": "サンド"
 };
 
 const de: Dict = {
@@ -2130,7 +2136,8 @@ const de: Dict = {
   "browse.fikaOnlyTitle": "Nur Mods zeigen, die der Autor als Fika-kompatibel (Mehrspieler) markiert hat",
   "settings.animations": "Animationen",
   "settings.on": "An",
-  "settings.off": "Aus"
+  "settings.off": "Aus",
+  "settings.themeSand": "Sand"
 };
 
 export const DICTIONARIES: Record<Lang, Dict> = { "pt-BR": pt, en, "zh-CN": zh, ru, fr, ja, de };

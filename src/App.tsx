@@ -64,13 +64,13 @@ const ehMapaDeBooleanos = (v: unknown): v is Record<string, boolean> =>
   !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((x) => typeof x === "boolean");
 const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
-type TemaEscolhido = "system" | "dark" | "light";
+type TemaEscolhido = "system" | "dark" | "light" | "sand";
 
 /** Lê a escolha salva; qualquer coisa estranha vira "system", o padrão. */
 function lerTemaSalvo(): TemaEscolhido {
   try {
     const salvo = localStorage.getItem(THEME_STORAGE_KEY);
-    if (salvo === "dark" || salvo === "light" || salvo === "system") return salvo;
+    if (salvo === "dark" || salvo === "light" || salvo === "sand" || salvo === "system") return salvo;
   } catch {
     // Sem acesso ao armazenamento: segue o sistema.
   }
@@ -2701,7 +2701,7 @@ export default function App() {
               <div className="settings-row">
                 <span>{t("settings.theme")}</span>
                 <div className="segmented" role="radiogroup" aria-label={t("settings.theme")}>
-                  {(["system", "dark", "light"] as const).map((opcao) => (
+                  {(["system", "dark", "light", "sand"] as const).map((opcao) => (
                     <button
                       key={opcao}
                       role="radio"
@@ -2709,7 +2709,15 @@ export default function App() {
                       className={tema === opcao ? "on" : ""}
                       onClick={() => mudarTema(opcao)}
                     >
-                      {t(opcao === "system" ? "settings.themeSystem" : opcao === "dark" ? "settings.themeDark" : "settings.themeLight")}
+                      {t(
+                        opcao === "system"
+                          ? "settings.themeSystem"
+                          : opcao === "dark"
+                            ? "settings.themeDark"
+                            : opcao === "light"
+                              ? "settings.themeLight"
+                              : "settings.themeSand"
+                      )}
                     </button>
                   ))}
                 </div>

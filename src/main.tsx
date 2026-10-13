@@ -7,7 +7,7 @@ import "./App.css";
 // usa Windows no claro ver um piscar do tema escuro a cada abertura.
 try {
   const salvo = localStorage.getItem("spt-mod-manager.theme");
-  const escolhido = salvo === "dark" || salvo === "light" ? salvo : "system";
+  const escolhido = salvo === "dark" || salvo === "light" || salvo === "sand" ? salvo : "system";
   document.documentElement.dataset.theme =
     escolhido === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : escolhido;
   const movimento = localStorage.getItem("spt-mod-manager.motion");
