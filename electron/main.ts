@@ -28,6 +28,7 @@ import {
   getForgeCategories,
   criarTarefaDeDownload,
   limparDownloadsInterrompidos,
+  configureInstaller,
   findForgeDownloadForName,
   fetchModDependencies,
   fetchModDependenciesBatch,
@@ -47,6 +48,7 @@ import {
 } from "./modManager";
 import { CACHE_DEFAULT_GB, CACHE_LIMIT_OPTIONS_GB, GB } from "./downloadCache";
 import { DownloadQueue, MAX_DOWNLOADS_OPTIONS } from "./downloadQueue";
+import { instalarSeparado, finalizarSeparado, instalandoAgora, esperarInstalacoes } from "./installRunner";
 import { InstanceConfig, ModInfo } from "./types";
 
 const store = new Store<InstanceConfig>({
@@ -124,8 +126,21 @@ const filaDownloads = new DownloadQueue(maxDownloads(), (snapshot) => {
   mainWindow?.webContents.send("download-queue", snapshot);
 });
 
+// A instalação roda num processo separado: a janela não trava com mod grande.
+configureInstaller(instalarSeparado);
+
 // Fechou com algo pausado ou baixando: o pedaço não fica jogado na pasta do SPT.
 app.on("will-quit", () => filaDownloads.shutdown());
+
+// Fechar no meio de uma instalação deixaria o mod pela metade. Antes isso não
+// acontecia porque a janela ficava travada até acabar; agora o app espera.
+let saindo = false;
+app.on("before-quit", (evento) => {
+  if (saindo || !instalandoAgora()) return;
+  evento.preventDefault();
+  saindo = true;
+  void esperarInstalacoes().then(() => app.quit());
+});
 {
   const sptInicial = store.get("sptPath");
   if (sptInicial) limparDownloadsInterrompidos(sptInicial);
@@ -646,7 +661,7 @@ ipcMain.handle("install-mod", async () => {
   if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelled." };
 
   // Mesmo cadeado da fila: nunca duas instalações gravando o registro ao mesmo tempo.
-  return filaDownloads.exclusive(() => installModFromArchive(sptPath, getServerRoot()!, result.filePaths[0]));
+  return filaDownloads.exclusive(() => instalarSeparado(sptPath, getServerRoot()!, result.filePaths[0]));
 });
 
 ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
@@ -658,13 +673,13 @@ ipcMain.handle("install-mod-from-path", async (_event, filePath: string) => {
     return { success: false, message: `File "${path.basename(filePath)}" isn't .zip, .7z, or .rar.` };
   }
 
-  return filaDownloads.exclusive(() => installModFromArchive(sptPath, getServerRoot()!, filePath));
+  return filaDownloads.exclusive(() => instalarSeparado(sptPath, getServerRoot()!, filePath));
 });
 
 ipcMain.handle("install-mod-confirm", (_event, tmpDir: string, archivePath: string) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
-  return filaDownloads.exclusive(() => finalizeUnrecognizedInstall(sptPath, getServerRoot()!, tmpDir, archivePath));
+  return filaDownloads.exclusive(() => finalizarSeparado(sptPath, getServerRoot()!, tmpDir, archivePath));
 });
 
 ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
@@ -676,19 +691,20 @@ ipcMain.handle("install-mod-abort", (_event, tmpDir: string) => {
 ipcMain.handle("toggle-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
-  return toggleMod(sptPath, getServerRoot()!, mod);
+  // Mesmo cadeado das instalações: as duas coisas gravam o registro.
+  return filaDownloads.exclusive(() => toggleMod(sptPath, getServerRoot()!, mod));
 });
 
 ipcMain.handle("uninstall-mod", (_event, mod: ModInfo) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
-  return uninstallMod(sptPath, getServerRoot()!, mod);
+  return filaDownloads.exclusive(() => uninstallMod(sptPath, getServerRoot()!, mod));
 });
 
 ipcMain.handle("rename-mod", (_event, modId: string, alias: string) => {
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
-  return setModAlias(sptPath, modId, alias);
+  return filaDownloads.exclusive(() => setModAlias(sptPath, modId, alias));
 });
 
 ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {

@@ -2223,7 +2223,9 @@ export default function App() {
       )}
 
       {(downloadQueue.length > 0 || filaBackend.length > 0) && (
-        <div className="download-queue-panel">
+        // Nas configurações a fila desce pra baixo do painel: ela só fica por cima
+        // das janelas porque é no Navegar que mais se baixa.
+        <div className={`download-queue-panel${configAberta ? " under-settings" : ""}`}>
           {lookupInProgress && (
             <div className="download-queue-item queue-summary-card">
               <div className="queue-item-name">

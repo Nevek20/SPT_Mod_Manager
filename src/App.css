@@ -2450,3 +2450,33 @@ button {
 .chain-cancel-backdrop {
   z-index: 1002;
 }
+
+.download-queue-panel.under-settings {
+  z-index: 999;
+}
+
+/* Campos do Navegar com o mesmo visual da barra de filtros (antes ficavam com
+   a cara padrão do sistema, destoando do resto, principalmente nos temas claros). */
+.forge-browse-modal select,
+.forge-browse-modal input[type="text"] {
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+}
+
+.forge-browse-modal input[type="text"]::placeholder {
+  color: var(--text-faint);
+}
+
+.forge-browse-modal select:hover:not(:disabled),
+.forge-browse-modal input[type="text"]:hover {
+  border-color: var(--border-strong);
+}
+
+.forge-browse-modal input[type="checkbox"] {
+  accent-color: var(--accent);
+}

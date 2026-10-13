@@ -941,8 +941,32 @@ function loadRegistry(sptPath: string): RegistryEntry[] {
   }
 }
 
+/**
+ * Grava inteiro ou não grava: escreve num temporário e troca de nome. A
+ * instalação roda num processo separado (pra janela não travar), e o processo
+ * principal pode ler o registro no meio: sem isto ele podia pegar o arquivo
+ * pela metade e achar que nenhum mod foi instalado pelo app.
+ */
+export function gravarJsonAtomico(target: string, dados: unknown) {
+  const texto = JSON.stringify(dados, null, 2);
+  const tmp = `${target}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, texto, "utf-8");
+    fs.renameSync(tmp, target);
+  } catch {
+    // Troca recusada (antivírus ou outro programa segurando o target no
+    // Windows): grava direto, como era antes, em vez de perder a gravação.
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // sem sobra pra limpar
+    }
+    fs.writeFileSync(target, texto, "utf-8");
+  }
+}
+
 function saveRegistry(sptPath: string, entries: RegistryEntry[]) {
-  fs.writeFileSync(getRegistryPath(sptPath), JSON.stringify(entries, null, 2), "utf-8");
+  gravarJsonAtomico(getRegistryPath(sptPath), entries);
 }
 
 function addToRegistry(sptPath: string, entry: RegistryEntry) {
@@ -981,7 +1005,7 @@ function loadAliases(sptPath: string): Record<string, string> {
 }
 
 function saveAliases(sptPath: string, aliases: Record<string, string>) {
-  fs.writeFileSync(getAliasesPath(sptPath), JSON.stringify(aliases, null, 2), "utf-8");
+  gravarJsonAtomico(getAliasesPath(sptPath), aliases);
 }
 
 export function setModAlias(sptPath: string, modId: string, alias: string): { success: boolean; message: string } {
@@ -1017,7 +1041,7 @@ function loadManifest(sptPath: string): Record<string, string[]> {
 }
 
 function saveManifest(sptPath: string, manifest: Record<string, string[]>) {
-  fs.writeFileSync(getManifestPath(sptPath), JSON.stringify(manifest, null, 2), "utf-8");
+  gravarJsonAtomico(getManifestPath(sptPath), manifest);
 }
 
 function addManifestEntry(sptPath: string, id: string, relativeFiles: string[]) {
@@ -3277,7 +3301,7 @@ function lerArquivoCategorias(root: string): ArquivoCategorias {
 }
 
 function gravarArquivoCategorias(root: string, dados: ArquivoCategorias): void {
-  fs.writeFileSync(path.join(root, CATEGORIES_FILE), JSON.stringify(dados, null, 2));
+  gravarJsonAtomico(path.join(root, CATEGORIES_FILE), dados);
 }
 
 function validaFonte(bruto: unknown): Record<string, Record<string, string>> {
@@ -3401,7 +3425,7 @@ export function forgetForgeMatch(root: string, folderName: string): void {
 
 export function saveForgeMatchCache(root: string, cache: Record<string, MatchCacheEntry>): void {
   try {
-    fs.writeFileSync(path.join(root, FORGE_MATCH_CACHE_FILE), JSON.stringify(cache, null, 2), "utf-8");
+    gravarJsonAtomico(path.join(root, FORGE_MATCH_CACHE_FILE), cache);
   } catch {
     // cache é otimização, não pode derrubar a checagem se falhar ao gravar
   }
@@ -4707,7 +4731,7 @@ export function criarTarefaDeDownload(
   async function install(): Promise<InstallResult & { fromCache?: boolean }> {
     try {
       if (!baixado || !arquivoFinal) return { success: false, message: "Failed to download/install from Forge: nothing was downloaded." };
-      const result = await installModFromArchive(clientRoot, serverRoot, arquivoFinal, suggestedName, forgeInfo);
+      const result = await instalador(clientRoot, serverRoot, arquivoFinal, suggestedName, forgeInfo);
       const instalou = result.success || !!result.needsConfirmation;
       if (cache && versao) {
         if (fromCache) {
@@ -4804,6 +4828,25 @@ export async function installForgeModVersion(
     };
   }
   return tarefa.install();
+}
+
+/* --------------------------------------------------------------------------
+ * Instalador: por padrão roda aqui mesmo (testes). No app, o main troca por um
+ * que roda num processo separado, pra extração e cópia de mod grande não
+ * travarem a janela.
+ * ------------------------------------------------------------------------ */
+export type InstaladorDeArquivo = (
+  clientRoot: string,
+  serverRoot: string,
+  archivePath: string,
+  preferredDisplayName?: string,
+  forgeInfo?: ForgeInstallInfo
+) => Promise<InstallResult>;
+
+let instalador: InstaladorDeArquivo = installModFromArchive;
+
+export function configureInstaller(fn: InstaladorDeArquivo | null) {
+  instalador = fn ?? installModFromArchive;
 }
 
 /* --------------------------------------------------------------------------
