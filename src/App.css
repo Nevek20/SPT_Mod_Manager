@@ -2133,3 +2133,25 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
 button {
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
+
+/* Nome do mod na checagem de atualização: abre a aba de versões da página. */
+.mod-page-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.mod-page-link:hover:not(:disabled) {
+  background: none;
+  color: var(--accent-strong);
+}
+
+.blocked-updates summary {
+  cursor: pointer;
+  margin: 8px 0;
+}

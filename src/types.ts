@@ -77,6 +77,8 @@ export interface ForgeUpdateItem {
   downloadLink?: string;
   guid?: string; // identificador da Forge, gravado ao atualizar pelo app
   reason?: string;
+  /** Id do mod na fonte, pra abrir a página dele direto na aba de versões. */
+  modId?: number;
 }
 
 export interface ForgeUpdateCheckResult {
@@ -217,7 +219,7 @@ export interface ModManagerAPI {
   fetchModCategories: (ids: number[]) => Promise<Record<string, string>>;
   getCustomCategories: () => Promise<CustomCategories>;
   saveCustomCategories: (custom: CustomCategories) => Promise<CustomCategories>;
-  openForgeModPage: (modId: number) => Promise<{ success: boolean; message?: string }>;
+  openForgeModPage: (modId: number, secao?: "versions") => Promise<{ success: boolean; message?: string }>;
   findForgeDownloadsForNames: (
     entries: { name: string; guid?: string; version?: string }[]
   ) => Promise<

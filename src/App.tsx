@@ -27,6 +27,7 @@ import {
   newCategoryId
 } from "./modCategories";
 import type { CustomCategories } from "./types";
+import { CompatFilter, sptConstraintFor, minorLabel } from "./browseFilters";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 const THEME_STORAGE_KEY = "spt-mod-manager.theme";
@@ -156,6 +157,24 @@ function ForgeThumb({ src }: { src?: string }) {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Nome de mod na lista da checagem de atualização. Com o id da fonte, vira link
+ * pra aba de versões da página do mod (pedido do inganshin): é ali que o autor
+ * avisa quando a versão nova pede instalação limpa.
+ */
+function NomeComPagina({ nome, modId, titulo }: { nome: string; modId?: number; titulo: string }) {
+  if (modId === undefined) return <>{nome}</>;
+  return (
+    <button
+      className="link-button mod-page-link"
+      title={titulo}
+      onClick={() => void window.modManagerAPI.openForgeModPage(modId, "versions")}
+    >
+      {nome}
+    </button>
   );
 }
 
@@ -407,7 +426,7 @@ export default function App() {
   const [modSources, setModSources] = useState<ModSourceInfo[]>([]);
   const [activeSourceKey, setActiveSourceKey] = useState("");
   const [browseCategories, setBrowseCategories] = useState<ForgeCategory[]>([]);
-  const [browseOnlyCompatible, setBrowseOnlyCompatible] = useState(false);
+  const [browseCompat, setBrowseCompat] = useState<CompatFilter>("all");
   const [browseHideInstalled, setBrowseHideInstalled] = useState(false);
   const [browseFikaOnly, setBrowseFikaOnly] = useState(false);
   const [browseResults, setBrowseResults] = useState<ForgeCatalogMod[]>([]);
@@ -1359,7 +1378,7 @@ export default function App() {
   // do estado e faria a busca com o filtro invertido.
   async function runForgeSearch(
     page: number,
-    onlyCompatible = browseOnlyCompatible,
+    compat: CompatFilter = browseCompat,
     hideInstalled = browseHideInstalled,
     // Vem por parâmetro porque quem troca o seletor precisa buscar com o valor
     // novo, e o estado do React só reflete isso no render seguinte.
@@ -1379,7 +1398,7 @@ export default function App() {
         query: browseQuery.trim() || undefined,
         categorySlug: browseCategory || undefined,
         sort,
-        sptVersionConstraint: onlyCompatible && sptVersionInput.trim() ? sptVersionInput.trim() : undefined,
+        sptVersionConstraint: sptConstraintFor(compat, sptVersionInput),
         // A versão vai SEMPRE pra marcação, mesmo com o filtro desligado: é o
         // que permite ver a lista inteira e ainda saber o que serve na sua
         // instância.
@@ -2119,7 +2138,8 @@ export default function App() {
                   </p>
                   {forgeResult.updates.map((u) => (
                     <p key={`update-${u.name}`}>
-                      {u.name}: {u.currentVersion} → <strong>{u.recommendedVersion}</strong>
+                      <NomeComPagina nome={u.name} modId={u.modId} titulo={t("forge.openVersions")} />: {u.currentVersion} →{" "}
+                      <strong>{u.recommendedVersion}</strong>
                       {/* Sai do bloqueio depois que os de cima atualizarem: a lista já está
                           na ordem de instalação, e a nota diz isso em voz alta. */}
                       {u.reason === "unblocked_after_update" && (
@@ -2149,20 +2169,28 @@ export default function App() {
                 </>
               )}
               {forgeResult.blocked.length > 0 && (
-                <>
-                  <p><strong>{t("forge.blockedTitle")}</strong></p>
+                // Recolhido por padrão (pedido do Crywolf642): o bloqueio é
+                // informação, não algo que a pessoa consiga resolver ali, e com a
+                // checagem em cadeia da 0.6.4 sobram poucos casos de verdade.
+                <details className="blocked-updates">
+                  <summary>
+                    <strong>{t("forge.blockedTitle")}</strong> ({forgeResult.blocked.length})
+                  </summary>
                   {forgeResult.blocked.map((b) => (
                     <p key={`blocked-${b.name}`}>
-                      {b.name}: {b.currentVersion} — {b.reason}
+                      <NomeComPagina nome={b.name} modId={b.modId} titulo={t("forge.openVersions")} />: {b.currentVersion}
+                      {b.recommendedVersion ? ` → ${b.recommendedVersion}` : ""}
                     </p>
                   ))}
-                </>
+                </details>
               )}
               {forgeResult.incompatible.length > 0 && (
                 <>
                   <p><strong>{t("forge.incompatibleTitle")}</strong></p>
                   {forgeResult.incompatible.map((i) => (
-                    <p key={`incompatible-${i.name}`}>{i.name} ({i.currentVersion})</p>
+                    <p key={`incompatible-${i.name}`}>
+                      <NomeComPagina nome={i.name} modId={i.modId} titulo={t("forge.openVersions")} /> ({i.currentVersion})
+                    </p>
                   ))}
                 </>
               )}
@@ -2416,22 +2444,25 @@ export default function App() {
                     <option key={c.slug} value={c.slug}>{c.title}</option>
                   ))}
                 </select>
-                <label className="forge-browse-checkbox" title={t("browse.compatibleOnlyTitle")}>
-                  <input
-                    type="checkbox"
-                    checked={browseOnlyCompatible}
-                    onChange={(e) => {
-                      setBrowseOnlyCompatible(e.target.checked);
-                      // Refaz a busca na hora. Este filtro é do servidor (muda a
-                      // consulta), então sem isto ele só valia no próximo clique em
-                      // Buscar — e ficava incoerente com o de esconder instalados,
-                      // que é local e responde na hora.
-                      if (browseResults.length > 0 || browseQuery.trim()) runForgeSearch(1, e.target.checked);
-                    }}
-                    disabled={!sptVersionInput.trim() || browseLoading}
-                  />
-                  {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
-                </label>
+                {/* Era um checkbox (exato ou nada). Virou seletor com o meio-termo
+                    da mesma linha (4.1.x), pedido da comunidade. */}
+                <select
+                  value={browseCompat}
+                  title={t("browse.compatibleOnlyTitle")}
+                  disabled={!sptVersionInput.trim() || browseLoading}
+                  onChange={(e) => {
+                    const modo = e.target.value as CompatFilter;
+                    setBrowseCompat(modo);
+                    // Filtro do servidor: refaz a busca na hora.
+                    if (browseResults.length > 0 || browseQuery.trim()) runForgeSearch(1, modo);
+                  }}
+                >
+                  <option value="all">{t("browse.compatAll")}</option>
+                  <option value="exact">
+                    {t("browse.compatibleOnlyLabel", { version: sptVersionInput.trim() || t("browse.selectVersionPlaceholder") })}
+                  </option>
+                  <option value="minor">{t("browse.compatMinor", { version: minorLabel(sptVersionInput) })}</option>
+                </select>
                 <label className="forge-browse-checkbox" title={t("browse.hideInstalledTitle")}>
                   <input
                     type="checkbox"
@@ -2441,7 +2472,7 @@ export default function App() {
                       // Refaz a busca porque o tamanho da página muda junto: sem
                       // isso, esconder numa página de 24 deixaria quase nada.
                       if (browseResults.length > 0 || browseQuery.trim()) {
-                        runForgeSearch(1, browseOnlyCompatible, e.target.checked);
+                        runForgeSearch(1, browseCompat, e.target.checked);
                       }
                     }}
                     disabled={browseLoading}

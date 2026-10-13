@@ -1755,7 +1755,7 @@ function performMerge(
       }
     } else if (!isProtectedInstancePath(entry.name)) {
       ensureDir(clientRoot);
-      fs.copyFileSync(srcPath, destPath);
+      _copiarArquivo(srcPath, destPath);
     } else {
       skippedCoreFiles.push(entry.name);
     }
@@ -2338,6 +2338,38 @@ export function uninstallMod(
 }
 
 // --- Helpers de sistema de arquivos ---
+
+/**
+ * Copia um arquivo por cima de outro, tratando o EPERM do Windows.
+ *
+ * Relato do mistafreez2023 (0.6.4): "EPERM: operation not permitted, copyfile"
+ * num .json de config dentro de BepInEx/plugins. No Windows isso tem duas causas
+ * comuns: o arquivo de destino está marcado como SOMENTE LEITURA (alguns mods
+ * vêm assim, e o copyFile se recusa a sobrescrever), ou ele está ABERTO pelo jogo
+ * ou pelo servidor. A primeira dá pra resolver sozinho: tira o somente leitura e
+ * tenta de novo. A segunda não, então a mensagem diz o que fazer em vez de
+ * mostrar o código cru do sistema.
+ */
+export function _copiarArquivo(src: string, dest: string): void {
+  try {
+    fs.copyFileSync(src, dest);
+    return;
+  } catch (err: any) {
+    const codigo = err?.code;
+    if (codigo !== "EPERM" && codigo !== "EACCES" && codigo !== "EBUSY") throw err;
+    try {
+      if (fs.existsSync(dest)) fs.chmodSync(dest, 0o666); // tira o somente leitura
+      fs.copyFileSync(src, dest);
+      return;
+    } catch {
+      throw new Error(
+        `Couldn't overwrite "${path.basename(dest)}": the file is read-only or in use. ` +
+          `Close the game and the SPT server, then try again. (${codigo})`
+      );
+    }
+  }
+}
+
 function copyRecursive(src: string, dest: string) {
   ensureDir(dest);
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -2346,7 +2378,7 @@ function copyRecursive(src: string, dest: string) {
     if (entry.isDirectory()) {
       copyRecursive(srcPath, destPath);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      _copiarArquivo(srcPath, destPath);
     }
   }
 }
@@ -2370,7 +2402,7 @@ function copyRecursiveProtected(src: string, dest: string, relPrefix = "", skipp
     if (entry.isDirectory()) {
       copyRecursiveProtected(srcPath, destPath, rel, skipped);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      _copiarArquivo(srcPath, destPath);
     }
   }
   return skipped;
@@ -2514,6 +2546,8 @@ export interface ForgeUpdateItem {
   downloadLink?: string;
   guid?: string; // identificador da Forge, gravado ao atualizar pelo app
   reason?: string;
+  /** Id do mod na fonte, pra abrir a página dele direto na aba de versões. */
+  modId?: number;
 }
 
 export interface ForgeUpdateCheckResult {
@@ -3712,6 +3746,11 @@ export interface ModDependencyInfo {
  *
  * Só resolve o endereço; quem abre é o main, que tem a allowlist.
  */
+function numeroOuNada(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
 export async function resolveForgeModPageUrl(modId: number): Promise<string | null> {
   try {
     const url = new URL(`${activeSource.apiBase}/mods`);
@@ -4068,7 +4107,8 @@ export async function checkForgeUpdates(
       // Identificador da Forge, pra que atualizar pelo app grave o mesmo GUID e as
       // próximas checagens desse mod não voltem a depender de casamento por nome.
       guid: u.current_version?.guid,
-      reason: encadeada ? "unblocked_after_update" : u.update_reason
+      reason: encadeada ? "unblocked_after_update" : u.update_reason,
+      modId: numeroOuNada(u.current_version?.mod_id)
     };
   };
 
@@ -4118,7 +4158,8 @@ export async function checkForgeUpdates(
       name: nameFor(b.current_version?.guid, b.current_version?.name),
       currentVersion: b.current_version?.version,
       recommendedVersion: b.latest_version?.version,
-      reason: b.block_reason
+      reason: b.block_reason,
+      modId: numeroOuNada(b.current_version?.mod_id)
     })),
     upToDate: (primeiro.up_to_date || []).map((u: any) => ({
       name: nameFor(u.guid, u.name),
@@ -4128,7 +4169,8 @@ export async function checkForgeUpdates(
     incompatible: (primeiro.incompatible_with_spt || []).map((i: any) => ({
       name: nameFor(i.guid, i.name),
       currentVersion: i.version,
-      reason: i.reason
+      reason: i.reason,
+      modId: numeroOuNada(i.mod_id)
     })),
     infoOnly,
     unmatched,

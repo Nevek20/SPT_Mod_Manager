@@ -43,7 +43,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   fetchModCategories: (ids: number[]) => ipcRenderer.invoke("fetch-mod-categories", ids),
   getCustomCategories: () => ipcRenderer.invoke("get-custom-categories"),
   saveCustomCategories: (custom: unknown) => ipcRenderer.invoke("save-custom-categories", custom),
-  openForgeModPage: (modId: number) => ipcRenderer.invoke("open-forge-mod-page", modId),
+  openForgeModPage: (modId: number, secao?: "versions") => ipcRenderer.invoke("open-forge-mod-page", modId, secao),
   findForgeDownloadsForNames: (entries: { name: string; guid?: string }[]) =>
     ipcRenderer.invoke("find-forge-downloads-for-names", entries),
   findForgeDownloadForName: (name: string, sptVersion?: string) =>

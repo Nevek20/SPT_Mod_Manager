@@ -366,8 +366,10 @@ ipcMain.handle("get-forge-categories", () => getForgeCategories());
  * Abre a página de um mod instalado na fonte. O endereço é resolvido pela API
  * na hora, porque a URL precisa do slug e o registro só guarda o id.
  */
-ipcMain.handle("open-forge-mod-page", async (_event, modId: number) => {
-  const destino = await resolveForgeModPageUrl(modId);
+ipcMain.handle("open-forge-mod-page", async (_event, modId: number, secao?: unknown) => {
+  const base = await resolveForgeModPageUrl(modId);
+  // Só a aba de versões é aceita como seção: o valor vem do renderer.
+  const destino = base && secao === "versions" ? `${base}#versions` : base;
   if (!destino) return { success: false, message: "Couldn't find this mod's page on the source." };
   // Mesma allowlist do resto: só abre o que pertence à fonte ativa.
   if (!destino.startsWith(getModSource().siteUrl)) return { success: false, message: "Address is outside the active source." };
