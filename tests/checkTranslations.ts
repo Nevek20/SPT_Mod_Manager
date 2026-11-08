@@ -29,7 +29,9 @@ if (!fs.existsSync(alvo)) {
   process.exit(1);
 }
 
-const fonte = fs.readFileSync(alvo, "utf-8");
+// CRLF vira LF: com core.autocrlf (padrão do Git no Windows) o arquivo chega
+// com \r\n, e a leitura linha a linha não reconhecia nenhuma chave.
+const fonte = fs.readFileSync(alvo, "utf-8").replace(/\r\n/g, "\n");
 
 /** Extrai os dicionários lendo o arquivo como texto. */
 function extrairDicionarios(texto: string): Map<string, Map<string, string>> {

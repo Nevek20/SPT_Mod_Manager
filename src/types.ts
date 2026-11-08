@@ -44,6 +44,29 @@ export interface ModInfo {
   /** Página deste mod na fonte ativa, quando o app conhece o id dele lá. */
   /** Id deste mod na fonte ativa, quando o app o conhece. Abre a página dele. */
   forgeModId?: number;
+  /** Vínculo com a página do catálogo escolhido à mão. */
+  forgeLinkManual?: boolean;
+  /** Versão informada à mão no vínculo. */
+  versionManual?: boolean;
+}
+
+/** Perfil de mods, como a lista do seletor mostra. */
+export interface ModProfileSummary {
+  id: string;
+  name: string;
+  updatedAt: string;
+  modCount: number;
+  enabledCount: number;
+}
+
+export interface ProfileSwitchResult {
+  success: boolean;
+  message: string;
+  /** Mods do perfil que não estão no disco; prontos pra procurar no catálogo. */
+  missing: { name: string; guid?: string; version?: string; id?: number }[];
+  /** Desativados por não fazerem parte do perfil. */
+  disabled: string[];
+  failed: string[];
 }
 
 /** Categorias que o usuário criou, e em qual delas está cada linha da lista. */
@@ -79,6 +102,8 @@ export interface ForgeUpdateItem {
   reason?: string;
   /** Id do mod na fonte, pra abrir a página dele direto na aba de versões. */
   modId?: number;
+  /** Só em atualização bloqueada: quem trava e o que aceita. */
+  blockingMods?: { name: string; modId?: number; version?: string; constraint?: string }[];
 }
 
 export interface DownloadQueueJob {
@@ -138,6 +163,8 @@ export interface ForgeStatusCacheEntry {
   name: string;
   status: "update" | "blocked" | "incompatible" | "info";
   version?: string;
+  /** Só em "blocked": quem trava, pronto pra mostrar no hover do selo. */
+  blockedBy?: string;
 }
 
 export interface ForgeCatalogVersion {
@@ -215,15 +242,19 @@ export interface ModManagerAPI {
   uninstallMod: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
   renameMod: (modId: string, alias: string) => Promise<{ success: boolean; message: string }>;
   openModFolder: (mod: ModInfo) => Promise<{ success: boolean; message: string }>;
-  exportModList: () => Promise<{ success: boolean; message: string }>;
-  importModList: () => Promise<{
+  listProfiles: () => Promise<{ active: string; profiles: ModProfileSummary[] }>;
+  createProfile: (nome: string) => Promise<{ success: boolean; message: string; id?: string }>;
+  renameProfile: (id: string, nome: string) => Promise<{ success: boolean; message: string }>;
+  deleteProfile: (id: string) => Promise<{ success: boolean; message: string }>;
+  switchProfile: (id: string) => Promise<ProfileSwitchResult>;
+  exportProfile: () => Promise<{ success: boolean; message: string }>;
+  importProfile: () => Promise<{
     success: boolean;
     message: string;
-    comparison?: ModListComparison;
-    guidByName?: Record<string, string>;
-    /** Versão de cada mod na lista exportada, pra restaurar a instalação que a
-     *  pessoa tinha em vez de puxar sempre a mais recente. */
-    versionByName?: Record<string, string>;
+    id?: string;
+    name?: string;
+    modCount?: number;
+    missingCount?: number;
   }>;
   getSptVersion: () => Promise<string | undefined>;
   detectConflicts: () => Promise<ConflictReport>;
@@ -266,7 +297,7 @@ export interface ModManagerAPI {
     targetVersion?: string
   ) => Promise<{ success: boolean; result?: ModChangelog; message?: string }>;
   findForgeDownloadsForNames: (
-    entries: { name: string; guid?: string; version?: string }[]
+    entries: { name: string; guid?: string; version?: string; id?: number }[]
   ) => Promise<
     Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string; author?: string; modId?: number }>
   >;
@@ -290,6 +321,16 @@ export interface ModManagerAPI {
   controlDownload: (action: "pause" | "resume" | "cancel" | "up" | "down", jobId: string) => Promise<boolean>;
   /** Cancela o que está esperando (na fila ou pausado). Devolve quantos. */
   cancelWaitingDownloads: () => Promise<number>;
+  /** Quais executáveis existem nesta instância. */
+  getLaunchTargets: () => Promise<{ server: boolean; launcher: boolean }>;
+  launchSpt: (alvo: "server" | "launcher") => Promise<{ success: boolean; message: string }>;
+  /** Vincula o mod (pelo nome original da pasta) a uma página do catálogo; versão opcional. */
+  setManualForgeMatch: (folderName: string, referencia: string, versao?: string) => Promise<{ success: boolean; message: string; modName?: string }>;
+  clearManualForgeMatch: (folderName: string) => Promise<{ success: boolean }>;
+  /** id do catálogo -> compatível com Fika (null = a página não informa / não existe). */
+  fetchModFika: (ids: number[]) => Promise<Record<string, boolean | null>>;
+  /** Link de download de uma versão específica (pra forçar uma atualização bloqueada). */
+  resolveVersionLink: (modId: number, versao: string) => Promise<string | null>;
   getMaxDownloads: () => Promise<number>;
   setMaxDownloads: (n: number) => Promise<number>;
   getDownloadCacheInfo: () => Promise<DownloadCacheInfo>;

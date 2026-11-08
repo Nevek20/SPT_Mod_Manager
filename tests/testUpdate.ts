@@ -14,6 +14,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { reconciliarComAnterior } from "../electron/modManager";
+import { metaFile } from "./metaFile";
 
 let ok = 0;
 let fail = 0;
@@ -38,7 +39,7 @@ function monta(pastas: { id: string; type: "server" | "client"; enabled: boolean
     const dir = DIRS[p.type][String(p.enabled) as "true" | "false"];
     fs.mkdirSync(path.join(raiz, ...dir, p.id), { recursive: true });
   }
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-registry.json"), "[]");
+  fs.writeFileSync(metaFile(raiz, "registry"), "[]");
   return raiz;
 }
 const existe = (raiz: string, id: string, type: "server" | "client", enabled: boolean) =>

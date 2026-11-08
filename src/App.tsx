@@ -28,14 +28,26 @@ import {
   newCategoryId,
   forgeIdOf
 } from "./modCategories";
-import type { CustomCategories } from "./types";
+import type { CustomCategories, ModProfileSummary, ProfileSwitchResult } from "./types";
 import { CompatFilter, sptConstraintFor, minorLabel } from "./browseFilters";
+import {
+  TEMAS,
+  AMOSTRAS,
+  ACCENT_PRESETS,
+  ehTema,
+  hexValido,
+  temaEfetivo,
+  coresDeDestaque,
+  type TemaEscolhido
+} from "./theme";
 import { parseChangelogHtml, changelogHasText, type ChangelogNode } from "./changelog";
 import type { ModChangelog, DownloadCacheInfo, DownloadQueueJob } from "./types";
 import { DOWNLOAD_CACHE_OPTIONS_GB, MAX_DOWNLOADS_OPTIONS } from "./types";
 
 const LANG_STORAGE_KEY = "spt-mod-manager.lang";
 const THEME_STORAGE_KEY = "spt-mod-manager.theme";
+const ACCENT_STORAGE_KEY = "spt-mod-manager.accent";
+const CVD_STORAGE_KEY = "spt-mod-manager.colorblind";
 const MOTION_STORAGE_KEY = "spt-mod-manager.motion";
 const WELCOMED_STORAGE_KEY = "spt-mod-manager.welcomed";
 const GROUP_STORAGE_KEY = "spt-mod-manager.groupBy";
@@ -70,18 +82,52 @@ const ehMapaDeBooleanos = (v: unknown): v is Record<string, boolean> =>
   !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((x) => typeof x === "boolean");
 const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
-type TemaEscolhido = "system" | "dark" | "light" | "sand";
-
 /** Lê a escolha salva; qualquer coisa estranha vira "system", o padrão. */
 function lerTemaSalvo(): TemaEscolhido {
   try {
     const salvo = localStorage.getItem(THEME_STORAGE_KEY);
-    if (salvo === "dark" || salvo === "light" || salvo === "sand" || salvo === "system") return salvo;
+    if (ehTema(salvo)) return salvo;
   } catch {
     // Sem acesso ao armazenamento: segue o sistema.
   }
   return "system";
 }
+
+/** Cor de destaque escolhida (#rrggbb) ou null = a do tema. */
+function lerDestaqueSalvo(): string | null {
+  try {
+    return hexValido(localStorage.getItem(ACCENT_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function lerDaltonicoSalvo(): boolean {
+  try {
+    return localStorage.getItem(CVD_STORAGE_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function gravarPreferencia(chave: string, valor: string | null) {
+  try {
+    if (valor === null) localStorage.removeItem(chave);
+    else localStorage.setItem(chave, valor);
+  } catch {
+    // Sem armazenamento: vale só pra esta sessão.
+  }
+}
+
+const NOMES_TEMA: Record<TemaEscolhido, string> = {
+  system: "settings.themeSystem",
+  dark: "settings.themeDark",
+  light: "settings.themeLight",
+  sand: "settings.themeSand",
+  black: "settings.themeBlack",
+  olive: "settings.themeOlive",
+  contrast: "settings.themeContrast"
+};
 
 interface Toast {
   id: number;
@@ -101,6 +147,8 @@ function relatavel(raw?: string): raw is string {
 type TypeFilter = "all" | ModType;
 type StatusFilter = "all" | "enabled" | "disabled";
 type OriginFilter = "all" | "manual" | "manager";
+type FikaFilter = "all" | "compatible" | "incompatible";
+type ForgeStatusInfo = Omit<ForgeStatusCacheEntry, "name">;
 type SortField = "name" | "status" | "origin" | "installedAt" | "forge";
 type SortDirection = "asc" | "desc";
 
@@ -503,24 +551,50 @@ export default function App() {
   // Tema: "system" segue o Windows e muda junto se a pessoa trocar o tema do PC
   // com o app aberto. O CSS só troca variáveis pelo atributo data-theme.
   const [tema, setTema] = useState<TemaEscolhido>(lerTemaSalvo);
+  // Cor de destaque própria (null = a do tema) e modo daltônico, que vale pra
+  // qualquer tema: quem tem daltonismo não precisa abrir mão do tema preferido.
+  const [destaque, setDestaque] = useState<string | null>(lerDestaqueSalvo);
+  const [daltonico, setDaltonico] = useState<boolean>(lerDaltonicoSalvo);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const raiz = document.documentElement;
     const aplica = () => {
-      const efetivo = tema === "system" ? (media.matches ? "dark" : "light") : tema;
-      document.documentElement.dataset.theme = efetivo;
+      const efetivo = temaEfetivo(tema, media.matches);
+      raiz.dataset.theme = efetivo;
+      if (daltonico) raiz.dataset.cvd = "on";
+      else delete raiz.dataset.cvd;
+      // A cor escolhida é ajustada ao tema (ver coresDeDestaque): o mesmo
+      // amarelo fica mais escuro no tema Claro pra continuar legível.
+      if (destaque) {
+        const cores = coresDeDestaque(destaque, efetivo);
+        raiz.dataset.accent = "custom";
+        raiz.style.setProperty("--accent", cores.accent);
+        raiz.style.setProperty("--accent-strong", cores.accentStrong);
+        raiz.style.setProperty("--on-accent", cores.onAccent);
+      } else {
+        delete raiz.dataset.accent;
+        raiz.style.removeProperty("--accent");
+        raiz.style.removeProperty("--accent-strong");
+        raiz.style.removeProperty("--on-accent");
+      }
     };
     aplica();
     if (tema !== "system") return;
     media.addEventListener("change", aplica);
     return () => media.removeEventListener("change", aplica);
-  }, [tema]);
+  }, [tema, destaque, daltonico]);
   function mudarTema(proximo: TemaEscolhido) {
     setTema(proximo);
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, proximo);
-    } catch {
-      // Sem armazenamento: vale só pra esta sessão.
-    }
+    gravarPreferencia(THEME_STORAGE_KEY, proximo);
+  }
+  function mudarDestaque(cor: string | null) {
+    const valida = cor === null ? null : hexValido(cor);
+    setDestaque(valida);
+    gravarPreferencia(ACCENT_STORAGE_KEY, valida);
+  }
+  function mudarDaltonico(ligado: boolean) {
+    setDaltonico(ligado);
+    gravarPreferencia(CVD_STORAGE_KEY, ligado ? "on" : null);
   }
 
   // Animações: "on"/"off" só quando a pessoa escolheu. Sem escolha, segue o
@@ -634,6 +708,20 @@ export default function App() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [originFilter, setOriginFilter] = useState<OriginFilter>("all");
+  // Filtro de Fika na lista de INSTALADOS (pedido do FlachkopfLarry). A marcação
+  // vem do catálogo, então só vale pra mod que o app sabe qual é lá (forgeModId).
+  const [fikaFilter, setFikaFilter] = useState<FikaFilter>("all");
+  const [fikaById, setFikaById] = useState<Record<string, boolean | null>>({});
+  const [fikaLoading, setFikaLoading] = useState(false);
+  const [launchTargets, setLaunchTargets] = useState<{ server: boolean; launcher: boolean }>({ server: false, launcher: false });
+  const [refreshing, setRefreshing] = useState(false);
+  // "Vincular à página do mod" (pedido do raydenx).
+  const [perfis, setPerfis] = useState<{ active: string; profiles: ModProfileSummary[] } | null>(null);
+  // Caixa de texto genérica (nome de perfil novo, renomear perfil).
+  const [pedido, setPedido] = useState<{ titulo: string; dica: string; valor: string; responder: (v: string | null) => void } | null>(null);
+  const pedirTexto = (titulo: string, dica: string, valor: string) =>
+    new Promise<string | null>((resolve) => setPedido({ titulo, dica, valor, responder: resolve }));
+  const [linkDialog, setLinkDialog] = useState<{ parts: ModInfo[]; name: string; ref: string; version: string; saving: boolean } | null>(null);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
@@ -652,7 +740,7 @@ export default function App() {
   const [checkingForgeUpdates, setCheckingForgeUpdates] = useState(false);
   const [forgeError, setForgeError] = useState<string | null>(null);
   const [forgeStatusByName, setForgeStatusByName] = useState<
-    Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>
+    Map<string, ForgeStatusInfo>
   >(new Map());
   const [forgeSptVersions, setForgeSptVersions] = useState<ForgeSptVersion[]>([]);
   const [forgeCheckedAt, setForgeCheckedAt] = useState<string | null>(null);
@@ -911,6 +999,12 @@ export default function App() {
       if (statusFilter === "disabled" && m.enabled) return false;
       if (originFilter === "manual" && !m.installedManually) return false;
       if (originFilter === "manager" && m.installedManually) return false;
+      if (fikaFilter !== "all") {
+        if (m.forgeModId === undefined) return false;
+        const fika = fikaById[String(m.forgeModId)];
+        if (fikaFilter === "compatible" && fika !== true) return false;
+        if (fikaFilter === "incompatible" && fika !== false) return false;
+      }
       return true;
     });
 
@@ -960,7 +1054,37 @@ export default function App() {
     });
 
     return sorted;
-  }, [mods, searchQuery, statusFilter, originFilter, sortField, sortDirection, forgeStatusByName]);
+  }, [mods, searchQuery, statusFilter, originFilter, fikaFilter, fikaById, sortField, sortDirection, forgeStatusByName]);
+
+  // Busca a marcação de Fika só quando o filtro é usado, e só dos ids que ainda
+  // não tem: é uma consulta em lote por 50 mods, sem custo enquanto ninguém filtra.
+  const fikaIdsFaltando = useMemo(() => {
+    if (fikaFilter === "all") return [];
+    const ids = new Set<number>();
+    for (const m of mods) if (m.forgeModId !== undefined && !(String(m.forgeModId) in fikaById)) ids.add(m.forgeModId);
+    return [...ids];
+  }, [fikaFilter, mods, fikaById]);
+  useEffect(() => {
+    if (fikaIdsFaltando.length === 0) return;
+    let vivo = true;
+    setFikaLoading(true);
+    window.modManagerAPI
+      .fetchModFika(fikaIdsFaltando)
+      .then((r) => {
+        if (!vivo) return;
+        // Quem não veio na resposta (rede caiu) vira null pra não pedir em loop.
+        const completo: Record<string, boolean | null> = {};
+        for (const id of fikaIdsFaltando) completo[String(id)] = r[String(id)] ?? null;
+        setFikaById((prev) => ({ ...prev, ...completo }));
+      })
+      .finally(() => {
+        if (vivo) setFikaLoading(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [fikaIdsFaltando]);
+  const semIdNoCatalogo = useMemo(() => mods.filter((m) => m.forgeModId === undefined).length, [mods]);
 
   const modTree = useMemo(() => buildModTree(filteredMods, typeFilter), [filteredMods, typeFilter]);
 
@@ -1254,6 +1378,7 @@ export default function App() {
     setTypeFilter("all");
     setStatusFilter("all");
     setOriginFilter("all");
+    setFikaFilter("all");
   }
 
   useEffect(() => {
@@ -1273,6 +1398,8 @@ export default function App() {
       setIsSplitInstance(instance?.split ?? false);
       if (instance?.path) {
         refreshMods();
+        window.modManagerAPI.getLaunchTargets().then(setLaunchTargets);
+        window.modManagerAPI.listProfiles().then(setPerfis);
         setSptVersion(await window.modManagerAPI.getSptVersion());
         // A escolha do usuário vem PRIMEIRO. A detecção é palpite bom, mas quem
         // roda 4.0.13 de propósito (mais mods disponíveis) precisa que a escolha
@@ -1292,7 +1419,7 @@ export default function App() {
 
         const cache = await window.modManagerAPI.getForgeCache();
         if (cache.statusCache) {
-          const restored = new Map(cache.statusCache.map((entry) => [entry.name, { status: entry.status, version: entry.version }]));
+          const restored = new Map(cache.statusCache.map((entry) => [entry.name, { status: entry.status, version: entry.version, blockedBy: entry.blockedBy }]));
           setForgeStatusByName(restored);
         }
         setForgeCheckedAt(cache.checkedAt);
@@ -1328,6 +1455,9 @@ export default function App() {
       setIsSplitInstance(result.split ?? false);
       pushToast(tMsg(result.message) || t("toast.instanceConfigured"), true);
       refreshMods();
+      // Perfis e executáveis são da instância: os da anterior não valem aqui.
+      void carregarPerfis();
+      window.modManagerAPI.getLaunchTargets().then(setLaunchTargets);
       setSptVersion(await window.modManagerAPI.getSptVersion());
       // Instância NOVA: a escolha manual salva era da anterior, então é descartada
       // aqui. Se ficasse guardada, o próximo boot a ressuscitaria por cima da
@@ -1522,7 +1652,7 @@ export default function App() {
   }
 
   async function handleExportList() {
-    const result = await window.modManagerAPI.exportModList();
+    const result = await window.modManagerAPI.exportProfile();
     pushToast(tMsg(result.message), result.success, result.message);
   }
 
@@ -1536,112 +1666,219 @@ export default function App() {
     });
   }
 
-  async function handleImportList() {
-    const result = await window.modManagerAPI.importModList();
-    pushToast(tMsg(result.message), result.success, result.message);
-    if (!result.success || !result.comparison) return;
-    setCompareResult(result.comparison);
-
-    const { missing, extra } = result.comparison;
-
-    if (missing.length > 0) {
-      const wantsDownload = await confirmar(t("restore.confirmDownload", { count: missing.length }));
-      if (wantsDownload) {
-        const previousKeys = new Set(mods.map(selectionKey));
-
-        // A lista exportada guarda o nome da pasta, e nomes podem repetir entre um mod
-        // de servidor e um de cliente (ex: "Wedge" nos dois lados). Sem remover as
-        // repetições, o mesmo mod era baixado duas vezes.
-        const targets = [...new Set(missing)];
-
-        // Fase 1: uma busca em lote pra todos, com um cartão de resumo só. Encher a fila
-        // com um item por mod parecia informativo, mas com 118 mods empurrava justamente
-        // a linha de progresso pra fora da área visível do painel.
-        setLookupInProgress(true);
-        const guidByName = result.guidByName ?? {};
-        const versionByName = result.versionByName ?? {};
-        const found = await window.modManagerAPI.findForgeDownloadsForNames(
-          targets.map((name) => ({ name, guid: guidByName[name], version: versionByName[name] }))
-        );
-        setLookupInProgress(false);
-        setForgeProgress(null);
-
-        // Fase 2: tudo entra na fila de uma vez (a pessoa vê o que vem e pode
-        // cancelar ou reordenar o download), mas cada um só INSTALA depois do
-        // anterior: a ordem da lista continua sendo a ordem de instalação.
-        const installable = targets.filter((name) => found[name]);
-        const notFound = targets.filter((name) => !found[name]);
-        let installedCount = 0;
-        const failed: string[] = [];
-
-        const idsImport = installable.map(() => novoJobId());
-        const promessasImport = installable.map((name, i) => {
-          const lookup = found[name]!;
-          return installArchiveWithConfirmFlow(
-            window.modManagerAPI.installForgeMod(
-              idsImport[i],
-              lookup.downloadLink,
-              lookup.forgeName ?? name,
-              {
-                // Os mesmos campos que a instalação pelo catálogo grava. Faltavam
-                // author e id aqui, então mod restaurado por lista aparecia sem
-                // autor e sem vínculo por id: só o nome da pasta na interface.
-                id: lookup.modId,
-                name: lookup.forgeName,
-                author: lookup.author,
-                version: lookup.version,
-                // Grava o identificador da Forge: a partir daqui esse mod é reconhecido
-                // por ID exato, sem depender de casamento por nome.
-                guid: lookup.guid
-              },
-              i > 0 ? [idsImport[i - 1]] : []
-            )
-          );
-        });
-        for (let i = 0; i < installable.length; i++) {
-          const name = installable[i];
-          setInstallProgress({ done: i + 1, total: installable.length });
-          const installResult = await promessasImport[i];
-          registrarFimDownload(idsImport[i], found[name]!.forgeName ?? name, installResult);
-          if (installResult.success) installedCount++;
-          else if (!installResult.cancelled) failed.push(name);
-        }
-        setInstallProgress(null);
-
-        const problems = [...notFound, ...failed];
-        pushToast(
-          problems.length === 0
-            ? t("restore.allInstalled", { count: installedCount })
-            : t("restore.partialInstalled", {
-                installed: installedCount,
-                // Numa lista grande, despejar 100+ nomes num toast não ajuda ninguém.
-                notFound:
-                  problems.slice(0, 5).join(", ") +
-                  (problems.length > 5 ? t("restore.andMore", { count: problems.length - 5 }) : "")
-              }),
-          problems.length === 0
-        );
-        if (installedCount > 0) {
-          const updated = await refreshMods();
-          checkForgeForNewMods(previousKeys, updated);
-        }
-      }
-    }
-
-    if (extra.length > 0) {
-      const wantsDisable = await confirmar(t("restore.confirmDisable", { count: extra.length }));
-      if (wantsDisable) {
-        const targets = mods.filter((m) => extra.includes(m.originalName) && m.enabled);
-        let disabledCount = 0;
-        for (const mod of targets) {
-          const toggleResult = await window.modManagerAPI.toggleMod(mod);
-          if (toggleResult.success) disabledCount++;
-        }
-        pushToast(t("restore.disabledCount", { count: disabledCount }), true);
-        if (disabledCount > 0) refreshMods();
-      }
+  /**
+   * Relê a pasta do SPT. Pedido do Aellitus: com o app aberto por horas, mod
+   * colocado na pasta por fora só aparecia fechando e abrindo de novo.
+   */
+  async function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const lista = await refreshMods();
+      setLaunchTargets(await window.modManagerAPI.getLaunchTargets());
+      await carregarPerfis();
+      pushToast(t("toast.listRefreshed", { count: lista.length }), true);
+    } finally {
+      setRefreshing(false);
     }
   }
+
+  // F5 relê a lista, como em qualquer gerenciador de arquivos.
+  const refreshRef = useRef<() => void>(() => {});
+  refreshRef.current = () => {
+    if (sptPath) void handleRefresh();
+  };
+  useEffect(() => {
+    function aoTeclar(e: KeyboardEvent) {
+      if (e.key !== "F5") return;
+      e.preventDefault();
+      refreshRef.current();
+    }
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, []);
+
+  async function handleLaunch(alvo: "server" | "launcher") {
+    const r = await window.modManagerAPI.launchSpt(alvo);
+    pushToast(tMsg(r.message), r.success, r.message);
+  }
+
+  function openLinkDialog(node: ModTreeNode) {
+    const principal = node.parts[0];
+    setLinkDialog({ parts: node.parts, name: node.name, ref: "", version: principal.versionManual ? principal.version ?? "" : "", saving: false });
+  }
+
+  async function confirmLinkDialog() {
+    if (!linkDialog || linkDialog.saving) return;
+    setLinkDialog({ ...linkDialog, saving: true });
+    // Todas as partes do pacote apontam pra mesma página: a checagem procura
+    // cada pasta pelo próprio nome, e uma parte sem vínculo seria procurada
+    // (e talvez casada errado) por conta própria.
+    let resultado: { success: boolean; message: string } = { success: false, message: "" };
+    for (const parte of linkDialog.parts) {
+      resultado = await window.modManagerAPI.setManualForgeMatch(parte.originalName, linkDialog.ref, linkDialog.version || undefined);
+      if (!resultado.success) break;
+    }
+    if (!resultado.success) {
+      setLinkDialog((d) => (d ? { ...d, saving: false } : d));
+      pushToast(tMsg(resultado.message), false, resultado.message);
+      return;
+    }
+    setLinkDialog(null);
+    forgetForgeStatus(linkDialog.parts.map((p) => p.name));
+    pushToast(tMsg(resultado.message), true);
+    await refreshMods();
+  }
+
+  async function handleClearLink(node: ModTreeNode) {
+    for (const parte of node.parts) await window.modManagerAPI.clearManualForgeMatch(parte.originalName);
+    forgetForgeStatus(node.parts.map((p) => p.name));
+    pushToast(t("toast.linkRemoved"), true);
+    await refreshMods();
+  }
+
+  // ---- Perfis de mods (ver electron/profiles.ts) ----
+  async function carregarPerfis() {
+    setPerfis(await window.modManagerAPI.listProfiles());
+  }
+
+  /**
+   * Procura no catálogo e instala, em ordem, os mods de uma lista. Era o miolo
+   * do "Importar lista"; agora serve também à troca de perfil, quando o perfil
+   * tem mods que não estão no disco.
+   */
+  async function baixarFaltando(entradas: { name: string; guid?: string; version?: string; id?: number }[]) {
+    const previousKeys = new Set(mods.map(selectionKey));
+    // Nomes podem repetir entre um mod de servidor e um de cliente (ex: "Wedge"
+    // nos dois lados). Sem tirar as repetições, o mesmo mod era baixado duas vezes.
+    const porNome = new Map<string, { name: string; guid?: string; version?: string; id?: number }>();
+    for (const e of entradas) if (!porNome.has(e.name)) porNome.set(e.name, e);
+    const targets = [...porNome.keys()];
+
+    // Fase 1: uma busca em lote pra todos, com um cartão de resumo só.
+    setLookupInProgress(true);
+    const found = await window.modManagerAPI.findForgeDownloadsForNames([...porNome.values()]);
+    setLookupInProgress(false);
+    setForgeProgress(null);
+
+    // Fase 2: tudo entra na fila de uma vez, mas cada um só INSTALA depois do
+    // anterior: a ordem da lista continua sendo a ordem de instalação.
+    const installable = targets.filter((name) => found[name]);
+    const notFound = targets.filter((name) => !found[name]);
+    let installedCount = 0;
+    const failed: string[] = [];
+
+    const idsImport = installable.map(() => novoJobId());
+    const promessasImport = installable.map((name, i) => {
+      const lookup = found[name]!;
+      return installArchiveWithConfirmFlow(
+        window.modManagerAPI.installForgeMod(
+          idsImport[i],
+          lookup.downloadLink,
+          lookup.forgeName ?? name,
+          {
+            id: lookup.modId,
+            name: lookup.forgeName,
+            author: lookup.author,
+            version: lookup.version,
+            // A partir daqui esse mod é reconhecido por ID exato.
+            guid: lookup.guid
+          },
+          i > 0 ? [idsImport[i - 1]] : []
+        )
+      );
+    });
+    for (let i = 0; i < installable.length; i++) {
+      const name = installable[i];
+      setInstallProgress({ done: i + 1, total: installable.length });
+      const installResult = await promessasImport[i];
+      registrarFimDownload(idsImport[i], found[name]!.forgeName ?? name, installResult);
+      if (installResult.success) installedCount++;
+      else if (!installResult.cancelled) failed.push(name);
+    }
+    setInstallProgress(null);
+
+    const problems = [...notFound, ...failed];
+    pushToast(
+      problems.length === 0
+        ? t("restore.allInstalled", { count: installedCount })
+        : t("restore.partialInstalled", {
+            installed: installedCount,
+            // Numa lista grande, despejar 100+ nomes num toast não ajuda ninguém.
+            notFound: problems.slice(0, 5).join(", ") + (problems.length > 5 ? t("restore.andMore", { count: problems.length - 5 }) : "")
+          }),
+      problems.length === 0
+    );
+    if (installedCount > 0) {
+      const updated = await refreshMods();
+      checkForgeForNewMods(previousKeys, updated);
+      void carregarPerfis();
+    }
+  }
+
+  async function trocarPerfil(id: string) {
+    if (!perfis || id === perfis.active || mutating) return;
+    setMutating(true);
+    let r: ProfileSwitchResult;
+    try {
+      r = await window.modManagerAPI.switchProfile(id);
+    } finally {
+      setMutating(false);
+    }
+    pushToast(
+      r.failed.length > 0 ? t("profiles.switchFailedSome", { names: r.failed.slice(0, 5).join(", ") }) : tMsg(r.message),
+      r.success,
+      r.success ? undefined : r.message
+    );
+    await refreshMods();
+    setCustom(await window.modManagerAPI.getCustomCategories());
+    await carregarPerfis();
+    if (r.missing.length > 0 || r.disabled.length > 0) {
+      setCompareResult({ missing: r.missing.map((m) => m.name), extra: r.disabled });
+    }
+    if (r.missing.length > 0 && (await confirmar(t("profiles.confirmDownloadMissing", { count: r.missing.length })))) {
+      await baixarFaltando(r.missing);
+    }
+  }
+
+  async function criarPerfil() {
+    const nome = await pedirTexto(t("profiles.newTitle"), t("profiles.newHint"), "");
+    if (nome === null) return;
+    const r = await window.modManagerAPI.createProfile(nome);
+    pushToast(tMsg(r.message), r.success, r.success ? undefined : r.message);
+    await carregarPerfis();
+  }
+
+  async function renomearPerfil() {
+    const atual = perfis?.profiles.find((p) => p.id === perfis.active);
+    if (!atual) return;
+    const nome = await pedirTexto(t("profiles.renameTitle"), "", atual.name);
+    if (nome === null || nome.trim() === atual.name) return;
+    const r = await window.modManagerAPI.renameProfile(atual.id, nome);
+    pushToast(tMsg(r.message), r.success, r.success ? undefined : r.message);
+    await carregarPerfis();
+  }
+
+  async function apagarPerfil(id: string) {
+    const alvo = perfis?.profiles.find((p) => p.id === id);
+    if (!alvo || !(await confirmar(t("profiles.deleteConfirm", { name: alvo.name })))) return;
+    const r = await window.modManagerAPI.deleteProfile(id);
+    pushToast(tMsg(r.message), r.success, r.success ? undefined : r.message);
+    await carregarPerfis();
+  }
+
+  async function handleImportList() {
+    const result = await window.modManagerAPI.importProfile();
+    if (result.message !== "Cancelled.") pushToast(tMsg(result.message), result.success, result.success ? undefined : result.message);
+    if (!result.success || !result.id) return;
+    await carregarPerfis();
+    // Importar não aplica nada sozinho: a pessoa vê o que vem e decide.
+    const trocar = await confirmar(
+      t("profiles.importSwitchConfirm", { name: result.name ?? "", count: result.modCount ?? 0, missing: result.missingCount ?? 0 })
+    );
+    if (trocar) await trocarPerfil(result.id);
+  }
+
 
   async function handleDetectConflicts() {
     setCheckingConflicts(true);
@@ -1679,7 +1916,7 @@ export default function App() {
     });
   }
 
-  function persistForgeStatus(map: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>) {
+  function persistForgeStatus(map: Map<string, ForgeStatusInfo>) {
     const asArray: ForgeStatusCacheEntry[] = Array.from(map.entries()).map(([name, v]) => ({ name, ...v }));
     window.modManagerAPI.setForgeCache(asArray);
     setForgeCheckedAt(new Date().toISOString());
@@ -1705,12 +1942,12 @@ export default function App() {
     setForgeResult(response.result);
     setAtualizadosNoPainel(new Set());
 
-    const statusMap = new Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>();
+    const statusMap = new Map<string, ForgeStatusInfo>();
     for (const u of response.result.updates) {
       statusMap.set(u.name, { status: "update", version: u.recommendedVersion });
     }
     for (const b of response.result.blocked) {
-      if (!statusMap.has(b.name)) statusMap.set(b.name, { status: "blocked", version: b.recommendedVersion });
+      if (!statusMap.has(b.name)) statusMap.set(b.name, { status: "blocked", version: b.recommendedVersion, blockedBy: quemBloqueia(b) });
     }
     for (const i of response.result.incompatible) {
       if (!statusMap.has(i.name)) statusMap.set(i.name, { status: "incompatible" });
@@ -1741,7 +1978,7 @@ export default function App() {
     const next = new Map(forgeStatusByName);
     for (const u of response.result.updates) next.set(u.name, { status: "update", version: u.recommendedVersion });
     for (const b of response.result.blocked) {
-      if (!next.has(b.name)) next.set(b.name, { status: "blocked", version: b.recommendedVersion });
+      if (!next.has(b.name)) next.set(b.name, { status: "blocked", version: b.recommendedVersion, blockedBy: quemBloqueia(b) });
     }
     for (const i of response.result.incompatible) {
       if (!next.has(i.name)) next.set(i.name, { status: "incompatible" });
@@ -1868,6 +2105,41 @@ export default function App() {
     registrarFimDownload(queueId, u.name, result);
     if (result.success) setAtualizadosNoPainel((prev) => new Set(prev).add(u.name));
     return result;
+  }
+
+  /** "Scorpion 1.0.0 (exige ~2.0.15), Outro 2.1" — pro hover e pro diálogo. */
+  function quemBloqueia(b: ForgeUpdateItem): string | undefined {
+    if (!b.blockingMods?.length) return undefined;
+    return b.blockingMods
+      .map((m) =>
+        t(m.constraint ? "forge.blockingEntry" : "forge.blockingEntryNoConstraint", {
+          name: m.name,
+          version: m.version ?? "",
+          constraint: m.constraint ?? ""
+        }).replace(/\s+/g, " ")
+      )
+      .join(", ");
+  }
+
+  /**
+   * "Atualizar mesmo assim" (pedido do Vorax). A fonte bloqueia porque um mod
+   * instalado declara que não aceita a versão nova; às vezes o autor só não
+   * atualizou a faixa. A decisão fica com a pessoa, depois de ver quem pode
+   * quebrar. A resposta do bloqueio não traz link, então ele vem da lista de
+   * versões do mod.
+   */
+  async function handleForceUpdate(b: ForgeUpdateItem) {
+    if (!b.modId || !b.recommendedVersion) return;
+    const quem = quemBloqueia(b) ?? t("forge.blockingUnknown");
+    if (!(await confirmar(t("forge.forceConfirm", { name: b.name, version: b.recommendedVersion, who: quem })))) return;
+    setUpdatingModName(b.name);
+    const link = await window.modManagerAPI.resolveVersionLink(b.modId, b.recommendedVersion);
+    setUpdatingModName(null);
+    if (!link) {
+      pushToast(t("forge.forceNoLink", { version: b.recommendedVersion }), false);
+      return;
+    }
+    await handleInstallUpdate({ ...b, downloadLink: link });
   }
 
   async function handleInstallUpdate(u: ForgeUpdateItem) {
@@ -2166,6 +2438,8 @@ export default function App() {
     onOpenFolder: handleOpenFolder,
     onOpenModPage: handleOpenModPage,
     onReinstall: handleReinstall,
+    onLinkModPage: openLinkDialog,
+    onClearLink: handleClearLink,
     onRenameStart: startRename,
     onRenameCancel: cancelRename,
     onRenameConfirm: confirmRename,
@@ -2431,6 +2705,30 @@ export default function App() {
               <button onClick={handleInstall} disabled={loading} className="primary" title={t("header.installButtonTitle")}>
                 {loading ? t("header.installing") : t("header.installButton")}
               </button>
+              <span className="header-separator" />
+              <button
+                onClick={() => void handleLaunch("server")}
+                disabled={!launchTargets.server}
+                title={launchTargets.server ? t("header.startServerTitle") : t("header.exeMissing", { exe: "SPT.Server.exe" })}
+              >
+                ▶ {t("header.startServer")}
+              </button>
+              <button
+                onClick={() => void handleLaunch("launcher")}
+                disabled={!launchTargets.launcher}
+                title={launchTargets.launcher ? t("header.startLauncherTitle") : t("header.exeMissing", { exe: "SPT.Launcher.exe" })}
+              >
+                ▶ {t("header.startLauncher")}
+              </button>
+              <button
+                className="gear-button"
+                onClick={() => void handleRefresh()}
+                disabled={refreshing}
+                title={t("header.refreshTitle")}
+                aria-label={t("header.refresh")}
+              >
+                ⟳
+              </button>
               <button className="gear-button" onClick={abrirConfig} title={t("settings.title")} aria-label={t("settings.title")}>
                 ⚙
               </button>
@@ -2446,6 +2744,64 @@ export default function App() {
             <span className="summary-item summary-active">{t("summary.active")} <strong>{summary.active}</strong></span>
             <span className="summary-item summary-disabled">{t("summary.disabled")} <strong>{summary.disabled}</strong></span>
           </div>
+
+          {perfis && perfis.profiles.length > 0 && (
+            <div className="profile-bar">
+              <span className="profile-label" title={t("profiles.labelTitle")}>
+                {t("profiles.label")}
+              </span>
+              <select
+                className="profile-select"
+                value={perfis.active}
+                disabled={mutating}
+                onChange={(e) => void trocarPerfil(e.target.value)}
+                title={t("profiles.selectTitle")}
+              >
+                {perfis.profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {/* O ativo é o estado atual: conta pela lista na tela, que já está
+                        carregada, em vez de pedir outro scan do disco a cada mudança. */}
+                    {p.name} (
+                    {p.id === perfis.active
+                      ? t("profiles.counts", { enabled: summary.active, total: summary.total })
+                      : t("profiles.counts", { enabled: p.enabledCount, total: p.modCount })}
+                    )
+                  </option>
+                ))}
+              </select>
+              <button onClick={() => void criarPerfil()} disabled={mutating} title={t("profiles.newButtonTitle")}>
+                + {t("profiles.newButton")}
+              </button>
+              <button onClick={() => void renomearPerfil()} disabled={mutating}>
+                {t("profiles.renameButton")}
+              </button>
+              {perfis.profiles.length > 1 && (
+                <select
+                  className="profile-delete"
+                  value=""
+                  disabled={mutating}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    e.target.value = "";
+                    if (id) void apagarPerfil(id);
+                  }}
+                  title={t("profiles.deleteTitle")}
+                >
+                  <option value="">{t("profiles.deleteButton")}</option>
+                  {perfis.profiles
+                    .filter((p) => p.id !== perfis.active)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+              )}
+              <span className="filter-separator" />
+              <button onClick={handleExportList} title={t("profiles.exportTitle")}>{t("profiles.export")}</button>
+              <button onClick={() => void handleImportList()} title={t("profiles.importTitle")}>{t("profiles.import")}</button>
+            </div>
+          )}
 
           <input
             className="search-bar"
@@ -2466,6 +2822,16 @@ export default function App() {
               <option value="manual">{t("filters.originManual")}</option>
               <option value="manager">{t("filters.originManager")}</option>
             </select>
+            <select
+              value={fikaFilter}
+              onChange={(e) => setFikaFilter(e.target.value as FikaFilter)}
+              title={t("filters.fikaFilterTitle", { count: semIdNoCatalogo })}
+            >
+              <option value="all">{t("filters.fikaAll")}</option>
+              <option value="compatible">{t("filters.fikaCompatible")}</option>
+              <option value="incompatible">{t("filters.fikaIncompatible")}</option>
+            </select>
+            {fikaFilter !== "all" && fikaLoading && <span className="filter-note">{t("filters.fikaLoading")}</span>}
 
             <span className="filter-separator" />
 
@@ -2501,8 +2867,6 @@ export default function App() {
 
             <span className="filter-separator" />
 
-            <button onClick={handleExportList} title={t("filters.exportListTitle")}>{t("filters.exportList")}</button>
-            <button onClick={handleImportList} title={t("filters.importCompareTitle")}>{t("filters.importCompare")}</button>
             <button onClick={handleDetectConflicts} disabled={checkingConflicts} title={t("filters.checkConflictsTitle")}>
               {checkingConflicts ? t("filters.checkingConflicts") : t("filters.checkConflicts")}
             </button>
@@ -2549,26 +2913,26 @@ export default function App() {
           {compareResult && (
             <div className="compare-panel">
               <div className="compare-header">
-                <strong>{t("compare.title")}</strong>
+                <strong>{t("profiles.reportTitle")}</strong>
                 <button onClick={() => setCompareResult(null)}>{t("common.close")}</button>
               </div>
               {compareResult.missing.length === 0 && compareResult.extra.length === 0 ? (
-                <p>{t("compare.identical")}</p>
+                <p>{t("profiles.reportNothing")}</p>
               ) : (
                 <>
                   {compareResult.missing.length > 0 && (
                     <p>
-                      <strong>{t("compare.missing", { count: compareResult.missing.length })}</strong> {compareResult.missing.join(", ")}
+                      <strong>{t("profiles.reportMissing", { count: compareResult.missing.length })}</strong> {compareResult.missing.join(", ")}
                     </p>
                   )}
                   {compareResult.extra.length > 0 && (
                     <p>
-                      <strong>{t("compare.extra", { count: compareResult.extra.length })}</strong> {compareResult.extra.join(", ")}
+                      <strong>{t("profiles.reportDisabled", { count: compareResult.extra.length })}</strong> {compareResult.extra.join(", ")}
                     </p>
                   )}
                 </>
               )}
-              <p className="compare-note">{t("compare.note")}</p>
+              <p className="compare-note">{t("profiles.reportNote")}</p>
             </div>
           )}
 
@@ -2615,113 +2979,199 @@ export default function App() {
             </div>
           )}
 
-          {forgeResult && (
-            <div className="compare-panel">
-              <div className="compare-header">
-                <strong>{t("forge.checkTitle")} — SPT {forgeResult.sptVersionUsed}</strong>
-                <button onClick={() => setForgeResult(null)}>{t("common.close")}</button>
-              </div>
-              {forgeResult.updates.length > 0 && (
-                <>
-                  <p className="updates-header">
-                    <strong>{t("forge.updatesAvailable")}</strong>
-                    {forgeResult.updates.filter((u) => u.downloadLink && !atualizadosNoPainel.has(u.name)).length > 1 && (
-                      <button
-                        className="primary inline-update-button"
-                        disabled={atualizandoTodos || updatingModName !== null}
-                        onClick={handleUpdateAll}
-                      >
-                        {atualizandoTodos ? t("forge.updating") : t("forge.updateAll")}
-                      </button>
-                    )}
-                  </p>
-                  {forgeResult.updates.map((u) => (
-                    <p key={`update-${u.name}`}>
-                      <NomeComPagina nome={u.name} modId={u.modId} titulo={t("forge.openVersions")} />: {u.currentVersion} →{" "}
-                      <strong>{u.recommendedVersion}</strong>
-                      {u.modId !== undefined && (
-                        <ChangelogButton modId={u.modId} nome={u.name} de={u.currentVersion} para={u.recommendedVersion} />
-                      )}
-                      {/* Sai do bloqueio depois que os de cima atualizarem: a lista já está
-                          na ordem de instalação, e a nota diz isso em voz alta. */}
-                      {u.reason === "unblocked_after_update" && (
-                        <span className="update-after-note"> ({t("forge.afterOthers")})</span>
-                      )}
-                      {atualizadosNoPainel.has(u.name) ? (
-                        <span className="update-done-note"> ✔ {t("forge.updatedDone")}</span>
-                      ) : (
-                        u.downloadLink && (
-                          <>
-                            {" "}
-                            <button
-                              className="primary inline-update-button"
-                              // Durante o "Atualizar todos" os botões individuais ficam
-                              // travados: dois downloads do mesmo mod ao mesmo tempo
-                              // brigariam pela mesma pasta.
-                              disabled={updatingModName === u.name || atualizandoTodos}
-                              onClick={() => handleInstallUpdate(u)}
-                            >
-                              {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
-                            </button>
-                          </>
-                        )
-                      )}
-                    </p>
-                  ))}
-                </>
-              )}
-              {forgeResult.blocked.length > 0 && (
-                // Recolhido por padrão (pedido do Crywolf642): o bloqueio é
-                // informação, não algo que a pessoa consiga resolver ali, e com a
-                // checagem em cadeia da 0.6.4 sobram poucos casos de verdade.
-                <details className="blocked-updates">
-                  <summary>
-                    <strong>{t("forge.blockedTitle")}</strong> ({forgeResult.blocked.length})
-                  </summary>
-                  {forgeResult.blocked.map((b) => (
-                    <p key={`blocked-${b.name}`}>
-                      <NomeComPagina nome={b.name} modId={b.modId} titulo={t("forge.openVersions")} />: {b.currentVersion}
-                      {b.recommendedVersion ? ` → ${b.recommendedVersion}` : ""}
-                    </p>
-                  ))}
-                </details>
-              )}
-              {forgeResult.incompatible.length > 0 && (
-                <>
-                  <p><strong>{t("forge.incompatibleTitle")}</strong></p>
-                  {forgeResult.incompatible.map((i) => (
-                    <p key={`incompatible-${i.name}`}>
-                      <NomeComPagina nome={i.name} modId={i.modId} titulo={t("forge.openVersions")} /> ({i.currentVersion})
-                    </p>
-                  ))}
-                </>
-              )}
-              {forgeResult.infoOnly.length > 0 && (
-                <>
-                  <p><strong>{t("forge.infoOnlyTitle")}</strong></p>
-                  {forgeResult.infoOnly.map((info) => (
-                    <p key={`info-${info.name}`}>{info.name}: {t("forge.infoHasVersion", { version: info.recommendedVersion ?? "" })}</p>
-                  ))}
-                </>
-              )}
-              {forgeResult.updates.length === 0 &&
-                forgeResult.blocked.length === 0 &&
-                forgeResult.incompatible.length === 0 &&
-                forgeResult.infoOnly.length === 0 && (
-                <p>{t("forge.allUpToDateDetailed")}</p>
-              )}
-              {(forgeResult.skippedByBudget?.length ?? 0) > 0 && (
-                <p className="compare-note">
-                  {t("forge.skippedByBudget", { count: forgeResult.skippedByBudget!.length })}
-                </p>
-              )}
-              {forgeResult.unmatched.length > 0 && (
-                <p className="compare-note">
-                  {t("forge.unmatchedPrefix")} {forgeResult.unmatched.join(", ")}
-                </p>
-              )}
-            </div>
-          )}
+          {forgeResult && (() => {
+            // Repaginado na 0.8.0: era um parágrafo por mod, com botão laranja em
+            // toda linha e as versões onde o texto acabava. Agora é uma lista em
+            // colunas (nome | versões | ações), um só botão de destaque
+            // ("Atualizar todos"), e o que não pede ação fica recolhido.
+            const pendentes = forgeResult.updates.filter((u) => u.downloadLink && !atualizadosNoPainel.has(u.name));
+            const nada =
+              forgeResult.updates.length === 0 &&
+              forgeResult.blocked.length === 0 &&
+              forgeResult.incompatible.length === 0 &&
+              forgeResult.infoOnly.length === 0;
+            return (
+              <section className="upd-panel" aria-label={t("forge.checkTitle")}>
+                <div className="upd-head">
+                  <h2 className="upd-title">{t("forge.checkTitle")}</h2>
+                  <span className="upd-spt">SPT {forgeResult.sptVersionUsed}</span>
+                  <span className="upd-head-spacer" />
+                  {pendentes.length > 1 && (
+                    <button className="primary" disabled={atualizandoTodos || updatingModName !== null} onClick={handleUpdateAll}>
+                      {atualizandoTodos ? t("forge.updating") : t("forge.updateAllCount", { count: pendentes.length })}
+                    </button>
+                  )}
+                  <button className="upd-close" onClick={() => setForgeResult(null)} aria-label={t("common.close")} title={t("common.close")}>
+                    ✕
+                  </button>
+                </div>
+
+                {nada && <p className="upd-empty">{t("forge.allUpToDateDetailed")}</p>}
+
+                {forgeResult.updates.length > 0 && (
+                  <div className="upd-section">
+                    <div className="upd-section-head">
+                      {t("forge.sectionUpdates")} <span className="upd-count">{forgeResult.updates.length}</span>
+                    </div>
+                    <ul className="upd-list">
+                      {forgeResult.updates.map((u) => {
+                        const feito = atualizadosNoPainel.has(u.name);
+                        return (
+                          <li key={`update-${u.name}`} className={`upd-row ${feito ? "done" : ""}`}>
+                            <div className="upd-name">
+                              <NomeComPagina nome={u.name} modId={u.modId} titulo={t("forge.openVersions")} />
+                              {/* Sai do bloqueio depois que os de cima atualizarem: a lista
+                                  já está na ordem de instalação. */}
+                              {u.reason === "unblocked_after_update" && <span className="upd-tag">{t("forge.afterOthers")}</span>}
+                            </div>
+                            <div className="upd-versions">
+                              <span className="upd-from">{u.currentVersion}</span>
+                              <span className="upd-arrow" aria-hidden="true">→</span>
+                              <span className="upd-to">{u.recommendedVersion}</span>
+                            </div>
+                            <div className="upd-actions">
+                              {u.modId !== undefined && (
+                                <ChangelogButton modId={u.modId} nome={u.name} de={u.currentVersion} para={u.recommendedVersion} />
+                              )}
+                              {feito ? (
+                                <span className="upd-done">✓ {t("forge.updatedDone")}</span>
+                              ) : (
+                                u.downloadLink && (
+                                  <button
+                                    className="upd-button"
+                                    // Durante o "Atualizar todos" os botões individuais ficam
+                                    // travados: dois downloads do mesmo mod brigariam pela pasta.
+                                    disabled={updatingModName === u.name || atualizandoTodos}
+                                    onClick={() => handleInstallUpdate(u)}
+                                  >
+                                    {updatingModName === u.name ? t("forge.updating") : t("forge.updateNow")}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
+                {forgeResult.blocked.length > 0 && (
+                  // Recolhido por padrão (pedido do Crywolf642): com a checagem em
+                  // cadeia sobram poucos casos de verdade. Cada um diz quem trava e
+                  // dá pra forçar (pedido do Vorax).
+                  <details className="upd-section">
+                    <summary className="upd-section-head">
+                      {t("forge.sectionBlocked")} <span className="upd-count">{forgeResult.blocked.length}</span>
+                      <span className="upd-section-hint">{t("forge.sectionBlockedHint")}</span>
+                    </summary>
+                    <ul className="upd-list">
+                      {forgeResult.blocked.map((b) => {
+                        const quem = quemBloqueia(b);
+                        const feito = atualizadosNoPainel.has(b.name);
+                        return (
+                          <li key={`blocked-${b.name}`} className={`upd-row ${feito ? "done" : ""}`}>
+                            <div className="upd-name">
+                              <NomeComPagina nome={b.name} modId={b.modId} titulo={t("forge.openVersions")} />
+                              {quem && <span className="upd-sub">{t("forge.blockedBy", { who: quem })}</span>}
+                            </div>
+                            <div className="upd-versions">
+                              <span className="upd-from">{b.currentVersion}</span>
+                              {b.recommendedVersion && (
+                                <>
+                                  <span className="upd-arrow" aria-hidden="true">→</span>
+                                  <span className="upd-to blocked">{b.recommendedVersion}</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="upd-actions">
+                              {feito ? (
+                                <span className="upd-done">✓ {t("forge.updatedDone")}</span>
+                              ) : (
+                                b.modId !== undefined &&
+                                b.recommendedVersion && (
+                                  <button
+                                    className="upd-button ghost"
+                                    disabled={updatingModName !== null || atualizandoTodos}
+                                    onClick={() => void handleForceUpdate(b)}
+                                    title={t("forge.forceUpdateTitle")}
+                                  >
+                                    {updatingModName === b.name ? t("forge.updating") : t("forge.forceUpdate")}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </details>
+                )}
+
+                {forgeResult.incompatible.length > 0 && (
+                  <details className="upd-section">
+                    <summary className="upd-section-head">
+                      {t("forge.sectionIncompatible", { version: forgeResult.sptVersionUsed })}{" "}
+                      <span className="upd-count">{forgeResult.incompatible.length}</span>
+                    </summary>
+                    <ul className="upd-list">
+                      {forgeResult.incompatible.map((i) => (
+                        <li key={`incompatible-${i.name}`} className="upd-row">
+                          <div className="upd-name">
+                            <NomeComPagina nome={i.name} modId={i.modId} titulo={t("forge.openVersions")} />
+                          </div>
+                          <div className="upd-versions">
+                            <span className="upd-from">{i.currentVersion}</span>
+                          </div>
+                          <div className="upd-actions" />
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                {forgeResult.infoOnly.length > 0 && (
+                  <details className="upd-section">
+                    <summary className="upd-section-head">
+                      {t("forge.sectionInfoOnly")} <span className="upd-count">{forgeResult.infoOnly.length}</span>
+                      <span className="upd-section-hint">{t("forge.sectionInfoOnlyHint")}</span>
+                    </summary>
+                    <ul className="upd-list">
+                      {forgeResult.infoOnly.map((info) => (
+                        <li key={`info-${info.name}`} className="upd-row">
+                          <div className="upd-name">{info.name}</div>
+                          <div className="upd-versions">
+                            <span className="upd-from">?</span>
+                            <span className="upd-arrow" aria-hidden="true">→</span>
+                            <span className="upd-to">{info.recommendedVersion}</span>
+                          </div>
+                          <div className="upd-actions" />
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                {forgeResult.unmatched.length > 0 && (
+                  <details className="upd-section">
+                    <summary className="upd-section-head">
+                      {t("forge.sectionUnmatched")} <span className="upd-count">{forgeResult.unmatched.length}</span>
+                      <span className="upd-section-hint">{t("forge.sectionUnmatchedHint")}</span>
+                    </summary>
+                    <ul className="upd-names">
+                      {forgeResult.unmatched.map((nome) => (
+                        <li key={`unmatched-${nome}`}>{nome}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                {(forgeResult.skippedByBudget?.length ?? 0) > 0 && (
+                  <p className="upd-note">{t("forge.skippedByBudget", { count: forgeResult.skippedByBudget!.length })}</p>
+                )}
+              </section>
+            );
+          })()}
 
           {selectedKeys.size > 0 && (
             <div className="bulk-bar">
@@ -3243,30 +3693,93 @@ export default function App() {
 
             <section className="settings-section">
               <h3>{t("settings.appearance")}</h3>
-              <div className="settings-row">
-                <span>{t("settings.theme")}</span>
-                <div className="segmented" role="radiogroup" aria-label={t("settings.theme")}>
-                  {(["system", "dark", "light", "sand"] as const).map((opcao) => (
+              <div className="settings-block">
+                <span className="settings-block-label">{t("settings.theme")}</span>
+                <div className="theme-grid" role="radiogroup" aria-label={t("settings.theme")}>
+                  {TEMAS.map((opcao) => {
+                    // "Sistema" mostra as duas metades: escuro e claro.
+                    const a = AMOSTRAS[opcao === "system" ? "dark" : opcao];
+                    const b = opcao === "system" ? AMOSTRAS.light : a;
+                    return (
+                      <button
+                        key={opcao}
+                        role="radio"
+                        aria-checked={tema === opcao}
+                        className={`theme-option ${tema === opcao ? "on" : ""}`}
+                        onClick={() => mudarTema(opcao)}
+                      >
+                        <span
+                          className="theme-preview"
+                          aria-hidden="true"
+                          style={{ background: `linear-gradient(135deg, ${a.bg} 50%, ${b.bg} 50%)` }}
+                        >
+                          <span className="theme-preview-panel" style={{ background: a.panel, color: a.text }}>
+                            Aa
+                          </span>
+                          <span className="theme-preview-dot" style={{ background: destaque ?? a.accent }} />
+                        </span>
+                        <span className="theme-option-name">{t(NOMES_TEMA[opcao])}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="settings-block">
+                <span className="settings-block-label">{t("settings.accent")}</span>
+                <div className="accent-row" role="radiogroup" aria-label={t("settings.accent")}>
+                  <button
+                    role="radio"
+                    aria-checked={destaque === null}
+                    className={`accent-default ${destaque === null ? "on" : ""}`}
+                    onClick={() => mudarDestaque(null)}
+                    title={t("settings.accentDefaultTitle")}
+                  >
+                    {t("settings.accentDefault")}
+                  </button>
+                  {ACCENT_PRESETS.map((p) => (
                     <button
-                      key={opcao}
+                      key={p.id}
                       role="radio"
-                      aria-checked={tema === opcao}
-                      className={tema === opcao ? "on" : ""}
-                      onClick={() => mudarTema(opcao)}
+                      aria-checked={destaque === p.hex}
+                      aria-label={t(`settings.accent.${p.id}`)}
+                      title={t(`settings.accent.${p.id}`)}
+                      className={`accent-swatch ${destaque === p.hex ? "on" : ""}`}
+                      style={{ background: p.hex }}
+                      onClick={() => mudarDestaque(p.hex)}
+                    />
+                  ))}
+                  <label
+                    className={`accent-custom ${destaque && !ACCENT_PRESETS.some((p) => p.hex === destaque) ? "on" : ""}`}
+                    title={t("settings.accentCustomTitle")}
+                  >
+                    <input
+                      type="color"
+                      value={destaque ?? "#c8752e"}
+                      onChange={(e) => mudarDestaque(e.target.value)}
+                      aria-label={t("settings.accentCustomTitle")}
+                    />
+                    <span>{t("settings.accentCustom")}</span>
+                  </label>
+                </div>
+                <p className="settings-note">{t("settings.accentNote")}</p>
+              </div>
+              <div className="settings-row">
+                <span>{t("settings.colorblind")}</span>
+                <div className="segmented" role="radiogroup" aria-label={t("settings.colorblind")}>
+                  {([true, false] as const).map((ligado) => (
+                    <button
+                      key={String(ligado)}
+                      role="radio"
+                      aria-checked={daltonico === ligado}
+                      className={daltonico === ligado ? "on" : ""}
+                      onClick={() => mudarDaltonico(ligado)}
                     >
-                      {t(
-                        opcao === "system"
-                          ? "settings.themeSystem"
-                          : opcao === "dark"
-                            ? "settings.themeDark"
-                            : opcao === "light"
-                              ? "settings.themeLight"
-                              : "settings.themeSand"
-                      )}
+                      {t(ligado ? "settings.on" : "settings.off")}
                     </button>
                   ))}
                 </div>
               </div>
+              <p className="settings-note">{t("settings.colorblindNote")}</p>
               <div className="settings-row">
                 <span>{t("settings.animations")}</span>
                 <div className="segmented" role="radiogroup" aria-label={t("settings.animations")}>
@@ -3415,6 +3928,100 @@ export default function App() {
                 {t("error.reportGithub")}
               </button>
               <button onClick={() => setErroAberto(null)}>{t("common.close")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pedido && (
+        <div className="modal-backdrop">
+          <div className="modal-box link-modal">
+            <div className="modal-header">
+              <strong>{pedido.titulo}</strong>
+            </div>
+            {pedido.dica && <p className="compare-note">{pedido.dica}</p>}
+            <label className="link-field">
+              <input
+                type="text"
+                autoFocus
+                maxLength={60}
+                value={pedido.valor}
+                onChange={(e) => setPedido({ ...pedido, valor: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && pedido.valor.trim()) {
+                    pedido.responder(pedido.valor);
+                    setPedido(null);
+                  }
+                  if (e.key === "Escape") {
+                    pedido.responder(null);
+                    setPedido(null);
+                  }
+                }}
+              />
+            </label>
+            <div className="confirm-structure-actions">
+              <button
+                onClick={() => {
+                  pedido.responder(null);
+                  setPedido(null);
+                }}
+              >
+                {t("confirm.abort")}
+              </button>
+              <button
+                className="primary"
+                disabled={!pedido.valor.trim()}
+                onClick={() => {
+                  pedido.responder(pedido.valor);
+                  setPedido(null);
+                }}
+              >
+                {t("confirm.ok")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {linkDialog && (
+        <div className="modal-backdrop">
+          <div className="modal-box link-modal">
+            <div className="modal-header">
+              <strong>{t("link.title", { name: linkDialog.name })}</strong>
+            </div>
+            <p className="compare-note">{t("link.intro")}</p>
+            <label className="link-field">
+              <span>{t("link.refLabel")}</span>
+              <input
+                type="text"
+                autoFocus
+                value={linkDialog.ref}
+                placeholder={t("link.refPlaceholder")}
+                onChange={(e) => setLinkDialog({ ...linkDialog, ref: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void confirmLinkDialog();
+                  if (e.key === "Escape") setLinkDialog(null);
+                }}
+              />
+            </label>
+            <label className="link-field">
+              <span>{t("link.versionLabel")}</span>
+              <input
+                type="text"
+                value={linkDialog.version}
+                placeholder={t("link.versionPlaceholder")}
+                onChange={(e) => setLinkDialog({ ...linkDialog, version: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void confirmLinkDialog();
+                  if (e.key === "Escape") setLinkDialog(null);
+                }}
+              />
+            </label>
+            <div className="confirm-structure-actions">
+              <button onClick={() => setLinkDialog(null)}>{t("confirm.abort")}</button>
+              <button className="primary" disabled={!linkDialog.ref.trim() || linkDialog.saving} onClick={() => void confirmLinkDialog()}>
+                {linkDialog.saving ? t("link.saving") : t("link.save")}
+              </button>
             </div>
           </div>
         </div>
@@ -3598,6 +4205,8 @@ function ModList({
   onOpenFolder,
   onOpenModPage,
   onReinstall,
+  onLinkModPage,
+  onClearLink,
   onRenameStart,
   onRenameCancel,
   onRenameConfirm,
@@ -3630,6 +4239,8 @@ function ModList({
   onOpenFolder: (mod: ModInfo) => void;
   onOpenModPage: (modId: number) => void;
   onReinstall: (mod: ModInfo) => void;
+  onLinkModPage: (node: ModTreeNode) => void;
+  onClearLink: (node: ModTreeNode) => void;
   onRenameStart: (mod: ModInfo) => void;
   onRenameCancel: () => void;
   onRenameConfirm: (mod: ModInfo) => void;
@@ -3642,7 +4253,7 @@ function ModList({
   openMenuKey: string | null;
   onSetOpenMenuKey: (key: string | null) => void;
   disabled?: boolean;
-  forgeStatusByName?: Map<string, { status: "update" | "blocked" | "incompatible" | "info"; version?: string }>;
+  forgeStatusByName?: Map<string, ForgeStatusInfo>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
@@ -3737,7 +4348,17 @@ function ModList({
                   {mod.enabled ? t("modlist.statusActive") : t("modlist.statusDisabled")}
                 </span>
                 <span className="origin-chip">{mod.installedManually ? "Manual" : "Manager"}</span>
-                {mod.version && <span className="meta-chip">v{mod.version}</span>}
+                {mod.version && (
+                  <span className="meta-chip" title={mod.versionManual ? t("modlist.versionManualTitle") : undefined}>
+                    v{mod.version}
+                    {mod.versionManual ? "*" : ""}
+                  </span>
+                )}
+                {mod.forgeLinkManual && (
+                  <span className="meta-chip" title={t("modlist.linkedManuallyTitle")}>
+                    🔗
+                  </span>
+                )}
                 {mod.author && <span className="meta-chip">{t("browse.byAuthor", { author: mod.author })}</span>}
                 {forgeStatus?.status === "update" && (
                   <span className="forge-update-group">
@@ -3750,7 +4371,14 @@ function ModList({
                   </span>
                 )}
                 {forgeStatus?.status === "blocked" && (
-                  <span className="meta-chip forge-chip-blocked" title={t("modlist.forgeBlockedTitle")}>
+                  <span
+                    className="meta-chip forge-chip-blocked"
+                    title={
+                      forgeStatus.blockedBy
+                        ? t("modlist.forgeBlockedByTitle", { version: forgeStatus.version ?? "", who: forgeStatus.blockedBy })
+                        : t("modlist.forgeBlockedTitle")
+                    }
+                  >
                     {t("modlist.forgeBlocked")}
                   </span>
                 )}
@@ -3854,6 +4482,12 @@ function ModList({
                       ))}
                       <option value={UNCATEGORIZED}>{t("categories.uncategorized")}</option>
                     </select>
+                  )}
+                  <button onClick={() => { onLinkModPage(node); onSetOpenMenuKey(null); }} title={t("modlist.linkModPageTitle")}>
+                    {mod.forgeLinkManual ? t("modlist.changeLink") : t("modlist.linkModPage")}
+                  </button>
+                  {node.parts.some((x) => x.forgeLinkManual || x.versionManual) && (
+                    <button onClick={() => { onClearLink(node); onSetOpenMenuKey(null); }}>{t("modlist.clearLink")}</button>
                   )}
                   <button onClick={() => onRenameStart(mod)}>{t("modlist.rename")}</button>
                   <button onClick={() => { onReinstall(mod); onSetOpenMenuKey(null); }}>{t("modlist.reinstall")}</button>

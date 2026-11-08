@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { loadForgeMatchCache, cachedIdFor, saveForgeMatchCache } from "../electron/modManager";
+import { metaFile } from "./metaFile";
 
 let ok = 0, fail = 0;
 function check(label: string, got: unknown, want: unknown) {
@@ -10,8 +11,7 @@ function check(label: string, got: unknown, want: unknown) {
 }
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cache-"));
-const FILE = ".spt-mod-manager-forge-match.json";
-const write = (obj: unknown) => fs.writeFileSync(path.join(dir, FILE), JSON.stringify(obj), "utf-8");
+const write = (obj: unknown) => fs.writeFileSync(metaFile(dir, "forge-match"), JSON.stringify(obj), "utf-8");
 
 console.log("\nmigracao do formato antigo");
 write({ SAIN: "791", Wedge: "1204" });
@@ -50,7 +50,7 @@ console.log("\nentradas invalidas");
 write({ SAIN: null, Wedge: 42, Bom: { ids: { "sp-mod": "1" } } });
 check("descarta lixo e mantem o valido", Object.keys(loadForgeMatchCache(dir)), ["Bom"]);
 
-fs.writeFileSync(path.join(dir, FILE), "{ nao e json", "utf-8");
+fs.writeFileSync(metaFile(dir, "forge-match"), "{ nao e json", "utf-8");
 check("arquivo corrompido devolve vazio, nao estoura", loadForgeMatchCache(dir), {});
 
 console.log("\nanotacao de busca infrutifera");

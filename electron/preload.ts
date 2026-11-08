@@ -12,8 +12,13 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   uninstallMod: (mod: ModInfo) => ipcRenderer.invoke("uninstall-mod", mod),
   renameMod: (modId: string, alias: string) => ipcRenderer.invoke("rename-mod", modId, alias),
   openModFolder: (mod: ModInfo) => ipcRenderer.invoke("open-mod-folder", mod),
-  exportModList: () => ipcRenderer.invoke("export-mod-list"),
-  importModList: () => ipcRenderer.invoke("import-mod-list"),
+  listProfiles: () => ipcRenderer.invoke("list-profiles"),
+  createProfile: (nome: string) => ipcRenderer.invoke("create-profile", nome),
+  renameProfile: (id: string, nome: string) => ipcRenderer.invoke("rename-profile", id, nome),
+  deleteProfile: (id: string) => ipcRenderer.invoke("delete-profile", id),
+  switchProfile: (id: string) => ipcRenderer.invoke("switch-profile", id),
+  exportProfile: () => ipcRenderer.invoke("export-profile"),
+  importProfile: () => ipcRenderer.invoke("import-profile"),
   getSptVersion: () => ipcRenderer.invoke("get-spt-version"),
   detectConflicts: () => ipcRenderer.invoke("detect-conflicts"),
   getSptSemver: () => ipcRenderer.invoke("get-spt-semver"),
@@ -48,7 +53,7 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   clearDownloadCache: () => ipcRenderer.invoke("clear-download-cache"),
   saveCustomCategories: (custom: unknown) => ipcRenderer.invoke("save-custom-categories", custom),
   openForgeModPage: (modId: number, secao?: "versions") => ipcRenderer.invoke("open-forge-mod-page", modId, secao),
-  findForgeDownloadsForNames: (entries: { name: string; guid?: string }[]) =>
+  findForgeDownloadsForNames: (entries: { name: string; guid?: string; version?: string; id?: number }[]) =>
     ipcRenderer.invoke("find-forge-downloads-for-names", entries),
   findForgeDownloadForName: (name: string, sptVersion?: string) =>
     ipcRenderer.invoke("find-forge-download-for-name", name, sptVersion),
@@ -74,6 +79,13 @@ contextBridge.exposeInMainWorld("modManagerAPI", {
   getDownloadQueue: () => ipcRenderer.invoke("get-download-queue"),
   controlDownload: (action: string, jobId: string) => ipcRenderer.invoke("download-queue-control", action, jobId),
   cancelWaitingDownloads: () => ipcRenderer.invoke("download-queue-cancel-waiting"),
+  getLaunchTargets: () => ipcRenderer.invoke("get-launch-targets"),
+  launchSpt: (alvo: "server" | "launcher") => ipcRenderer.invoke("launch-spt", alvo),
+  setManualForgeMatch: (folderName: string, referencia: string, versao?: string) =>
+    ipcRenderer.invoke("set-manual-forge-match", folderName, referencia, versao),
+  clearManualForgeMatch: (folderName: string) => ipcRenderer.invoke("clear-manual-forge-match", folderName),
+  fetchModFika: (ids: number[]) => ipcRenderer.invoke("fetch-mod-fika", ids),
+  resolveVersionLink: (modId: number, versao: string) => ipcRenderer.invoke("resolve-version-link", modId, versao),
   getMaxDownloads: () => ipcRenderer.invoke("get-max-downloads"),
   setMaxDownloads: (n: number) => ipcRenderer.invoke("set-max-downloads", n)
 });

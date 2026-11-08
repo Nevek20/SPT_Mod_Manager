@@ -25,6 +25,7 @@ import {
 } from "../src/modCategories";
 import { validaCustom, saveCustomCategories, loadCustomCategories, fetchModCategories } from "../electron/modManager";
 import type { ModInfo } from "../src/types";
+import { metaFile } from "./metaFile";
 
 let ok = 0;
 let fail = 0;
@@ -224,7 +225,7 @@ async function main() {
     saveCustomCategories(raiz, { categories: [{ id: "x", name: "Minhas" }], assign: { k: "x" } });
     check("grava e le de volta", loadCustomCategories(raiz), { categories: [{ id: "x", name: "Minhas" }], assign: { k: "x" } });
 
-    fs.writeFileSync(path.join(raiz, ".spt-mod-manager-categories.json"), "{ corrompido");
+    fs.writeFileSync(metaFile(raiz, "categories"), "{ corrompido");
     check("arquivo corrompido nao derruba nada", loadCustomCategories(raiz), { categories: [], assign: {} });
 
     console.log("\ncategoria da fonte guardada");
@@ -236,7 +237,7 @@ async function main() {
       const data = ids.map((id) => ({ id: Number(id), category: { title: id === "902" ? "Bots" : "Traders" } }));
       return new Response(JSON.stringify({ success: true, data }), { status: 200, headers: { "content-type": "application/json" } });
     };
-    fs.rmSync(path.join(raiz, ".spt-mod-manager-categories.json"));
+    fs.rmSync(metaFile(raiz, "categories"));
 
     const primeira = await fetchModCategories(raiz, [902, 1025]);
     check("pergunta a fonte e devolve os titulos", primeira, { "902": "Bots", "1025": "Traders" });

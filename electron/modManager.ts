@@ -3,6 +3,7 @@ import { DownloadCache } from "./downloadCache";
 import { QueueError, type QueueTask } from "./downloadQueue";
 import path from "path";
 import { readExeProductVersion } from "./peVersion";
+import { httpFetch } from "./http";
 import { DEFAULT_SOURCE_KEY, getSourceByKey, type ModSource } from "./sources";
 import AdmZip from "adm-zip";
 import Seven from "node-7z";
@@ -128,8 +129,8 @@ function isDangerousEntryPath(entryPath: string): boolean {
  * inteiro se achar qualquer uma suspeita — melhor rejeitar tudo do que extrair parcial ou
  * tentar "consertar" nomes de arquivo sozinho.
  */
-async function validateArchiveEntries(archivePath: string): Promise<void> {
-  const ext = path.extname(archivePath).toLowerCase();
+async function validateArchiveEntries(archivePath: string, formato?: ArchiveFormat): Promise<void> {
+  const ext = formato ?? (path.extname(archivePath).toLowerCase() as ArchiveFormat);
 
   // .zip grande é extraído pelo 7za (ver extractArchive), então perde a sanitização
   // do AdmZip — precisa passar pela mesma validação de entradas do .7z.
@@ -137,19 +138,7 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
     ext === ".zip" && fs.existsSync(archivePath) && fs.statSync(archivePath).size >= LARGE_ARCHIVE_THRESHOLD_BYTES;
 
   if (ext === ".7z" || zipHandledBySevenZip) {
-    const entries: string[] = [];
-    await new Promise<void>((resolve, reject) => {
-      const stream = Seven.list(archivePath, { $bin: resolveUnpackedBinaryPath(path7za) });
-      stream.on("data", (data: any) => {
-        if (data?.file) entries.push(data.file);
-      });
-      stream.on("end", () => resolve());
-      stream.on("error", (err: Error) => reject(err));
-    });
-    const dangerous = entries.find(isDangerousEntryPath);
-    if (dangerous) {
-      throw new Error(`File rejected for security reasons: suspicious entry in the ${ext} ("${dangerous}").`);
-    }
+    await validateWithSevenZipList(archivePath, ext);
     return;
   }
 
@@ -168,21 +157,112 @@ async function validateArchiveEntries(archivePath: string): Promise<void> {
   // (confirmado na versão instalada) — não precisa de checagem adicional aqui.
 }
 
+async function validateWithSevenZipList(archivePath: string, ext: string): Promise<void> {
+  const entries: string[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const stream = Seven.list(archivePath, { $bin: sevenZipBinary() });
+    stream.on("data", (data: any) => {
+      if (data?.file) entries.push(data.file);
+    });
+    stream.on("end", () => resolve());
+    stream.on("error", (err: Error) => reject(explainSevenZipError(err)));
+  });
+  const dangerous = entries.find(isDangerousEntryPath);
+  if (dangerous) {
+    throw new Error(`File rejected for security reasons: suspicious entry in the ${ext} ("${dangerous}").`);
+  }
+}
+
+export type ArchiveFormat = ".zip" | ".7z" | ".rar";
+
+/**
+ * O formato de VERDADE do arquivo, pelos primeiros bytes — não pela extensão.
+ *
+ * A extensão mente com frequência: link de download sem nome de arquivo cai no
+ * ".zip" padrão, e autor que renomeia um .7z pra .zip existe. Foi o caso do
+ * "ADM-ZIP: Invalid or unsupported zip format. No END header found" relatado
+ * com o Couturier: abrir um .7z (ou um download cortado) como .zip.
+ *
+ * Também pega a página HTML que alguns servidores devolvem no lugar do arquivo
+ * (erro, login, Cloudflare), que antes virava o mesmo erro incompreensível.
+ */
+export function detectArchiveFormat(archivePath: string): ArchiveFormat | "html" | "empty" | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(archivePath, "r");
+    const buf = Buffer.alloc(512);
+    const lidos = fs.readSync(fd, buf, 0, buf.length, 0);
+    if (lidos === 0) return "empty";
+    const b = buf.subarray(0, lidos);
+    if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07)) return ".zip";
+    if (b.length >= 6 && b.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]))) return ".7z";
+    if (b.length >= 6 && b.subarray(0, 6).equals(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]))) return ".rar";
+    const texto = b.toString("utf-8").trimStart().toLowerCase();
+    if (texto.startsWith("<!doctype html") || texto.startsWith("<html") || texto.startsWith("<head") || texto.startsWith("<?xml")) {
+      return "html";
+    }
+    // Zip autoextraível ou com lixo na frente: o diretório central fica no fim,
+    // então ainda pode abrir. A extensão decide.
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 // Acima disso o AdmZip não dá conta (limite de 2 GiB de buffer do Node); a margem
 // evita chegar perto do teto por causa de overhead interno.
 const LARGE_ARCHIVE_THRESHOLD_BYTES = 1_500_000_000;
 
+function sevenZipBinary(): string {
+  return resolveUnpackedBinaryPath(path7za);
+}
+
+/** O 7za.exe está onde deveria? Falta quando o app roda de dentro de um .zip/.rar sem extrair. */
+export function sevenZipAvailable(): boolean {
+  try {
+    return fs.existsSync(sevenZipBinary());
+  } catch {
+    return false;
+  }
+}
+
+export const SEVEN_ZIP_MISSING_MESSAGE =
+  "The bundled 7-Zip helper (7za.exe) is missing. This happens when the app is run from inside a .zip/.rar without extracting it first, or when an antivirus quarantined the file. Extract the whole SPT Mod Manager folder (or use the installer) and try again.";
+
+/**
+ * "spawn ...\7za.exe ENOENT" não diz nada pra ninguém. Era o relato de quem
+ * abriu o app direto de dentro do .rar: o WinRAR extrai só o .exe pra uma pasta
+ * temporária, e o 7za.exe (que mora em resources\app.asar.unpacked) não vem junto.
+ */
+function explainSevenZipError(err: Error): Error {
+  const msg = err?.message ?? String(err);
+  if (/ENOENT/.test(msg) && /7za/i.test(msg)) return new Error(SEVEN_ZIP_MISSING_MESSAGE);
+  if (!sevenZipAvailable()) return new Error(SEVEN_ZIP_MISSING_MESSAGE);
+  return err;
+}
+
 function extractWithSevenZip(archivePath: string, destDir: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const stream = Seven.extractFull(archivePath, destDir, { $bin: resolveUnpackedBinaryPath(path7za) });
+    const stream = Seven.extractFull(archivePath, destDir, { $bin: sevenZipBinary() });
     stream.on("end", () => resolve());
-    stream.on("error", (err: Error) => reject(err));
+    stream.on("error", (err: Error) => reject(explainSevenZipError(err)));
   });
 }
 
+export const DAMAGED_ARCHIVE_MESSAGE =
+  "The archive is damaged or incomplete, so it can't be opened. Download it again; if it keeps failing, the file on the mod page itself may be broken.";
+
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
-  const ext = path.extname(archivePath).toLowerCase();
-  await validateArchiveEntries(archivePath);
+  const porExtensao = path.extname(archivePath).toLowerCase();
+  const detectado = detectArchiveFormat(archivePath);
+  if (detectado === "empty") throw new Error("The downloaded file is empty. Download it again.");
+  if (detectado === "html") {
+    throw new Error("The server sent a web page instead of the mod file. Try again later, or download it from the mod page in your browser.");
+  }
+  const ext: string = detectado ?? porExtensao;
+  await validateArchiveEntries(archivePath, ext as ArchiveFormat);
 
   if (ext === ".zip") {
     // AdmZip carrega o arquivo inteiro na memória (readFileSync), e o Node recusa
@@ -191,13 +271,36 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
     if (fs.statSync(archivePath).size >= LARGE_ARCHIVE_THRESHOLD_BYTES) {
       return extractWithSevenZip(archivePath, destDir);
     }
-    const zip = new AdmZip(archivePath);
-    zip.extractAllTo(destDir, true);
-    return;
+    try {
+      const zip = new AdmZip(archivePath);
+      zip.extractAllTo(destDir, true);
+      return;
+    } catch (errAdm) {
+      // O AdmZip é exigente: zip64, comentário no fim, lixo depois do diretório
+      // central ou zip gerado por ferramenta fora do padrão fazem ele desistir
+      // ("No END header found") onde o 7-Zip abre sem reclamar. Tenta pelo 7za,
+      // passando antes pela mesma conferência de entradas do .7z — aqui não há
+      // a sanitização do AdmZip pra proteger.
+      try {
+        await validateWithSevenZipList(archivePath, ".zip");
+        await extractWithSevenZip(archivePath, destDir);
+        return;
+      } catch (err7) {
+        const m = err7 instanceof Error ? err7.message : String(err7);
+        if (m === SEVEN_ZIP_MISSING_MESSAGE || m.startsWith("File rejected for security reasons")) throw err7;
+        throw new Error(`${DAMAGED_ARCHIVE_MESSAGE} (${errAdm instanceof Error ? errAdm.message : String(errAdm)})`);
+      }
+    }
   }
 
   if (ext === ".7z") {
-    return extractWithSevenZip(archivePath, destDir);
+    try {
+      return await extractWithSevenZip(archivePath, destDir);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      if (m === SEVEN_ZIP_MISSING_MESSAGE) throw err;
+      throw new Error(`${DAMAGED_ARCHIVE_MESSAGE} (${m})`);
+    }
   }
 
   if (ext === ".rar") {
@@ -211,7 +314,7 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
     return;
   }
 
-  throw new Error(`Unsupported archive format: ${ext}. Use .zip, .7z, or .rar.`);
+  throw new Error(`Unsupported archive format: ${porExtensao}. Use .zip, .7z, or .rar.`);
 }
 
 /**
@@ -837,6 +940,38 @@ function hasClientMarkers(dir: string): boolean {
 }
 
 /** Prova FORTE de raiz do servidor: o executável dele. */
+const LAUNCHER_EXE_CANDIDATES = ["SPT.Launcher.exe", "Aki.Launcher.exe"];
+
+/**
+ * Onde está o executável do servidor ou do launcher desta instância.
+ *
+ * O servidor mora na raiz do servidor (SPT_Runtime no 4.1). O launcher varia
+ * conforme a versão e o jeito de instalar: raiz do jogo, raiz do servidor ou uma
+ * subpasta direta da raiz do jogo. Procura nessa ordem e devolve o primeiro.
+ */
+export function findSptExecutable(clientRoot: string, serverRoot: string, alvo: "server" | "launcher"): string | null {
+  const nomes = alvo === "server" ? SERVER_EXE_CANDIDATES : LAUNCHER_EXE_CANDIDATES;
+  const pastas = alvo === "server" ? [serverRoot, clientRoot] : [clientRoot, serverRoot];
+  try {
+    for (const entrada of fs.readdirSync(clientRoot, { withFileTypes: true })) {
+      if (entrada.isDirectory()) pastas.push(path.join(clientRoot, entrada.name));
+    }
+  } catch {
+    // sem listar a raiz, fica com as duas pastas principais
+  }
+  for (const pasta of [...new Set(pastas)]) {
+    for (const nome of nomes) {
+      const alvoExe = path.join(pasta, nome);
+      try {
+        if (fs.statSync(alvoExe).isFile()) return alvoExe;
+      } catch {
+        // não está aqui
+      }
+    }
+  }
+  return null;
+}
+
 export function hasServerExe(dir: string): boolean {
   return SERVER_EXE_CANDIDATES.some((exe) => fs.existsSync(path.join(dir, exe)));
 }
@@ -926,9 +1061,87 @@ export function resolveSptInstance(chosenPath: string): { instance: SptInstanceP
   return null;
 }
 
+// --- Arquivos de dados do app dentro da instância ---
+//
+// Até a 0.7.0 ficavam soltos na raiz do SPT (.spt-mod-manager-*.json), junto dos
+// executáveis — e quem organiza atalhos do servidor e do launcher nessa pasta
+// pediu pra tirar dali. Agora moram em <raiz do servidor>/user/spt-mod-manager/:
+// continuam dentro da instância (vão junto se ela for copiada pra outro PC) e o
+// SPT ignora pastas desconhecidas em user/.
+//
+// "Raiz do servidor" e não a pasta passada: no layout dividido do 4.1 a pasta
+// passada é a do jogo (client), e criar um user/ ali seria lixo novo na raiz —
+// justamente o que se queria evitar. Sem servidor detectável (testes, instância
+// incompleta), cai na própria pasta passada.
+export const META_DIR_PARTS = ["user", "spt-mod-manager"];
+export type MetaFile = "registry" | "aliases" | "manifest" | "forge-match" | "categories";
+
+const metaDirPorRaiz = new Map<string, string>();
+
+export function getMetaDir(root: string): string {
+  const guardado = metaDirPorRaiz.get(root);
+  if (guardado) return guardado;
+  let base = root;
+  try {
+    const servidor = resolveSptInstance(root)?.instance.serverRoot;
+    if (servidor && fs.existsSync(servidor)) base = servidor;
+  } catch {
+    // detecção é melhoria; sem ela, a pasta passada serve
+  }
+  const dir = path.join(base, ...META_DIR_PARTS);
+  metaDirPorRaiz.set(root, dir);
+  return dir;
+}
+
+/** Onde o arquivo morava até a 0.7.0. */
+export function legacyMetaPath(root: string, nome: MetaFile): string {
+  return path.join(root, `.spt-mod-manager-${nome}.json`);
+}
+
+/**
+ * Caminho do arquivo de dados, migrando o da 0.7.0 na primeira vez que é pedido.
+ *
+ * A migração MOVE (não copia): deixar a cópia antiga na raiz não resolveria o
+ * pedido, e duas cópias divergiriam. Se o novo já existe, o antigo fica onde
+ * está — é sobra de alguém que voltou pra 0.7.0, e o novo é o que vale.
+ */
+export function metaPath(root: string, nome: MetaFile): string {
+  const dir = getMetaDir(root);
+  const novo = path.join(dir, `${nome}.json`);
+  const antigo = legacyMetaPath(root, nome);
+  try {
+    if (!fs.existsSync(novo) && fs.existsSync(antigo)) {
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.renameSync(antigo, novo);
+      } catch {
+        // rename recusado (antivírus segurando o arquivo, outro disco): copia e
+        // tenta apagar; se não apagar, o novo já vale e o antigo vira sobra inofensiva
+        fs.copyFileSync(antigo, novo);
+        try {
+          fs.rmSync(antigo, { force: true });
+        } catch {
+          // fica pra próxima
+        }
+      }
+    }
+  } catch {
+    // sem migrar, lê o antigo pra não sumir com os dados de ninguém
+    if (!fs.existsSync(novo) && fs.existsSync(antigo)) return antigo;
+  }
+  return novo;
+}
+
+/** Grava um arquivo de dados criando a pasta se preciso. */
+function gravarMeta(root: string, nome: MetaFile, dados: unknown) {
+  const alvo = metaPath(root, nome);
+  fs.mkdirSync(path.dirname(alvo), { recursive: true });
+  gravarJsonAtomico(alvo, dados);
+}
+
 // --- Registro local de mods instalados via app (pra saber a diferença de "instalado manualmente") ---
 function getRegistryPath(sptPath: string): string {
-  return path.join(sptPath, ".spt-mod-manager-registry.json");
+  return metaPath(sptPath, "registry");
 }
 
 function loadRegistry(sptPath: string): RegistryEntry[] {
@@ -966,7 +1179,7 @@ export function gravarJsonAtomico(target: string, dados: unknown) {
 }
 
 function saveRegistry(sptPath: string, entries: RegistryEntry[]) {
-  gravarJsonAtomico(getRegistryPath(sptPath), entries);
+  gravarMeta(sptPath, "registry", entries);
 }
 
 function addToRegistry(sptPath: string, entry: RegistryEntry) {
@@ -991,10 +1204,10 @@ function removeFromRegistry(sptPath: string, id: string, type?: ModType) {
 
 // --- Aliases (nome de exibição customizado, não mexe em arquivo nenhum) ---
 function getAliasesPath(sptPath: string): string {
-  return path.join(sptPath, ".spt-mod-manager-aliases.json");
+  return metaPath(sptPath, "aliases");
 }
 
-function loadAliases(sptPath: string): Record<string, string> {
+export function loadAliases(sptPath: string): Record<string, string> {
   const aliasPath = getAliasesPath(sptPath);
   if (!fs.existsSync(aliasPath)) return {};
   try {
@@ -1004,8 +1217,8 @@ function loadAliases(sptPath: string): Record<string, string> {
   }
 }
 
-function saveAliases(sptPath: string, aliases: Record<string, string>) {
-  gravarJsonAtomico(getAliasesPath(sptPath), aliases);
+export function saveAliases(sptPath: string, aliases: Record<string, string>) {
+  gravarMeta(sptPath, "aliases", aliases);
 }
 
 export function setModAlias(sptPath: string, modId: string, alias: string): { success: boolean; message: string } {
@@ -1027,7 +1240,7 @@ export function setModAlias(sptPath: string, modId: string, alias: string): { su
 // cada arquivo que entrou, pra esse "mod" pelo menos aparecer como uma linha removível na lista
 // em vez de virar um registro fantasma que ninguém consegue gerenciar.
 function getManifestPath(sptPath: string): string {
-  return path.join(sptPath, ".spt-mod-manager-manifest.json");
+  return metaPath(sptPath, "manifest");
 }
 
 function loadManifest(sptPath: string): Record<string, string[]> {
@@ -1041,7 +1254,7 @@ function loadManifest(sptPath: string): Record<string, string[]> {
 }
 
 function saveManifest(sptPath: string, manifest: Record<string, string[]>) {
-  gravarJsonAtomico(getManifestPath(sptPath), manifest);
+  gravarMeta(sptPath, "manifest", manifest);
 }
 
 function addManifestEntry(sptPath: string, id: string, relativeFiles: string[]) {
@@ -1315,10 +1528,16 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       //
       // Pra mod colocado à mão não existe esse registro, e aí o DLL é a única
       // fonte — continua valendo como antes.
+      //
+      // Acima de tudo, a versão que a pessoa informou ao vincular o mod à mão:
+      // é a única fonte pra mod que não declara versão nenhuma.
       version:
-        registryEntry?.source === "archive-install" && registryEntry.forgeVersion
+        casamentos[cleanName]?.version ??
+        (registryEntry?.source === "archive-install" && registryEntry.forgeVersion
           ? registryEntry.forgeVersion
-          : metadata.version ?? registryEntry?.forgeVersion,
+          : metadata.version ?? registryEntry?.forgeVersion),
+      versionManual: casamentos[cleanName]?.version ? true : undefined,
+      forgeLinkManual: casamentos[cleanName]?.manual?.[activeSource.key] ? true : undefined,
       // Autor segue a regra antiga: o DLL primeiro. Nome de autor não muda a
       // cada versão, então não gera o mesmo falso positivo.
       author: metadata.author ?? registryEntry?.forgeAuthor,
@@ -1339,8 +1558,9 @@ export function scanMods(clientRoot: string, serverRoot: string): ModInfo[] {
       //
       // Só vale quando o id gravado é DESTA fonte: ids não são intercambiáveis,
       // e o da outra levaria a um mod diferente.
-      forgeModId:
-        registryEntry?.forgeId && registryEntry.forgeSourceKey === activeSource.key
+      forgeModId: casamentos[cleanName]?.manual?.[activeSource.key]
+        ? idDoCasamento(casamentos, cleanName)
+        : registryEntry?.forgeId && registryEntry.forgeSourceKey === activeSource.key
           ? registryEntry.forgeId
           : idDoCasamento(casamentos, cleanName),
       sptVersion: metadata.sptVersion,
@@ -2098,7 +2318,14 @@ function findPackageSiblings(clientRoot: string, modId: string, modType: ModType
   );
 }
 
-export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo): { success: boolean; message: string } {
+export function toggleMod(
+  clientRoot: string,
+  serverRoot: string,
+  mod: ModInfo,
+  // Trocar de perfil de mods aplica o estado de CADA parte, uma a uma: a cascata
+  // aqui faria uma parte arrastar a outra pro estado errado e as duas brigarem.
+  cascata = true
+): { success: boolean; message: string } {
   if (mod.type === "client" && isProtectedClientEntry(mod.id)) {
     return { success: false, message: "This item is one of SPT's own files (not a mod) and can't be toggled." };
   }
@@ -2159,7 +2386,9 @@ export function toggleMod(clientRoot: string, serverRoot: string, mod: ModInfo):
   // As outras partes do mesmo pacote acompanham: um mod com metade servidor e metade
   // cliente meio desabilitado normalmente não funciona, e o usuário quase nunca quer isso.
   let movedSiblings = 0;
-  if (mod.packageSiblings?.length) {
+  if (!cascata) {
+    // só esta parte
+  } else if (mod.packageSiblings?.length) {
     // O scan já sabe quais são as outras partes, e nesses casos ele sabe melhor que
     // o registro: num pacote inferido os nomes das pastas podem diferir
     // ("MoreBotsServer" e "MoreBotsAPI"), e num pacote reunido pela identidade da
@@ -2548,20 +2777,41 @@ export function setModSource(key: string | null | undefined): ModSource {
   return activeSource;
 }
 
+/**
+ * Um id gravado na fonte X vale na fonte ativa? Vale na mesma fonte, e entre as
+ * que herdaram a numeração da Forge original (sp-mod e Forge Alt).
+ */
+export function idValeNaFonteAtiva(sourceKey: string | undefined): boolean {
+  if (!sourceKey) return false;
+  if (sourceKey === activeSource.key) return true;
+  return LEGACY_ID_SOURCES.has(sourceKey) && LEGACY_ID_SOURCES.has(activeSource.key);
+}
+
 export function getModSource(): ModSource {
   return activeSource;
 }
 
 /** Responde rápido se a fonte está de pé, pra falhar com mensagem clara na troca. */
 export async function pingModSource(apiBase: string): Promise<boolean> {
+  return (await pingModSourceDetailed(apiBase)) === null;
+}
+
+/**
+ * Igual ao pingModSource, mas diz POR QUE falhou (null = respondeu). Sem o
+ * motivo, "X didn't respond" não deixava distinguir DNS, bloqueio, timeout ou
+ * servidor fora do ar — e quem relata o erro não tem como descobrir sozinho.
+ */
+export async function pingModSourceDetailed(apiBase: string): Promise<string | null> {
   try {
-    const res = await fetch(`${apiBase}/ping`, {
+    const res = await httpFetch(`${apiBase}/ping`, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(8000)
+      signal: AbortSignal.timeout(10000)
     });
-    return res.ok;
-  } catch {
-    return false;
+    return res.ok ? null : `HTTP ${res.status}`;
+  } catch (err) {
+    const nome = (err as { name?: string } | null)?.name;
+    if (nome === "TimeoutError" || nome === "AbortError") return "timeout";
+    return err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -2574,6 +2824,21 @@ export interface ForgeUpdateItem {
   reason?: string;
   /** Id do mod na fonte, pra abrir a página dele direto na aba de versões. */
   modId?: number;
+  /**
+   * Só em atualização bloqueada: os mods instalados que travam, e o que cada um
+   * aceita. Vem pronto da fonte (blocking_mods); o app só ignorava o campo.
+   */
+  blockingMods?: BlockingMod[];
+}
+
+export interface BlockingMod {
+  /** Nome como aparece na lista (pasta), não o publicado. */
+  name: string;
+  modId?: number;
+  /** Versão instalada do mod que trava. */
+  version?: string;
+  /** O que ele aceita da dependência, ex.: "~2.0.15". */
+  constraint?: string;
 }
 
 export interface ForgeUpdateCheckResult {
@@ -2989,7 +3254,7 @@ async function forgeFetch(url: string, init?: RequestInit): Promise<Response> {
   const rotulo = rotuloEndpoint(url);
   const acc = forgeStats.porEndpoint.get(rotulo) ?? { n: 0, ms: 0 };
   try {
-    return await fetch(url, {
+    return await httpFetch(url, {
       ...init,
       headers: { Accept: "application/json", "User-Agent": "SPT-Mod-Manager", ...(init?.headers ?? {}) }
     });
@@ -3172,7 +3437,6 @@ async function fetchForgeByGuids(guids: string[], budget: ForgeBudget): Promise<
  * lote por GUID, que é uma requisição pra cada 25 mods. Na prática: a primeira checagem
  * é lenta, as próximas são quase instantâneas.
  */
-const FORGE_MATCH_CACHE_FILE = ".spt-mod-manager-forge-match.json";
 
 /**
  * O cache guarda o ID NUMÉRICO da fonte, POR FONTE.
@@ -3208,6 +3472,18 @@ interface MatchCacheEntry {
    * anotação vence (ver MATCH_MISS_TTL_DAYS) e a busca completa acontece de novo.
    */
   misses?: Record<string, string>;
+  /**
+   * Fontes em que o id foi ESCOLHIDO pela pessoa ("Vincular à página do mod"),
+   * não descoberto pela busca. A checagem nunca sobrescreve um id manual: se a
+   * pessoa teve que vincular na mão, é porque a busca por nome erra esse mod.
+   */
+  manual?: Record<string, true>;
+  /**
+   * Versão instalada informada pela pessoa, pra mod que não declara versão
+   * (sem package.json, DLL sem número) ou declara errado. Sem ela a checagem só
+   * consegue dizer "a mais nova é X", nunca "há atualização".
+   */
+  version?: string;
 }
 
 /** Quanto tempo confiar num "não achei" antes de procurar de novo. */
@@ -3227,7 +3503,7 @@ const LEGACY_SOURCE_KEY = "legacy-forge";
 
 export function loadForgeMatchCache(root: string): Record<string, MatchCacheEntry> {
   try {
-    const file = path.join(root, FORGE_MATCH_CACHE_FILE);
+    const file = metaPath(root, "forge-match");
     if (!fs.existsSync(file)) return {};
     const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (typeof parsed !== "object" || !parsed) return {};
@@ -3241,6 +3517,14 @@ export function loadForgeMatchCache(root: string): Record<string, MatchCacheEntr
         out[folderName] = { ids: { ...(value as any).ids } };
         const misses = (value as any).misses;
         if (misses && typeof misses === "object") out[folderName].misses = { ...misses };
+        const manual = (value as any).manual;
+        if (manual && typeof manual === "object") {
+          const limpo: Record<string, true> = {};
+          for (const [k, v] of Object.entries(manual)) if (v === true) limpo[k] = true;
+          if (Object.keys(limpo).length) out[folderName].manual = limpo;
+        }
+        const versao = (value as any).version;
+        if (typeof versao === "string" && versao.trim()) out[folderName].version = versao.trim().slice(0, 64);
       }
     }
     return out;
@@ -3275,7 +3559,6 @@ function idDoCasamento(cache: Record<string, MatchCacheEntry>, pasta: string): n
  *   e, na 0.8.0, entra nos perfis).
  * ========================================================================== */
 
-const CATEGORIES_FILE = ".spt-mod-manager-categories.json";
 
 export interface CategoriasCustom {
   categories: { id: string; name: string }[];
@@ -3291,7 +3574,7 @@ interface ArquivoCategorias {
 function lerArquivoCategorias(root: string): ArquivoCategorias {
   const vazio: ArquivoCategorias = { fonte: {}, custom: { categories: [], assign: {} } };
   try {
-    const file = path.join(root, CATEGORIES_FILE);
+    const file = metaPath(root, "categories");
     if (!fs.existsSync(file)) return vazio;
     const bruto = JSON.parse(fs.readFileSync(file, "utf-8"));
     return { fonte: validaFonte(bruto?.fonte), custom: validaCustom(bruto?.custom) };
@@ -3301,7 +3584,7 @@ function lerArquivoCategorias(root: string): ArquivoCategorias {
 }
 
 function gravarArquivoCategorias(root: string, dados: ArquivoCategorias): void {
-  gravarJsonAtomico(path.join(root, CATEGORIES_FILE), dados);
+  gravarMeta(root, "categories", dados);
 }
 
 function validaFonte(bruto: unknown): Record<string, Record<string, string>> {
@@ -3425,14 +3708,191 @@ export function forgetForgeMatch(root: string, folderName: string): void {
 
 export function saveForgeMatchCache(root: string, cache: Record<string, MatchCacheEntry>): void {
   try {
-    gravarJsonAtomico(path.join(root, FORGE_MATCH_CACHE_FILE), cache);
+    gravarMeta(root, "forge-match", cache);
   } catch {
     // cache é otimização, não pode derrubar a checagem se falhar ao gravar
   }
 }
 
+/**
+ * Lê o que a pessoa colou no "Vincular à página do mod": id puro, endereço da
+ * página com id (/mod/791/sain, /mods/791) ou só com slug (/mods/sain, como na
+ * Forge Alt). Devolve o que der pra tirar dali; quem confirma é a API.
+ */
+export function parseForgeModReference(entrada: string): { id?: number; slug?: string } | null {
+  const texto = entrada.trim();
+  if (!texto) return null;
+  if (/^\d+$/.test(texto)) {
+    const id = Number(texto);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : null;
+  }
+  let caminho = texto;
+  try {
+    caminho = new URL(texto).pathname;
+  } catch {
+    // não é URL: trata como caminho ou slug solto
+  }
+  const partes = caminho.split(/[/#?]/).filter(Boolean);
+  const i = partes.findIndex((p) => p === "mod" || p === "mods");
+  const resto = i >= 0 ? partes.slice(i + 1) : partes;
+  if (resto.length === 0) return null;
+  if (/^\d+$/.test(resto[0])) {
+    const id = Number(resto[0]);
+    return Number.isSafeInteger(id) && id > 0 ? { id, slug: resto[1] } : null;
+  }
+  const slug = resto[0].toLowerCase();
+  return /^[a-z0-9][a-z0-9-_.]*$/.test(slug) ? { slug } : null;
+}
+
+/** Confirma na fonte ativa que o mod existe, pelo id ou pelo slug exato. */
+async function resolverReferenciaForge(ref: { id?: number; slug?: string }): Promise<{ id: number; name: string } | null> {
+  const budget = newForgeBudget(2);
+  const url = new URL(`${activeSource.apiBase}/mods`);
+  if (ref.id) url.searchParams.set("filter[id]", String(ref.id));
+  else if (ref.slug) url.searchParams.set("filter[slug]", ref.slug);
+  else return null;
+  url.searchParams.set("per_page", "50");
+  const json = await forgeFetchJson(url.toString(), budget);
+  const lista: any[] = Array.isArray(json?.data) ? json.data : [];
+  // filter[slug] é fuzzy: só serve o slug IGUAL ao pedido.
+  const achado = ref.id
+    ? lista.find((m) => Number(m?.id) === ref.id)
+    : lista.find((m) => typeof m?.slug === "string" && m.slug.toLowerCase() === ref.slug);
+  if (!achado || !Number.isInteger(Number(achado.id))) return null;
+  return { id: Number(achado.id), name: typeof achado.name === "string" ? achado.name : String(achado.id) };
+}
+
+/**
+ * "Vincular à página do mod": a pessoa diz qual mod do catálogo é este, e
+ * opcionalmente qual versão está instalada. Pedido do raydenx, pra mods sem
+ * package.json ou sem versão, que a busca automática não acha ou não compara.
+ *
+ * Guardado no mesmo cache de casamento (por nome original da pasta), marcado
+ * como manual pra que a checagem nunca o troque.
+ */
+export async function setManualForgeMatch(
+  root: string,
+  folderName: string,
+  referencia: string,
+  versao?: string
+): Promise<{ success: boolean; message: string; modName?: string }> {
+  const ref = parseForgeModReference(referencia);
+  if (!ref) return { success: false, message: "Paste the mod's page address or its numeric id." };
+  const achado = await resolverReferenciaForge(ref);
+  if (!achado) return { success: false, message: `Couldn't find that mod on ${activeSource.label}.` };
+  const cache = loadForgeMatchCache(root);
+  const anterior = cache[folderName] ?? { ids: {} };
+  const misses = { ...(anterior.misses ?? {}) };
+  delete misses[activeSource.key];
+  const v = typeof versao === "string" ? versao.trim().slice(0, 64) : "";
+  const entrada: MatchCacheEntry = {
+    ids: { ...anterior.ids, [activeSource.key]: String(achado.id) },
+    manual: { ...(anterior.manual ?? {}), [activeSource.key]: true }
+  };
+  if (Object.keys(misses).length) entrada.misses = misses;
+  if (v) entrada.version = v;
+  cache[folderName] = entrada;
+  saveForgeMatchCache(root, cache);
+  return { success: true, message: `Linked to "${achado.name}".`, modName: achado.name };
+}
+
+/** Desfaz o vínculo manual (e a versão informada) desta pasta. */
+export function clearManualForgeMatch(root: string, folderName: string): void {
+  const cache = loadForgeMatchCache(root);
+  const entrada = cache[folderName];
+  if (!entrada) return;
+  // Some o id escolhido à mão também: deixar ele lá faria a busca continuar
+  // usando o vínculo que a pessoa acabou de desfazer.
+  for (const fonte of Object.keys(entrada.manual ?? {})) delete entrada.ids[fonte];
+  delete entrada.manual;
+  delete entrada.version;
+  cache[folderName] = entrada;
+  saveForgeMatchCache(root, cache);
+}
+
+/**
+ * Quais mods do catálogo são compatíveis com o Fika, por id. Pra filtrar a
+ * lista de INSTALADOS (o catálogo já filtra no servidor). Fica só em memória:
+ * a marcação muda quando o autor atualiza a página, e uma consulta em lote por
+ * 50 mods a cada sessão é barato.
+ */
+const fikaPorFonte = new Map<string, Map<string, boolean | null>>();
+
+export async function fetchModFika(ids: number[]): Promise<Record<string, boolean | null>> {
+  const daFonte = fikaPorFonte.get(activeSource.key) ?? new Map<string, boolean | null>();
+  fikaPorFonte.set(activeSource.key, daFonte);
+  const faltando = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0).map(String))].filter((id) => !daFonte.has(id));
+  if (faltando.length > 0) {
+    const budget = newForgeBudget(faltando.length);
+    for (const fatia of fatiarPorTamanho(faltando, 1500, 50)) {
+      const url = new URL(`${activeSource.apiBase}/mods`);
+      url.searchParams.set("filter[id]", fatia.join(","));
+      url.searchParams.set("per_page", "50");
+      const json = await forgeFetchJson(url.toString(), budget);
+      if (!json) continue; // sem rede: tenta de novo da próxima vez
+      const vistos = new Set<string>();
+      for (const mod of Array.isArray(json?.data) ? json.data : []) {
+        if (mod?.id === undefined) continue;
+        vistos.add(String(mod.id));
+        daFonte.set(String(mod.id), typeof mod.fika_compatibility === "boolean" ? mod.fika_compatibility : null);
+      }
+      // Pedido e não veio: não existe nesta fonte. Anota pra não perguntar de novo.
+      for (const id of fatia) if (!vistos.has(id)) daFonte.set(id, null);
+    }
+  }
+  const out: Record<string, boolean | null> = {};
+  for (const id of ids) {
+    const v = daFonte.get(String(id));
+    if (v !== undefined) out[String(id)] = v;
+  }
+  return out;
+}
+
+/**
+ * Lê o blocking_mods da fonte. Formato conferido no sp-mod (nov/2026):
+ *   { mod_id, mod_guid, mod_name, current_version, constraint, incompatible_with }
+ * Cada campo é conferido: lista vinda de fora não derruba a checagem.
+ */
+export function paraBloqueadores(
+  bruto: unknown,
+  nomeLocal: (guid: string | undefined, nome: string | undefined) => string
+): BlockingMod[] | undefined {
+  if (!Array.isArray(bruto)) return undefined;
+  const out: BlockingMod[] = [];
+  for (const b of bruto) {
+    if (!b || typeof b !== "object") continue;
+    const guid = typeof b.mod_guid === "string" ? b.mod_guid : undefined;
+    const nome = typeof b.mod_name === "string" ? b.mod_name : undefined;
+    if (!guid && !nome) continue;
+    out.push({
+      name: nomeLocal(guid, nome),
+      modId: Number.isInteger(Number(b.mod_id)) && Number(b.mod_id) > 0 ? Number(b.mod_id) : undefined,
+      version: typeof b.current_version === "string" ? b.current_version : undefined,
+      constraint: typeof b.constraint === "string" ? b.constraint.slice(0, 60) : undefined
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Link de download de uma versão específica de um mod. Pro "Atualizar mesmo
+ * assim" (pedido do Vorax): a resposta de update bloqueado não traz link, mas
+ * a lista de versões do mod traz.
+ */
+export async function resolveVersionDownloadLink(modId: number, versao: string): Promise<string | null> {
+  if (!Number.isInteger(modId) || modId <= 0 || !versao) return null;
+  const url = new URL(`${activeSource.apiBase}/mods`);
+  url.searchParams.set("filter[id]", String(modId));
+  url.searchParams.set("include", "versions");
+  url.searchParams.set("per_page", "1");
+  const json = await forgeFetchJson(url.toString(), newForgeBudget(1));
+  const mod = Array.isArray(json?.data) ? json.data.find((m: any) => Number(m?.id) === modId) : undefined;
+  const alvo = (Array.isArray(mod?.versions) ? mod.versions : []).find((v: any) => v?.version === versao);
+  return typeof alvo?.link === "string" && alvo.link ? alvo.link : null;
+}
+
 export async function matchForgeMods(
-  input: (string | { folderName: string; guid?: string })[],
+  input: (string | { folderName: string; guid?: string; id?: number })[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
 ): Promise<Map<string, ForgeMatch> & { notChecked?: Set<string> }> {
@@ -3441,18 +3901,27 @@ export async function matchForgeMods(
   const cache = cacheRoot ? loadForgeMatchCache(cacheRoot) : {};
   console.log(`[checagem] cacheRoot=${cacheRoot ?? "(nenhum!)"} entradas no cache=${Object.keys(cache).length}`);
   const entries = input
-    .map((v) => (typeof v === "string" ? { folderName: v, guid: undefined as string | undefined } : { ...v }))
+    .map((v) =>
+      typeof v === "string" ? { folderName: v, guid: undefined as string | undefined, id: undefined as number | undefined } : { ...v }
+    )
     // Mod já resolvido numa checagem anterior, na fonte ATIVA (ou numa que herdou
     // a numeração da Forge original).
     .map((e) => ({
       ...e,
-      cachedId: cachedIdFor(cache[e.folderName], activeSource.key),
+      // Id que veio junto (perfil exportado com o id do catálogo) vale como cache:
+      // é o casamento exato, sem busca por nome.
+      cachedId: e.id !== undefined && e.id > 0 ? String(e.id) : cachedIdFor(cache[e.folderName], activeSource.key),
       // Procurado a fundo há pouco e não encontrado: entra nos lotes (que são
       // baratos) mas pula a cadeia lenta de estratégias por nome.
       missRecente: missAindaVale(cache[e.folderName], activeSource.key)
     }));
 
   const pulaBuscaLenta = new Set(entries.filter((e) => e.missRecente).map((e) => e.folderName));
+  // Vinculados à mão: vale só o id escolhido. Se ele sumiu do catálogo, melhor
+  // "não encontrado" do que a busca por nome casar com outro mod por conta própria.
+  const soVinculoManual = new Set(
+    entries.filter((e) => e.cachedId && cache[e.folderName]?.manual?.[activeSource.key]).map((e) => e.folderName)
+  );
   const folderNames = entries.map((e) => e.folderName);
   const budget = newForgeBudget(folderNames.length);
   const matched = new Map<string, ForgeMatch>();
@@ -3490,7 +3959,7 @@ export async function matchForgeMods(
     reportProgress();
   }
 
-  const guidEntries = entries.filter((e) => e.guid && !matched.has(e.folderName));
+  const guidEntries = entries.filter((e) => e.guid && !matched.has(e.folderName) && !soVinculoManual.has(e.folderName));
   if (guidEntries.length > 0) {
     const byGuid = new Map<string, any>();
     for (const entry of await fetchForgeByGuids(guidEntries.map((e) => e.guid!), budget)) {
@@ -3519,6 +3988,11 @@ export async function matchForgeMods(
   for (const [folderName, cand] of candidatesByName) {
     if (matched.has(folderName)) continue; // já resolvido pelos lotes de id/guid
     if (budget.aborted) break;
+    if (soVinculoManual.has(folderName)) {
+      exhausted++;
+      reportProgress();
+      continue;
+    }
     if (pulaBuscaLenta.has(folderName)) {
       // Já procuramos tudo por este nos últimos dias e não existe no catálogo.
       // Repetir gastaria segundos pra chegar na mesma resposta.
@@ -3611,14 +4085,18 @@ export async function matchForgeMods(
     for (const [folderName, match] of matched) {
       if (!match.modId) continue;
       const anterior = updated[folderName] ?? { ids: {} };
+      // Vínculo manual manda: a busca nunca troca o que a pessoa escolheu.
+      if (anterior.manual?.[activeSource.key]) continue;
       const misses = { ...(anterior.misses ?? {}) };
       // Achou agora: apaga a anotação de "não existe" desta fonte, senão ela
       // continuaria pulando a busca caso o id saia do cache depois.
       delete misses[activeSource.key];
       updated[folderName] = {
+        ...anterior,
         ids: { ...anterior.ids, [activeSource.key]: String(match.modId) },
-        ...(Object.keys(misses).length ? { misses } : {})
+        misses: Object.keys(misses).length ? misses : undefined
       };
+      if (!updated[folderName].misses) delete updated[folderName].misses;
     }
 
     // Anota quem esgotou a busca sem achar. Só quem foi REALMENTE procurado: mod
@@ -3628,6 +4106,7 @@ export async function matchForgeMods(
       if (matched.has(folderName) || notChecked.has(folderName)) continue;
       if (pulaBuscaLenta.has(folderName)) continue; // mantém a data original
       const anterior = updated[folderName] ?? { ids: {} };
+      if (anterior.manual?.[activeSource.key]) continue; // vinculado à mão: não é "não existe"
       updated[folderName] = {
         ...anterior,
         misses: { ...(anterior.misses ?? {}), [activeSource.key]: agora }
@@ -3924,14 +4403,14 @@ export function resolveModDependencies(
 }
 
 export async function findForgeDownloadsForNames(
-  entries: { name: string; guid?: string; version?: string }[],
+  entries: { name: string; guid?: string; version?: string; id?: number }[],
   onProgress?: (done: number, total: number) => void,
   cacheRoot?: string
 ): Promise<Record<string, { downloadLink: string; version?: string; forgeName?: string; guid?: string; author?: string; modId?: number }>> {
   // Quando a lista exportada traz o GUID, o casamento é exato e resolvido em lote —
   // sem adivinhação por nome. Listas antigas (sem GUID) continuam funcionando pelo nome.
   const matches = await matchForgeMods(
-    entries.map((e) => ({ folderName: e.name, guid: e.guid })),
+    entries.map((e) => ({ folderName: e.name, guid: e.guid, id: e.id })),
     onProgress,
     cacheRoot
   );
@@ -4184,8 +4663,12 @@ export async function checkForgeUpdates(
       name: nameFor(b.current_version?.guid, b.current_version?.name),
       currentVersion: b.current_version?.version,
       recommendedVersion: b.latest_version?.version,
+      // Sem link: a fonte não oferece download de update bloqueado. O
+      // "Atualizar mesmo assim" busca o link na lista de versões do mod.
+      guid: b.current_version?.guid,
       reason: b.block_reason,
-      modId: numeroOuNada(b.current_version?.mod_id)
+      modId: numeroOuNada(b.current_version?.mod_id),
+      blockingMods: paraBloqueadores(b.blocking_mods, (g, n) => nameFor(g ?? "", n))
     })),
     upToDate: (primeiro.up_to_date || []).map((u: any) => ({
       name: nameFor(u.guid, u.name),
@@ -4619,7 +5102,7 @@ export function criarTarefaDeDownload(
     if (continuando) recebido = fs.statSync(arquivoParcial!).size;
     const headers: Record<string, string> = continuando && recebido > 0 ? { Range: `bytes=${recebido}-` } : {};
 
-    const res = await fetch(downloadLink, { signal, headers });
+    const res = await httpFetch(downloadLink, { signal, headers });
     if (!res.ok) {
       // 416: o pedaço guardado já é o arquivo inteiro (ou o servidor mudou o arquivo). Recomeça.
       if (res.status === 416 && continuando) {
@@ -4644,6 +5127,11 @@ export function criarTarefaDeDownload(
       }
     }
     if (!anexar) total = Number(res.headers.get("content-length") || 0);
+    // Resposta comprimida em trânsito (gzip/br): o content-length é do tamanho
+    // comprimido e o corpo chega descomprimido, então a conferência de "baixou
+    // tudo?" lá embaixo acusaria download incompleto num arquivo perfeito.
+    const codificacao = (res.headers.get("content-encoding") ?? "").trim().toLowerCase();
+    if (!anexar && codificacao && codificacao !== "identity") total = 0;
 
     if (!iniciado) {
       iniciado = true;
@@ -4911,7 +5399,7 @@ function compareVersions(a: string, b: string): number {
 
 export async function checkAppUpdate(currentVersion: string): Promise<AppUpdateInfo> {
   try {
-    const res = await fetch(GITHUB_RELEASES_API, {
+    const res = await httpFetch(GITHUB_RELEASES_API, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "SPT-Mod-Manager" }
     });
     // Falha de rede, rate limit (a API pública do GitHub limita por IP) ou repo sem

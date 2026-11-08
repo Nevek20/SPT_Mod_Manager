@@ -51,17 +51,22 @@ O app também verifica se saiu versão nova dele mesmo, então você não precis
 - **Verificar atualizações** compara cada mod instalado com a fonte e coloca um chip de status em cada linha: atualização disponível, bloqueada ou incompatível com a sua versão do SPT.
 - **Atualizar todos** instala tudo na ordem das dependências. Quando o mod A precisa da versão nova do mod B, o B vai primeiro.
 - Atualizar mantém o que você tinha: mod desativado continua desativado, e se a versão nova mudou o nome da pasta, a antiga é removida em vez de ficar lá carregando duas vezes.
+- **Vincular à página do mod** (no menu ⋮ do mod) diz ao app qual mod do catálogo é aquela pasta, pra mods que ele não acha pelo nome. Dá pra informar também a versão instalada, pra mod que não declara versão, e a checagem passa a comparar.
 
 ### Organizar
 - Ative e desative sem apagar nada.
-- A lista em árvore junta as partes de um mod numa linha só, com filtros por tipo, status e origem, e ordenação por nome, tipo, status, origem ou data de instalação.
+- A lista em árvore junta as partes de um mod numa linha só, com filtros por tipo, status, origem e compatibilidade com Fika, e ordenação por nome, tipo, status, origem ou data de instalação.
+- **⟳** (ou F5) relê a pasta do SPT, e mod adicionado ou removido na mão aparece sem reiniciar o app.
+- Inicie o servidor e o launcher do SPT direto do cabeçalho.
 - Renomeie como um mod aparece sem mexer em nenhum arquivo de verdade.
 - Selecione vários mods (Shift+Clique pra um intervalo) e ative, desative ou remova de uma vez.
 - Abra a pasta do mod (qualquer uma das metades, em mod de server + client) ou a página dele na fonte.
 
-### Listas de mods
-- Exporte sua lista de mods pra um arquivo e importe em outro PC ou numa instalação nova.
-- Na importação, o app compara com o que está instalado, baixa as versões exatas que faltam e oferece desativar o que sobra.
+### Perfis de mods
+- Tenha várias montagens na mesma instalação do SPT (solo, Fika com os amigos, testes...), no estilo do MO2. Cada perfil lembra quais mods fazem parte dele e quais ficam ativos, além dos nomes de exibição, das categorias próprias e dos vínculos manuais com a página do mod.
+- O perfil ativo salva sozinho: tudo que você faz no app entra nele. Trocar pra outro perfil desativa os mods que não fazem parte dele (nada é apagado) e oferece baixar os que ele tem e não estão instalados.
+- A troca é bloqueada com o jogo ou o servidor do SPT abertos, porque os arquivos ficam travados.
+- Exporte um perfil pra um arquivo e importe em outro PC, numa instalação nova ou no jogo de um amigo: ele leva a versão e o ID do catálogo de cada mod, então as versões exatas são baixadas. Listas de mods exportadas por versões antigas continuam importando, como perfil novo.
 
 ### Segurança
 - Os arquivos do próprio SPT (como o `spt-core.dll`) nunca aparecem nem são mexidos como se fossem mod, e um mod que traga a própria cópia não sobrescreve a sua.
@@ -71,6 +76,11 @@ O app também verifica se saiu versão nova dele mesmo, então você não precis
 
 ### Idiomas
 English, Português, 中文, Русский, Français, 日本語 e Deutsch, escolhido pelo idioma do sistema na primeira vez que abre.
+
+### Aparência
+- Temas: Sistema, Escuro, Claro, Areia, Preto (OLED), Oliva e Alto contraste.
+- Escolha a sua cor de destaque pros botões e títulos. Se ela ficar difícil de ler no tema, o app escurece ou clareia o tom sozinho.
+- Modo daltônico, separado do tema: troca o verde e o vermelho dos status por azul e laranja, que os tipos mais comuns de daltonismo conseguem distinguir.
 
 ---
 
@@ -107,10 +117,13 @@ Pra mods instalados pelo app, vale a versão que a fonte informou na instalaçã
 Mods do SPT 4.x cuidam da própria ordem de carregamento, então o app não renomeia pasta nem força ordem nenhuma. Pastas antigas com prefixo numérico (`01_nomedomod`) continuam sendo lidas e ordenadas certo.
 
 ### Arquivos que o app guarda na pasta do SPT
-- `.spt-mod-manager-registry.json`: quais mods o app instalou e o que a fonte disse sobre eles
-- `.spt-mod-manager-aliases.json`: os nomes de exibição que você escolheu
-- `.spt-mod-manager-manifest.json`: arquivos soltos que um mod trouxe fora da própria pasta, pra saírem junto com ele
-- `.spt-mod-manager-forge-match.json`: IDs do catálogo guardados, pra checagem de atualização ser rápida
+Todos ficam em `<pasta do servidor do SPT>/user/spt-mod-manager/` (no SPT 4.1, `SPT_Runtime/user/spt-mod-manager/`), e a raiz da pasta do SPT fica limpa. Até a 0.7.0 eles ficavam na raiz como `.spt-mod-manager-*.json`; a 0.7.1 move tudo sozinha na primeira vez que abre a instância.
+- `registry.json`: quais mods o app instalou e o que a fonte disse sobre eles
+- `aliases.json`: os nomes de exibição que você escolheu
+- `manifest.json`: arquivos soltos que um mod trouxe fora da própria pasta, pra saírem junto com ele
+- `forge-match.json`: IDs do catálogo guardados, pra checagem de atualização ser rápida, e os seus vínculos manuais
+- `categories.json`: suas categorias e as categorias do catálogo guardadas
+- `profiles.json`: seus perfis de mods
 
 ---
 
@@ -146,10 +159,14 @@ electron/
   preload.ts       expõe window.modManagerAPI pra interface
   modManager.ts    tudo que mexe em disco ou na rede
   sources.ts       fontes de mods (sp-mod.com, Forge Alt)
+  http.ts          requisições de rede (pilha do Chromium, com o fetch do Node de reserva)
+  launch.ts        inicia o servidor e o launcher do SPT
+  profiles.ts      perfis de mods (trocar, exportar, importar)
   peVersion.ts     lê a versão do SPT do SPT.Server.exe
 src/
   App.tsx          a interface
   modTree.ts       agrupa as partes dos mods na lista em árvore
+  theme.ts         temas, cor de destaque e modo daltônico
   i18n.ts          os 7 dicionários
   reportError.ts   monta o relato de erro
 tests/             um arquivo por área (npm test roda todos)

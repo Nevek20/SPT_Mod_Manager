@@ -1,8 +1,11 @@
 import { MOD_SOURCES, getSourceByKey } from "./sources";
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, clipboard } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, clipboard, net } from "electron";
+import { setHttpFetch } from "./http";
 import path from "path";
 import os from "os";
 import fs from "fs";
+import { iniciarExecutavel, estaRodando } from "./launch";
+import { listProfiles, createProfile, renameProfile, deleteProfile, switchProfile, exportProfile, importProfile } from "./profiles";
 import Store from "electron-store";
 import {
   resolveSptInstance,
@@ -13,14 +16,12 @@ import {
   uninstallMod,
   setModAlias,
   resolveModPath,
-  exportModListData,
-  compareModList,
   detectConflicts,
   detectSptVersion,
   detectSptSemver,
   setModSource,
   getModSource,
-  pingModSource,
+  pingModSourceDetailed,
   checkSptCompatibility,
   checkForgeUpdates,
   getForgeSptVersions,
@@ -44,7 +45,14 @@ import {
   loadCustomCategories,
   saveCustomCategories,
   configureDownloadCache,
-  getDownloadCache
+  getDownloadCache,
+  sevenZipAvailable,
+  findSptExecutable,
+  setManualForgeMatch,
+  clearManualForgeMatch,
+  fetchModFika,
+  resolveVersionDownloadLink,
+  SEVEN_ZIP_MISSING_MESSAGE
 } from "./modManager";
 import { CACHE_DEFAULT_GB, CACHE_LIMIT_OPTIONS_GB, GB } from "./downloadCache";
 import { DownloadQueue, MAX_DOWNLOADS_OPTIONS } from "./downloadQueue";
@@ -84,6 +92,14 @@ configureDownloadCache(path.join(app.getPath("userData"), "download-cache"), lim
 // conforto de leitura, não enfeite (a tentativa de fazer a rolagem em JS ficou
 // pior que a nativa e foi descartada).
 app.commandLine.appendSwitch("enable-smooth-scrolling");
+
+// Rede pela pilha do Chromium (proxy do sistema, VPN, certificados do Windows),
+// a mesma do navegador. Ver http.ts. O net.fetch só existe com o app pronto;
+// qualquer pedido feito antes disso espera.
+setHttpFetch(async (url, init) => {
+  if (!app.isReady()) await app.whenReady();
+  return net.fetch(url, init as RequestInit);
+});
 
 // Aplica a fonte salva antes de qualquer chamada de rede. Sem isto o app usaria
 // o padrão até a primeira troca, ignorando a escolha do usuário na sessão toda.
@@ -215,8 +231,31 @@ function ajustarRefererDasImagens() {
   );
 }
 
+/**
+ * Rodando de dentro de um .zip/.rar sem extrair? O WinRAR e o Explorer extraem
+ * só o .exe pra uma pasta temporária, e tudo que mora ao lado dele (o 7za.exe em
+ * resources\app.asar.unpacked, por exemplo) fica pra trás. O app até abre, mas
+ * a primeira instalação de .7z falha com "spawn ...7za.exe ENOENT". Melhor avisar
+ * logo na abertura, com a solução, do que deixar a pessoa descobrir no erro.
+ */
+function avisarSeRodandoDeDentroDoArquivo() {
+  if (!app.isPackaged || process.platform !== "win32") return;
+  const exe = process.execPath;
+  const pastaTemporaria = /[\\/]Temp[\\/](Rar\$|7z|Temp\d+_|wz)/i.test(exe);
+  if (!pastaTemporaria && sevenZipAvailable()) return;
+  dialog.showMessageBoxSync({
+    type: "warning",
+    title: "SPT Mod Manager",
+    message: pastaTemporaria
+      ? "SPT Mod Manager is running from inside a .zip/.rar archive."
+      : "Some of SPT Mod Manager's files are missing.",
+    detail: `${SEVEN_ZIP_MISSING_MESSAGE}\n\n${exe}`
+  });
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  avisarSeRodandoDeDentroDoArquivo();
   ajustarRefererDasImagens();
   createWindow();
   app.on("activate", () => {
@@ -342,8 +381,8 @@ ipcMain.handle("set-mod-source", async (_event, key: string) => {
   const source = getSourceByKey(key);
   // Confere que a fonte responde ANTES de salvar. Salvar primeiro deixaria o
   // usuário preso numa fonte fora do ar, sem entender por que nada carrega.
-  const alive = await pingModSource(source.apiBase);
-  if (!alive) return { success: false, message: `${source.label} didn't respond.` };
+  const motivo = await pingModSourceDetailed(source.apiBase);
+  if (motivo !== null) return { success: false, message: `${source.label} didn't respond (${motivo}).` };
   store.set("modSourceKey", source.key);
   setModSource(source.key);
   return { success: true, activeKey: source.key };
@@ -483,7 +522,7 @@ ipcMain.handle("open-release-page", (_event, url: string) => {
   return { success: false };
 });
 
-ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string; version?: string }[]) => {
+ipcMain.handle("find-forge-downloads-for-names", async (_event, entries: { name: string; guid?: string; version?: string; id?: number }[]) => {
   try {
     return await findForgeDownloadsForNames(
       entries,
@@ -723,60 +762,172 @@ ipcMain.handle("open-mod-folder", (_event, mod: ModInfo) => {
   return { success: true, message: "Folder opened." };
 });
 
-ipcMain.handle("export-mod-list", async () => {
+// --- IPC: iniciar servidor e launcher ---
+// Pedido do .dussim: com o app aberto o tempo todo, abrir o servidor e o
+// launcher sem sair dele fecha o ciclo "instala, testa, ajusta". Ver launch.ts.
+function alvoValido(alvo: unknown): alvo is "server" | "launcher" {
+  return alvo === "server" || alvo === "launcher";
+}
+
+ipcMain.handle("get-launch-targets", () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { server: false, launcher: false };
+  const serverRoot = getServerRoot()!;
+  return {
+    server: findSptExecutable(sptPath, serverRoot, "server") !== null,
+    launcher: findSptExecutable(sptPath, serverRoot, "launcher") !== null
+  };
+});
+
+ipcMain.handle("launch-spt", async (_event, alvo: unknown) => {
+  if (!alvoValido(alvo)) return { success: false, message: "Invalid target." };
   const sptPath = store.get("sptPath");
   if (!sptPath) return { success: false, message: "No SPT instance configured." };
+  const exe = findSptExecutable(sptPath, getServerRoot()!, alvo);
+  if (!exe) {
+    return {
+      success: false,
+      message: alvo === "server" ? "SPT.Server.exe wasn't found in this instance." : "SPT.Launcher.exe wasn't found in this instance."
+    };
+  }
+  // Clicar duas vezes subiria dois servidores brigando pela mesma porta.
+  if (await estaRodando(exe)) {
+    return { success: false, message: alvo === "server" ? "The server is already running." : "The launcher is already running." };
+  }
+  try {
+    await iniciarExecutavel(exe);
+    return { success: true, message: alvo === "server" ? "Starting the SPT server..." : "Starting the SPT launcher..." };
+  } catch (err) {
+    return { success: false, message: `Couldn't start ${path.basename(exe)}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+});
 
-  const data = exportModListData(sptPath, getServerRoot()!);
+// --- IPC: vínculo manual com a página do mod ---
+ipcMain.handle("set-manual-forge-match", async (_event, folderName: unknown, referencia: unknown, versao: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
+  if (typeof folderName !== "string" || !folderName || folderName.length > 260) return { success: false, message: "Invalid mod." };
+  if (typeof referencia !== "string" || referencia.length > 500) return { success: false, message: "Paste the mod's page address or its numeric id." };
+  try {
+    return await setManualForgeMatch(sptPath, folderName, referencia, typeof versao === "string" ? versao : undefined);
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle("clear-manual-forge-match", (_event, folderName: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath || typeof folderName !== "string" || !folderName) return { success: false };
+  clearManualForgeMatch(sptPath, folderName);
+  return { success: true };
+});
+
+// "Atualizar mesmo assim" de uma atualização bloqueada: a fonte não manda o
+// link junto com o bloqueio, então ele é buscado na lista de versões do mod.
+ipcMain.handle("resolve-version-link", async (_event, modId: unknown, versao: unknown) => {
+  if (typeof modId !== "number" || typeof versao !== "string" || versao.length > 64) return null;
+  try {
+    return await resolveVersionDownloadLink(modId, versao);
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("fetch-mod-fika", async (_event, ids: unknown) => {
+  if (!Array.isArray(ids)) return {};
+  try {
+    return await fetchModFika(ids.filter((id): id is number => typeof id === "number"));
+  } catch {
+    return {};
+  }
+});
+
+// --- IPC: perfis de mods (ver profiles.ts) ---
+// Trocar de perfil move pastas de mod: com o jogo ou o servidor aberto, os
+// arquivos estão travados e a troca ficaria pela metade.
+async function jogoOuServidorAbertos(): Promise<boolean> {
+  const sptPath = store.get("sptPath");
+  const serverExe = sptPath ? findSptExecutable(sptPath, getServerRoot()!, "server") : null;
+  const checagens = [estaRodando("EscapeFromTarkov.exe")];
+  if (serverExe) checagens.push(estaRodando(serverExe));
+  return (await Promise.all(checagens)).some(Boolean);
+}
+
+function semInstancia() {
+  return { success: false, message: "No SPT instance configured." };
+}
+
+ipcMain.handle("list-profiles", () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { active: "", profiles: [] };
+  return listProfiles(sptPath, getServerRoot()!);
+});
+
+ipcMain.handle("create-profile", (_event, nome: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return semInstancia();
+  return filaDownloads.exclusive(() => createProfile(sptPath, getServerRoot()!, typeof nome === "string" ? nome : ""));
+});
+
+ipcMain.handle("rename-profile", (_event, id: unknown, nome: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath || typeof id !== "string") return semInstancia();
+  return filaDownloads.exclusive(() => renameProfile(sptPath, getServerRoot()!, id, typeof nome === "string" ? nome : ""));
+});
+
+ipcMain.handle("delete-profile", (_event, id: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath || typeof id !== "string") return semInstancia();
+  return filaDownloads.exclusive(() => deleteProfile(sptPath, getServerRoot()!, id));
+});
+
+ipcMain.handle("switch-profile", async (_event, id: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath || typeof id !== "string") return { ...semInstancia(), missing: [], disabled: [], failed: [] };
+  if (await jogoOuServidorAbertos()) {
+    return {
+      success: false,
+      message: "Close the game and the SPT server before switching mod profiles.",
+      missing: [],
+      disabled: [],
+      failed: []
+    };
+  }
+  // Mesmo cadeado das instalações: trocar no meio de uma instalação misturaria os dois.
+  return filaDownloads.exclusive(() => switchProfile(sptPath, getServerRoot()!, id));
+});
+
+ipcMain.handle("export-profile", async () => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return semInstancia();
+  const data = exportProfile(sptPath, getServerRoot()!);
+  if (!data) return { success: false, message: "Mod profile not found." };
+  const sugestao = `${data.profileName.replace(/[<>:"/\\|?*]+/g, "_")}.spt-modprofile.json`;
   const result = await dialog.showSaveDialog({
-    defaultPath: "spt-modlist.json",
+    defaultPath: sugestao,
     filters: [{ name: "JSON", extensions: ["json"] }]
   });
   if (result.canceled || !result.filePath) return { success: false, message: "Cancelled." };
-
   fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2), "utf-8");
   return { success: true, message: `List exported with ${data.mods.length} mod(s) to ${path.basename(result.filePath)}.` };
 });
 
-ipcMain.handle("import-mod-list", async () => {
+ipcMain.handle("import-profile", async () => {
   const sptPath = store.get("sptPath");
-  if (!sptPath) return { success: false, message: "No SPT instance configured." };
-
+  if (!sptPath) return semInstancia();
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
     filters: [{ name: "JSON", extensions: ["json"] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, message: "Cancelled." };
-
   try {
-    const raw = fs.readFileSync(result.filePaths[0], "utf-8");
-    const parsed = JSON.parse(raw);
-    const names: string[] = Array.isArray(parsed.mods)
-      ? parsed.mods.map((m: { name?: string }) => m.name).filter((n: unknown): n is string => typeof n === "string")
-      : [];
-    if (names.length === 0) {
+    const arquivo = result.filePaths[0];
+    // Lista de mods é texto pequeno; acima disso é arquivo errado.
+    if (fs.statSync(arquivo).size > 20 * 1024 * 1024) {
       return { success: false, message: "This file doesn't look like a mod list exported by this app." };
     }
-    // Repassa os GUIDs da lista (quando existirem) pra que a restauração case por
-    // identificador exato em vez de tentar adivinhar pelo nome da pasta.
-    const guidByName: Record<string, string> = {};
-    // A versão também: restaurar é reproduzir a instalação que a pessoa tinha,
-    // não atualizar tudo pro mais novo. O dado já estava sendo exportado e só
-    // não era lido de volta.
-    const versionByName: Record<string, string> = {};
-    for (const entry of parsed.mods as { name?: string; guid?: string; version?: string }[]) {
-      if (typeof entry?.name !== "string") continue;
-      if (typeof entry.guid === "string") guidByName[entry.name] = entry.guid;
-      if (typeof entry.version === "string") versionByName[entry.name] = entry.version;
-    }
-    const comparison = compareModList(sptPath, getServerRoot()!, names);
-    return {
-      success: true,
-      message: `Compared against ${names.length} mod(s) from the imported list.`,
-      comparison,
-      guidByName,
-      versionByName
-    };
+    const parsed = JSON.parse(fs.readFileSync(arquivo, "utf-8"));
+    return filaDownloads.exclusive(() => importProfile(sptPath, getServerRoot()!, parsed, arquivo));
   } catch (err) {
     return { success: false, message: "Error reading the file: " + (err as Error).message };
   }

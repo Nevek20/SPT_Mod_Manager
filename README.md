@@ -51,17 +51,22 @@ The app can also check for new versions of itself, so you don't have to come bac
 - **Check for updates** compares every installed mod against the source, with a status chip on each row: update available, blocked, incompatible with your SPT version.
 - **Update all** installs everything in dependency order. When mod A needs the new version of mod B, B goes first.
 - Updating keeps what you had: a disabled mod stays disabled, and if the new version renamed its folder, the old one is removed instead of left behind to load twice.
+- **Link to mod page** (in a mod's ⋮ menu) tells the app which catalogue mod a folder is, for mods it can't find by name. You can also type the installed version, for mods that don't declare one, so the update check can compare it.
 
 ### Organize
 - Enable and disable without deleting anything.
-- A tree view groups multi-part mods under one row, with filters by type, status and origin, and sorting by name, type, status, origin or install date.
+- A tree view groups multi-part mods under one row, with filters by type, status, origin and Fika compatibility, and sorting by name, type, status, origin or install date.
+- **⟳** (or F5) re-reads the SPT folder, so mods added or removed by hand show up without restarting the app.
+- Start the SPT server and launcher from the header.
 - Rename how a mod shows up without touching any real file.
 - Select several mods (Shift+Click for a range) and enable, disable or remove them at once.
 - Open a mod's folder (either half, for server + client mods) or its page on the source.
 
-### Mod lists
-- Export your mod list to a file, and import it on another PC or a fresh install.
-- On import, the app compares against what's installed, downloads the exact versions that are missing and offers to disable the extras.
+### Mod profiles
+- Keep several setups in the same SPT install (solo, Fika with friends, testing...), MO2-style. Each profile remembers which mods belong to it and which are active, plus your display names, custom categories and manual mod page links.
+- The active profile saves itself: whatever you do in the app is part of it. Switching to another profile disables the mods that aren't in it (nothing is deleted) and offers to download the ones it has that aren't installed.
+- Switching is blocked while the game or the SPT server is running, since their files are locked.
+- Export a profile to a file and import it on another PC, a fresh install or a friend's game: it carries each mod's version and catalogue ID, so the exact versions are downloaded. Mod lists exported by older versions still import, as a new profile.
 
 ### Safety
 - SPT's own files (like `spt-core.dll`) are never listed or touched as if they were mods, and a mod that ships its own copy can't overwrite yours.
@@ -71,6 +76,11 @@ The app can also check for new versions of itself, so you don't have to come bac
 
 ### Languages
 English, Português, 中文, Русский, Français, 日本語 and Deutsch, picked from your system language on first launch.
+
+### Appearance
+- Themes: System, Dark, Light, Sand, Black (OLED), Olive and High contrast.
+- Pick your own accent color for buttons and headings. If it would be hard to read on the theme, the app darkens or lightens it by itself.
+- Colorblind mode, separate from the theme: swaps the green and red of statuses for blue and orange, which the common kinds of color blindness can tell apart.
 
 ---
 
@@ -107,10 +117,13 @@ For mods installed through the app, the version the source reported at install t
 SPT 4.x mods handle their own load order, so the app doesn't rename folders or force any order. Older folders with a numeric prefix (`01_modname`) are still read and sorted correctly.
 
 ### Files the app keeps in your SPT folder
-- `.spt-mod-manager-registry.json`: which mods the app installed, and what the source said about them
-- `.spt-mod-manager-aliases.json`: your custom display names
-- `.spt-mod-manager-manifest.json`: loose files a mod brought along outside its own folder, so they're removed with it
-- `.spt-mod-manager-forge-match.json`: cached catalogue IDs for faster update checks
+All of them live in `<SPT server folder>/user/spt-mod-manager/` (on SPT 4.1, that's `SPT_Runtime/user/spt-mod-manager/`), so the root of your SPT folder stays clean. Versions up to 0.7.0 kept them in the root as `.spt-mod-manager-*.json`; they're moved automatically the first time 0.7.1 opens the instance.
+- `registry.json`: which mods the app installed, and what the source said about them
+- `aliases.json`: your custom display names
+- `manifest.json`: loose files a mod brought along outside its own folder, so they're removed with it
+- `forge-match.json`: cached catalogue IDs for faster update checks, plus your manual links
+- `categories.json`: your custom categories and the cached catalogue categories
+- `profiles.json`: your mod profiles
 
 ---
 
@@ -146,10 +159,14 @@ electron/
   preload.ts       exposes window.modManagerAPI to the UI
   modManager.ts    everything that touches disk or the network
   sources.ts       mod sources (sp-mod.com, Forge Alt)
+  http.ts          network requests (Chromium network stack, with Node fallback)
+  launch.ts        starts the SPT server and launcher
+  profiles.ts      mod profiles (switch, export, import)
   peVersion.ts     reads the SPT version from SPT.Server.exe
 src/
   App.tsx          the UI
   modTree.ts       groups mod parts into the tree view
+  theme.ts         themes, accent color and colorblind mode
   i18n.ts          the 7 dictionaries
   reportError.ts   builds the error report
 tests/             one file per area (npm test runs all of them)

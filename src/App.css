@@ -33,7 +33,12 @@
   /* Assinatura — âmbar de sinalização (fita de risco), não laranja genérico */
   --accent: #c8752e;
   --accent-strong: #e08d3f;
-  --accent-wash: rgba(200, 117, 46, 0.14);
+  /* Derivadas do destaque por color-mix: seguem a cor que a pessoa escolher
+     (src/theme.ts) sem precisar recalcular cada uma em JS. */
+  --accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* Texto em cima do destaque (botão primário). */
+  --on-accent: #1a1509;
 
   /* Status */
   --ok: #7a9456;
@@ -51,7 +56,10 @@
   --type-client-wash: rgba(122, 95, 143, 0.18);
   --border-strong: #3a4252;
   --badge-bg: rgba(0, 0, 0, 0.2);
-  --bulk-bar-bg: #6b4e36;
+  --bulk-bar-bg: color-mix(in srgb, var(--accent) 40%, var(--bg-panel));
+  --neutral-wash: rgba(154, 162, 176, 0.12);
+  --danger-wash: color-mix(in srgb, var(--danger) 14%, transparent);
+  --danger-border: color-mix(in srgb, var(--danger) 45%, transparent);
   --overlay: rgba(17, 14, 10, 0.88);
   --overlay-soft: rgba(10, 8, 6, 0.72);
 
@@ -79,7 +87,10 @@
   --text-faint: #8a93a1;
   --accent: #b0611d;
   --accent-strong: #a45a1a;
-  --accent-wash: rgba(200, 117, 46, 0.12);
+  /* Branco no botão: o texto escuro dos temas escuros dava 3,96:1 sobre este
+     laranja, abaixo dos 4,5:1 mínimos pra texto. Branco dá 4,59:1. */
+  --on-accent: #ffffff;
+  --accent-wash: color-mix(in srgb, var(--accent) 12%, transparent);
   --ok: #5d7a3a;
   --ok-strong: #4f6a2f;
   --danger: #a8492f;
@@ -90,7 +101,7 @@
   --type-client: #6a4a85;
   --type-client-border: #a78cbf;
   --type-client-wash: rgba(122, 95, 143, 0.12);
-  --bulk-bar-bg: #f3dfc9;
+  --bulk-bar-bg: color-mix(in srgb, var(--accent) 22%, var(--bg-panel));
   --badge-bg: transparent;
   --overlay: rgba(238, 240, 243, 0.92);
   --overlay-soft: rgba(20, 22, 26, 0.45);
@@ -108,7 +119,109 @@
   --text: #2a241b;
   --text-dim: #5f5446;
   --text-faint: #8f8270;
-  --bulk-bar-bg: #f0dcc0;
+}
+
+/* Preto (OLED): o escuro com preto puro. Em tela OLED o pixel preto fica
+   apagado; e à noite é o que menos ilumina o quarto. */
+:root[data-theme="black"] {
+  --bg: #000000;
+  --bg-panel: #0b0b0b;
+  --bg-panel-raised: #141414;
+  --border: #262626;
+  --border-soft: #1a1a1a;
+  --border-strong: #333333;
+  --text: #e6e6e6;
+  --text-dim: #9c9c9c;
+  --text-faint: #767676;
+  --badge-bg: rgba(255, 255, 255, 0.04);
+  --overlay: rgba(0, 0, 0, 0.9);
+  --overlay-soft: rgba(0, 0, 0, 0.75);
+}
+
+/* Oliva: equipamento militar. Verde-oliva escuro, texto de lona e destaque
+   cáqui no lugar do âmbar. */
+:root[data-theme="olive"] {
+  --bg: #191b14;
+  --bg-panel: #22251b;
+  --bg-panel-raised: #2b2f23;
+  --border: #3a3f2e;
+  --border-soft: #2d3125;
+  --border-strong: #4a5039;
+  --text: #e6e3d3;
+  --text-dim: #aaa78f;
+  --text-faint: #858270;
+  --accent: #c4a35a;
+  --accent-strong: #d8b96d;
+  --ok: #8aa65c;
+  --ok-strong: #a9c47a;
+  --danger: #b0553a;
+  --danger-strong: #cf7357;
+  --type-server: #9fbccc;
+  --type-server-border: #5a7584;
+  --type-server-wash: rgba(90, 117, 132, 0.2);
+  --type-client: #c8aecb;
+  --type-client-border: #7f6584;
+  --type-client-wash: rgba(127, 101, 132, 0.2);
+  --neutral-wash: rgba(170, 167, 143, 0.12);
+  --overlay: rgba(15, 16, 11, 0.9);
+  --overlay-soft: rgba(10, 11, 7, 0.72);
+}
+
+/* Alto contraste: fundo preto, texto branco, bordas claras e cores fortes.
+   Todo texto passa de 7:1 contra o fundo, e o mais apagado passa de 4,5:1. */
+:root[data-theme="contrast"] {
+  --bg: #000000;
+  --bg-panel: #000000;
+  --bg-panel-raised: #0f0f0f;
+  --border: #9a9a9a;
+  --border-soft: #6e6e6e;
+  --border-strong: #ffffff;
+  --text: #ffffff;
+  --text-dim: #e6e6e6;
+  --text-faint: #c8c8c8;
+  --accent: #ffb347;
+  --accent-strong: #ffc670;
+  --on-accent: #000000;
+  --ok: #6fdc6f;
+  --ok-strong: #9cf09c;
+  --danger: #ff7a6b;
+  --danger-strong: #ff9d91;
+  --type-server: #a6d4ff;
+  --type-server-border: #a6d4ff;
+  --type-server-wash: rgba(166, 212, 255, 0.14);
+  --type-client: #e2b8ff;
+  --type-client-border: #e2b8ff;
+  --type-client-wash: rgba(226, 184, 255, 0.14);
+  --badge-bg: transparent;
+  --neutral-wash: rgba(255, 255, 255, 0.1);
+  --overlay: rgba(0, 0, 0, 0.94);
+  --overlay-soft: rgba(0, 0, 0, 0.8);
+}
+
+/* Modo daltônico: independente do tema. Troca o par verde x vermelho dos
+   status pelo par azul x laranja-avermelhado (Okabe-Ito), que deuteranopia,
+   protanopia e tritanopia distinguem. Vem DEPOIS dos temas: com a mesma
+   especificidade, ganha o que está mais abaixo. */
+:root[data-cvd="on"] {
+  --ok: #4a9fd8;
+  --ok-strong: #7cc0ec;
+  --danger: #d9692a;
+  --danger-strong: #f08a4b;
+}
+
+:root[data-cvd="on"][data-theme="light"],
+:root[data-cvd="on"][data-theme="sand"] {
+  --ok: #0072b2;
+  --ok-strong: #005a8c;
+  --danger: #c4500a;
+  --danger-strong: #a3430a;
+}
+
+:root[data-cvd="on"][data-theme="contrast"] {
+  --ok: #7cc8ff;
+  --ok-strong: #a8dbff;
+  --danger: #ffa040;
+  --danger-strong: #ffbb73;
 }
 
 * {
@@ -193,7 +306,7 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a1509;
+  color: var(--on-accent);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -203,7 +316,7 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
-  color: #1a1509;
+  color: var(--on-accent);
 }
 
 button.danger:hover:not(:disabled) {
@@ -364,7 +477,8 @@ header h1 {
   margin-bottom: 18px;
 }
 
-.filter-bar select {
+.filter-bar select,
+.profile-bar select {
   background: var(--bg-panel-raised);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1184,11 +1298,6 @@ h2 {
 }
 
 /* Botão de atualizar embutido na linha do painel de resultados da Forge */
-.inline-update-button {
-  padding: 1px 9px;
-  font-size: 11px;
-  vertical-align: middle;
-}
 
 /* Chip que marca um mod como parte de um pacote de várias partes */
 .package-chip {
@@ -1463,19 +1572,19 @@ h2 {
   white-space: nowrap;
   color: var(--accent);
   background: var(--accent-wash);
-  border: 1px solid rgba(200, 117, 46, 0.4);
+  border: 1px solid var(--accent-border);
 }
 
 .dep-outdated .dep-chip {
   color: var(--text-dim);
-  background: rgba(154, 162, 176, 0.12);
+  background: var(--neutral-wash);
   border-color: var(--border-strong);
 }
 
 .dep-unavailable .dep-chip {
   color: var(--danger-strong);
-  background: rgba(168, 73, 47, 0.14);
-  border-color: rgba(168, 73, 47, 0.45);
+  background: var(--danger-wash);
+  border-color: var(--danger-border);
 }
 
 .deps-total {
@@ -1490,12 +1599,12 @@ h2 {
 .forge-chip-deps {
   color: var(--text-dim);
   border-color: var(--border-strong);
-  background: rgba(154, 162, 176, 0.12);
+  background: var(--neutral-wash);
 }
 
 .forge-chip-deps-pending {
   color: var(--accent);
-  border-color: rgba(200, 117, 46, 0.4);
+  border-color: var(--accent-border);
   background: var(--accent-wash);
 }
 
@@ -1514,7 +1623,7 @@ h2 {
 .forge-chip-deps-outdated {
   color: var(--text-dim);
   border-color: var(--border-strong);
-  background: rgba(154, 162, 176, 0.12);
+  background: var(--neutral-wash);
 }
 /* Enquanto a imagem não carregou ela fica fora de vista, com o placeholder por
    baixo. Um <img> em falha desenha o ícone de papel rasgado do navegador, e
@@ -1550,10 +1659,6 @@ WOW TATIKAWA HIIIIIIII!!!!!
 i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot of things... sorry folks.........
 */
 /* Nota nos updates que só destravam depois dos de cima serem instalados. */
-.update-after-note {
-  opacity: 0.7;
-  font-size: 0.85em;
-}
 
 /* Botão "Detalhes" nos erros que dá pra relatar (toast e fila de download). */
 .toast-details {
@@ -1597,15 +1702,6 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
 }
 
 /* "Atualizar todos" ao lado do título da lista de atualizações. */
-.updates-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.update-done-note {
-  color: var(--ok-strong);
-  font-size: 0.9em;
-}
 
 /* ==========================================================================
    Configurações (engrenagem): painel lateral por cima da lista
@@ -2040,7 +2136,7 @@ i'm bad making CSS ( REALLY BAD ), so i just ask Claude to make it for me a lot 
 /* Sem animação: o pulo da seta parecia tremedeira. A cor cheia já avisa. */
 .drag-scroll-zone.active span {
   background: var(--accent);
-  color: #1a1509;
+  color: var(--on-accent);
 }
 
 /* Apoio (Ko-fi) no Sobre das configurações */
@@ -2153,10 +2249,6 @@ button {
   color: var(--accent-strong);
 }
 
-.blocked-updates summary {
-  cursor: pointer;
-  margin: 8px 0;
-}
 
 /* Changelog: ícone de nota que abre um balão (painel de atualizações e chip da lista). */
 .changelog-button {
@@ -2479,4 +2571,522 @@ button {
 
 .forge-browse-modal input[type="checkbox"] {
   accent-color: var(--accent);
+}
+
+/* --- 0.7.1: iniciar servidor/launcher, atualizar lista, filtro Fika, vínculo manual --- */
+.header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.filter-note {
+  color: var(--text-faint);
+  font-size: 12px;
+  align-self: center;
+}
+
+.link-modal {
+  width: min(520px, 92vw);
+}
+
+.link-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.link-field input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+}
+
+.link-modal .confirm-structure-actions {
+  margin-top: 16px;
+}
+
+/* --- 0.8.0: perfis de mods --- */
+.profile-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.profile-label {
+  font-size: 13px;
+  color: var(--text-faint);
+  cursor: help;
+}
+
+.profile-select {
+  min-width: 220px;
+  font-weight: 600;
+}
+
+.profile-delete {
+  max-width: 180px;
+}
+
+/* --- Temas: grade com amostra, cor de destaque --- */
+.settings-block {
+  padding: 6px 0 4px;
+  font-size: 13px;
+}
+
+.settings-block-label {
+  display: block;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.theme-option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.theme-option.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--text);
+}
+
+.theme-preview {
+  position: relative;
+  display: block;
+  height: 40px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.theme-preview-panel {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  right: 22px;
+  bottom: 8px;
+  border-radius: 2px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  line-height: 24px;
+  padding-left: 6px;
+  text-align: left;
+}
+
+.theme-preview-dot {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+}
+
+.theme-option-name {
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.accent-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.accent-swatch.on {
+  border-color: var(--text);
+}
+
+.accent-default {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.accent-default.on,
+.accent-custom.on {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-wash);
+}
+
+.accent-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.accent-custom input[type="color"] {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Alto contraste: foco sempre visível e grosso, pra quem navega pelo teclado. */
+:root[data-theme="contrast"] :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Alto contraste: mod desativado não fica apagado (a transparência derrubava o
+   texto pra baixo de 4,5:1). Ele é marcado pela borda tracejada e pelo selo
+   "Desativado", que já existe na linha. */
+:root[data-theme="contrast"] .mod-item.disabled,
+:root[data-theme="contrast"] .mod-part.disabled {
+  opacity: 1;
+}
+
+:root[data-theme="contrast"] .mod-item.disabled {
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+/* ==========================================================================
+   Painel de atualizações (0.8.0)
+   Lista em colunas: nome | versões | ações. Um só botão de destaque no topo;
+   o resto das ações é discreto, e o que não pede ação fica recolhido.
+   ========================================================================== */
+.upd-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.upd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.upd-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.upd-spt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.upd-head-spacer {
+  flex: 1;
+}
+
+.upd-head .primary {
+  padding: 5px 12px;
+  font-size: 11.5px;
+}
+
+.upd-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.upd-close:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-panel-raised);
+}
+
+.upd-empty,
+.upd-note {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--text-dim);
+}
+
+.upd-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border-soft);
+}
+
+.upd-section + .upd-section {
+  border-top: 1px solid var(--border-soft);
+}
+
+.upd-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 16px 6px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+details.upd-section > summary {
+  cursor: pointer;
+  list-style: none;
+  padding-bottom: 10px;
+}
+
+details.upd-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.upd-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 10px;
+  color: var(--text-faint);
+  transition: transform 0.12s ease;
+}
+
+details.upd-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details.upd-section > summary:hover {
+  color: var(--text);
+}
+
+.upd-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--neutral-wash);
+  color: var(--text-dim);
+}
+
+.upd-section-hint {
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.upd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+}
+
+.upd-row {
+  display: grid;
+  /* Nome com largura limitada: em tela larga, versões a um palmo do nome e não
+     do outro lado da janela. As ações ficam alinhadas à direita. */
+  grid-template-columns: minmax(160px, 380px) 190px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  min-height: 38px;
+}
+
+.upd-row:hover {
+  background: var(--bg-panel-raised);
+}
+
+.upd-row.done {
+  opacity: 0.6;
+}
+
+.upd-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.upd-name > .mod-page-link,
+.upd-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* No painel o nome é link sem sublinhado pontilhado: dezenas de linhas
+   sublinhadas eram boa parte da poluição. O sublinhado aparece no hover. */
+.upd-row .mod-page-link {
+  text-decoration: none;
+  text-align: left;
+  color: var(--text);
+}
+
+.upd-row .mod-page-link:hover:not(:disabled) {
+  text-decoration: underline;
+  color: var(--accent-strong);
+}
+
+.upd-tag,
+.upd-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upd-versions {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.upd-from {
+  color: var(--text-faint);
+}
+
+.upd-arrow {
+  color: var(--text-faint);
+}
+
+.upd-to {
+  color: var(--ok-strong);
+  font-weight: 500;
+}
+
+.upd-to.blocked {
+  color: var(--text-dim);
+}
+
+.upd-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.upd-actions .changelog-button {
+  margin: 0;
+}
+
+.upd-button {
+  padding: 3px 12px;
+  font-size: 12px;
+  border-color: var(--accent-border);
+  color: var(--accent-strong);
+  background: transparent;
+}
+
+.upd-button:hover:not(:disabled) {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.upd-button.ghost {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.upd-button.ghost:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger-strong);
+  background: var(--danger-wash);
+}
+
+.upd-done {
+  font-size: 12px;
+  color: var(--ok-strong);
+}
+
+.upd-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 12px;
+}
+
+.upd-names li {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+}
+
+@media (max-width: 760px) {
+  .upd-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .upd-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
 }

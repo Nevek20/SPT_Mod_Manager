@@ -27,6 +27,10 @@ export interface ModInfo {
    */
   /** Id deste mod na fonte ativa, quando o app o conhece. Abre a página dele. */
   forgeModId?: number;
+  /** O vínculo com a página do catálogo foi escolhido à mão ("Vincular à página do mod"). */
+  forgeLinkManual?: boolean;
+  /** A versão mostrada foi informada à mão, não lida do mod. */
+  versionManual?: boolean;
   /** GUIDs que este mod exige, lidos do DLL. Vazio pra mod sem DLL (package.json). */
   requiresGuids?: string[];
 }

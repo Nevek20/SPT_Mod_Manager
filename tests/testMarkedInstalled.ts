@@ -15,6 +15,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { installedForgeIds } from "../electron/modManager";
+import { metaFile } from "./metaFile";
 
 let ok = 0;
 let fail = 0;
@@ -45,8 +46,8 @@ function monta(c: Cenario): string {
     const dir = p.habilitado === false ? ["user", "mods.disabled"] : ["user", "mods"];
     fs.mkdirSync(path.join(raiz, ...dir, p.nome), { recursive: true });
   }
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-forge-match.json"), JSON.stringify(c.cache ?? {}));
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-registry.json"), JSON.stringify(c.registro ?? []));
+  fs.writeFileSync(metaFile(raiz, "forge-match"), JSON.stringify(c.cache ?? {}));
+  fs.writeFileSync(metaFile(raiz, "registry"), JSON.stringify(c.registro ?? []));
   return raiz;
 }
 
@@ -135,10 +136,10 @@ console.log("\ninstalacao dividida");
   const servidor = path.join(raiz, "SPT_Runtime");
   fs.mkdirSync(path.join(servidor, "user", "mods", "ModDoServidor"), { recursive: true });
   fs.writeFileSync(
-    path.join(raiz, ".spt-mod-manager-forge-match.json"),
+    metaFile(raiz, "forge-match"),
     JSON.stringify({ ModDoServidor: { ids: { "sp-mod": "800" } } })
   );
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-registry.json"), "[]");
+  fs.writeFileSync(metaFile(raiz, "registry"), "[]");
   check("sem a raiz do servidor, nao acha", [...installedForgeIds(raiz).keys()], []);
   check("com a raiz do servidor, acha", [...installedForgeIds(raiz, servidor).keys()], ["800"]);
   fs.rmSync(raiz, { recursive: true, force: true });
@@ -150,7 +151,7 @@ console.log("\nnao pode quebrar com arquivo faltando ou corrompido");
 {
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "spt-vazio-"));
   check("instancia sem arquivo nenhum devolve vazio", [...installedForgeIds(raiz).keys()], []);
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-forge-match.json"), "{ isto nao e json");
+  fs.writeFileSync(metaFile(raiz, "forge-match"), "{ isto nao e json");
   check("cache corrompido nao estoura", [...installedForgeIds(raiz).keys()], []);
   fs.rmSync(raiz, { recursive: true, force: true });
 }

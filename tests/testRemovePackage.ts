@@ -15,6 +15,7 @@ import os from "os";
 import path from "path";
 import { uninstallMod } from "../electron/modManager";
 import type { ModInfo } from "../electron/types";
+import { metaFile } from "./metaFile";
 
 let ok = 0;
 let fail = 0;
@@ -36,7 +37,7 @@ function montaInstancia(): { raiz: string; server: string } {
   fs.writeFileSync(path.join(raiz, "user", "mods", "WTT-ServerCommonLib", "package.json"), "{}");
   fs.writeFileSync(path.join(raiz, "BepInEx", "plugins", "WTT-ClientCommonLib", "lib.dll"), "MZ");
   fs.writeFileSync(
-    path.join(raiz, ".spt-mod-manager-registry.json"),
+    metaFile(raiz, "registry"),
     JSON.stringify([
       { id: "WTT-ServerCommonLib", type: "server", packageId: "src:sp-mod:2310", displayName: "WTT - CommonLib" },
       { id: "WTT-ClientCommonLib", type: "client", packageId: "src:sp-mod:2310", displayName: "WTT - CommonLib" }
@@ -125,7 +126,7 @@ console.log("\nmod solo nao muda de comportamento");
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "spt-solo-"));
   fs.mkdirSync(path.join(raiz, "user", "mods", "SoloMod"), { recursive: true });
   fs.writeFileSync(path.join(raiz, "user", "mods", "SoloMod", "package.json"), "{}");
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-registry.json"), "[]");
+  fs.writeFileSync(metaFile(raiz, "registry"), "[]");
   const r = uninstallMod(raiz, raiz, {
     ...base,
     id: "SoloMod",
@@ -161,7 +162,7 @@ console.log("\ncache de casamento com a fonte sai junto");
 // a linha do .spt-mod-manager-forge-match.json na mao.
 {
   const { raiz, server } = montaInstancia();
-  const arquivoCache = path.join(raiz, ".spt-mod-manager-forge-match.json");
+  const arquivoCache = metaFile(raiz, "forge-match");
   fs.writeFileSync(
     arquivoCache,
     JSON.stringify({

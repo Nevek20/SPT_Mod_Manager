@@ -15,6 +15,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { scanMods } from "../electron/modManager";
+import { metaFile } from "./metaFile";
 
 let ok = 0;
 let fail = 0;
@@ -47,7 +48,7 @@ function monta(registro: unknown[], versaoNoDll?: string): string {
     fs.writeFileSync(path.join(dir, "package.json"), "{}");
   }
 
-  fs.writeFileSync(path.join(raiz, ".spt-mod-manager-registry.json"), JSON.stringify(registro));
+  fs.writeFileSync(metaFile(raiz, "registry"), JSON.stringify(registro));
   return raiz;
 }
 
