@@ -592,6 +592,32 @@ export default function App() {
     setDestaque(valida);
     gravarPreferencia(ACCENT_STORAGE_KEY, valida);
   }
+  // Aceleração de hardware: desligar resolve janela preta por driver de vídeo.
+  // A troca só vale ao reabrir o app; "active" é o que vale agora.
+  const [aceleracao, setAceleracao] = useState<{ enabled: boolean; active: boolean } | null>(null);
+  useEffect(() => {
+    window.modManagerAPI
+      .getHardwareAcceleration()
+      .then((r) => {
+        setAceleracao({ enabled: r.enabled, active: r.active });
+        // O app desligou sozinho depois de a placa de vídeo travar: avisa uma vez.
+        if (r.autoDisabled) {
+          pushToast(t("toast.gpuAutoDisabled"), true);
+          void window.modManagerAPI.ackGpuNotice();
+        }
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  async function mudarAceleracao(ligada: boolean) {
+    await window.modManagerAPI.setHardwareAcceleration(ligada);
+    setAceleracao((a) => (a ? { ...a, enabled: ligada } : a));
+  }
+  async function reiniciarApp() {
+    const r = await window.modManagerAPI.relaunchApp();
+    if (!r.success && r.message) pushToast(tMsg(r.message), false, r.message);
+  }
+
   function mudarDaltonico(ligado: boolean) {
     setDaltonico(ligado);
     gravarPreferencia(CVD_STORAGE_KEY, ligado ? "on" : null);
@@ -718,9 +744,16 @@ export default function App() {
   // "Vincular à página do mod" (pedido do raydenx).
   const [perfis, setPerfis] = useState<{ active: string; profiles: ModProfileSummary[] } | null>(null);
   // Caixa de texto genérica (nome de perfil novo, renomear perfil).
-  const [pedido, setPedido] = useState<{ titulo: string; dica: string; valor: string; responder: (v: string | null) => void } | null>(null);
-  const pedirTexto = (titulo: string, dica: string, valor: string) =>
-    new Promise<string | null>((resolve) => setPedido({ titulo, dica, valor, responder: resolve }));
+  const [pedido, setPedido] = useState<{
+    titulo: string;
+    dica: string;
+    valor: string;
+    /** Aceita texto vazio (ex.: apagar a versão informada). */
+    vazioOk: boolean;
+    responder: (v: string | null) => void;
+  } | null>(null);
+  const pedirTexto = (titulo: string, dica: string, valor: string, vazioOk = false) =>
+    new Promise<string | null>((resolve) => setPedido({ titulo, dica, valor, vazioOk, responder: resolve }));
   const [linkDialog, setLinkDialog] = useState<{ parts: ModInfo[]; name: string; ref: string; version: string; saving: boolean } | null>(null);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -1730,6 +1763,25 @@ export default function App() {
     await refreshMods();
   }
 
+  /**
+   * Só a versão (pedido do raydenx): pra mod que o app já reconhece certo no
+   * catálogo mas que não informa a versão. Vale pra todas as partes do pacote.
+   */
+  async function informarVersao(node: ModTreeNode) {
+    const principal = node.parts[0];
+    const atual = principal.versionManual ? principal.version ?? "" : "";
+    const versao = await pedirTexto(t("version.title", { name: node.name }), t("version.hint"), atual, true);
+    if (versao === null) return;
+    let r: { success: boolean; message: string } = { success: true, message: "" };
+    for (const parte of node.parts) {
+      r = await window.modManagerAPI.setManualVersion(parte.originalName, versao);
+      if (!r.success) break;
+    }
+    pushToast(tMsg(r.message), r.success, r.success ? undefined : r.message);
+    forgetForgeStatus(node.parts.map((p) => p.name));
+    await refreshMods();
+  }
+
   async function handleClearLink(node: ModTreeNode) {
     for (const parte of node.parts) await window.modManagerAPI.clearManualForgeMatch(parte.originalName);
     forgetForgeStatus(node.parts.map((p) => p.name));
@@ -2321,6 +2373,23 @@ export default function App() {
       pushToast(t("browse.noVersionPublished", { name: mod.name }), false);
       return;
     }
+    // Versão feita pra outro SPT: confirma antes. Era o relato do BrownieMug:
+    // o catálogo tem o "Amands' Sense" original (último pro SPT 3.7) e o
+    // "Amands' Sense - Updated"; instalar o primeiro passava calado. E um mod
+    // de servidor fora da faixa faz o SPT 4 não carregar mod de servidor nenhum.
+    if (
+      version.compatibility === "incompatible" &&
+      !(await confirmar(
+        t("browse.confirmIncompatible", {
+          name: mod.name,
+          version: version.version,
+          declared: version.sptConstraint || "?",
+          spt: sptVersionInput || "?"
+        })
+      ))
+    ) {
+      return;
+    }
     marcarInstalando(mod.id, true);
     // Pergunta à fonte o que ESTA versão exige. Falha de rede devolve lista
     // vazia e a instalação segue: a checagem é auxílio, não pedágio.
@@ -2439,6 +2508,7 @@ export default function App() {
     onOpenModPage: handleOpenModPage,
     onReinstall: handleReinstall,
     onLinkModPage: openLinkDialog,
+    onSetVersion: informarVersao,
     onClearLink: handleClearLink,
     onRenameStart: startRename,
     onRenameCancel: cancelRename,
@@ -2744,6 +2814,26 @@ export default function App() {
             <span className="summary-item summary-active">{t("summary.active")} <strong>{summary.active}</strong></span>
             <span className="summary-item summary-disabled">{t("summary.disabled")} <strong>{summary.disabled}</strong></span>
           </div>
+
+          {(() => {
+            // O servidor do SPT 4 não carrega NENHUM mod de servidor se um único
+            // deles declarar uma faixa de SPT que não aceita a versão instalada
+            // (ModValidator: erro e "no mods loaded"). Sem este aviso a pessoa só
+            // descobre no log do servidor, sem saber qual mod é o culpado.
+            const travam = mods.filter((m) => m.type === "server" && m.enabled && m.sptCompatibility === "incompatible");
+            if (travam.length === 0) return null;
+            const nomes = travam.slice(0, 3).map((m) => `${m.name} (${m.sptVersion ?? "?"})`).join(", ");
+            return (
+              <div className="spt-block-warning" role="alert">
+                <strong>{t("warning.serverModsBlockedTitle")}</strong>{" "}
+                {t("warning.serverModsBlocked", {
+                  count: travam.length,
+                  names: nomes + (travam.length > 3 ? t("restore.andMore", { count: travam.length - 3 }) : ""),
+                  version: sptVersionInput || "?"
+                })}
+              </div>
+            );
+          })()}
 
           {perfis && perfis.profiles.length > 0 && (
             <div className="profile-bar">
@@ -3115,17 +3205,33 @@ export default function App() {
                       <span className="upd-count">{forgeResult.incompatible.length}</span>
                     </summary>
                     <ul className="upd-list">
-                      {forgeResult.incompatible.map((i) => (
+                      {forgeResult.incompatible.map((i) => {
+                        const instalado = mods.find((m) => m.name === i.name);
+                        const servidor = instalado?.type === "server";
+                        return (
                         <li key={`incompatible-${i.name}`} className="upd-row">
                           <div className="upd-name">
                             <NomeComPagina nome={i.name} modId={i.modId} titulo={t("forge.openVersions")} />
+                            {i.declaredSpt && (
+                              <span className="upd-sub">
+                                {t("forge.declaresSpt", { declared: i.declaredSpt })}
+                                {/* Mesmo 4.1, só outro patch: num mod de client costuma
+                                    funcionar (o servidor nem confere). Num de servidor, não:
+                                    o servidor recusa e leva os outros mods junto. */}
+                                {i.nearMiss && !servidor && <> · {t("forge.nearMissClient")}</>}
+                                {servidor && instalado?.sptCompatibility === "incompatible" && (
+                                  <span className="upd-danger"> · {t("forge.serverWillRefuse")}</span>
+                                )}
+                              </span>
+                            )}
                           </div>
                           <div className="upd-versions">
                             <span className="upd-from">{i.currentVersion}</span>
                           </div>
                           <div className="upd-actions" />
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </details>
                 )}
@@ -3780,6 +3886,33 @@ export default function App() {
                 </div>
               </div>
               <p className="settings-note">{t("settings.colorblindNote")}</p>
+              {aceleracao && (
+                <>
+                  <div className="settings-row">
+                    <span>{t("settings.hwAccel")}</span>
+                    <div className="segmented" role="radiogroup" aria-label={t("settings.hwAccel")}>
+                      {([true, false] as const).map((ligada) => (
+                        <button
+                          key={String(ligada)}
+                          role="radio"
+                          aria-checked={aceleracao.enabled === ligada}
+                          className={aceleracao.enabled === ligada ? "on" : ""}
+                          onClick={() => void mudarAceleracao(ligada)}
+                        >
+                          {t(ligada ? "settings.hwOn" : "settings.hwOff")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {aceleracao.enabled !== aceleracao.active && (
+                    <div className="settings-row settings-row-end">
+                      <span className="settings-value">{t("settings.hwAccelPending")}</span>
+                      <button onClick={() => void reiniciarApp()}>{t("settings.restartNow")}</button>
+                    </div>
+                  )}
+                  <p className="settings-note">{t("settings.hwAccelNote")}</p>
+                </>
+              )}
               <div className="settings-row">
                 <span>{t("settings.animations")}</span>
                 <div className="segmented" role="radiogroup" aria-label={t("settings.animations")}>
@@ -3948,7 +4081,7 @@ export default function App() {
                 value={pedido.valor}
                 onChange={(e) => setPedido({ ...pedido, valor: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && pedido.valor.trim()) {
+                  if (e.key === "Enter" && (pedido.vazioOk || pedido.valor.trim())) {
                     pedido.responder(pedido.valor);
                     setPedido(null);
                   }
@@ -3970,7 +4103,7 @@ export default function App() {
               </button>
               <button
                 className="primary"
-                disabled={!pedido.valor.trim()}
+                disabled={!pedido.vazioOk && !pedido.valor.trim()}
                 onClick={() => {
                   pedido.responder(pedido.valor);
                   setPedido(null);
@@ -4206,6 +4339,7 @@ function ModList({
   onOpenModPage,
   onReinstall,
   onLinkModPage,
+  onSetVersion,
   onClearLink,
   onRenameStart,
   onRenameCancel,
@@ -4240,6 +4374,7 @@ function ModList({
   onOpenModPage: (modId: number) => void;
   onReinstall: (mod: ModInfo) => void;
   onLinkModPage: (node: ModTreeNode) => void;
+  onSetVersion: (node: ModTreeNode) => void;
   onClearLink: (node: ModTreeNode) => void;
   onRenameStart: (mod: ModInfo) => void;
   onRenameCancel: () => void;
@@ -4393,11 +4528,16 @@ function ModList({
                   </span>
                 )}
                 {mod.sptCompatibility === "incompatible" && (
+                  // Mod de servidor: o servidor do SPT 4 confere essa faixa ao subir e,
+                  // se UM mod não aceita a versão, não carrega NENHUM (ModValidator).
+                  // Por isso o selo dele é mais forte que o de um mod de client.
                   <span
-                    className="meta-chip forge-chip-incompatible"
-                    title={t("modlist.sptIncompatibleTitle", { declared: mod.sptVersion ?? "" })}
+                    className={`meta-chip forge-chip-incompatible ${mod.type === "server" ? "spt-blocks-server" : ""}`}
+                    title={t(mod.type === "server" ? "modlist.sptIncompatibleServerTitle" : "modlist.sptIncompatibleTitle", {
+                      declared: mod.sptVersion ?? ""
+                    })}
                   >
-                    {t("modlist.sptIncompatible")}
+                    {t(mod.type === "server" ? "modlist.sptIncompatibleServer" : "modlist.sptIncompatible")}
                   </span>
                 )}
                 {!node.single && (
@@ -4485,6 +4625,9 @@ function ModList({
                   )}
                   <button onClick={() => { onLinkModPage(node); onSetOpenMenuKey(null); }} title={t("modlist.linkModPageTitle")}>
                     {mod.forgeLinkManual ? t("modlist.changeLink") : t("modlist.linkModPage")}
+                  </button>
+                  <button onClick={() => { onSetVersion(node); onSetOpenMenuKey(null); }} title={t("modlist.setVersionTitle")}>
+                    {t("modlist.setVersion")}
                   </button>
                   {node.parts.some((x) => x.forgeLinkManual || x.versionManual) && (
                     <button onClick={() => { onClearLink(node); onSetOpenMenuKey(null); }}>{t("modlist.clearLink")}</button>

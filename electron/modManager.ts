@@ -4,6 +4,7 @@ import { QueueError, type QueueTask } from "./downloadQueue";
 import path from "path";
 import { readExeProductVersion } from "./peVersion";
 import { httpFetch } from "./http";
+import { satisfaz, quaseSatisfaz } from "./semver";
 import { DEFAULT_SOURCE_KEY, getSourceByKey, type ModSource } from "./sources";
 import AdmZip from "adm-zip";
 import Seven from "node-7z";
@@ -1183,6 +1184,14 @@ function saveRegistry(sptPath: string, entries: RegistryEntry[]) {
 }
 
 function addToRegistry(sptPath: string, entry: RegistryEntry) {
+  // Instalado pelo catálogo com versão conhecida: a versão informada à mão
+  // ("Informar versão" / "Vincular à página do mod") deixa de valer. Ela ganha
+  // de tudo no scan, então sem isto o mod atualizado continuava aparecendo na
+  // versão velha e a checagem oferecia a mesma atualização pra sempre (relato
+  // do raydenx). O vínculo com a página continua.
+  if (entry.source === "archive-install" && entry.forgeVersion) {
+    esquecerVersaoManual(sptPath, nomeOriginalDaPasta(entry.id, entry.type));
+  }
   const reg = loadRegistry(sptPath);
   // A identidade de uma entrada é id + tipo, não só o id: um pacote pode instalar uma
   // parte servidor e uma cliente com o MESMO nome de pasta (o Wedge faz isso). Filtrar
@@ -1362,44 +1371,11 @@ export function checkSptCompatibility(
   modConstraint: string | undefined,
   instanceVersion: string | undefined
 ): "compatible" | "incompatible" | "unknown" {
-  if (!modConstraint?.trim() || !instanceVersion?.trim()) return "unknown";
-
-  const parse = (v: string) =>
-    v
-      .trim()
-      .replace(/^[~^>=<\s]+/, "")
-      .replace(/^v/i, "")
-      .split(".")
-      .map((n) => parseInt(n, 10))
-      .filter((n) => !Number.isNaN(n));
-
-  const wanted = parse(modConstraint);
-  const actual = parse(instanceVersion);
-  if (wanted.length === 0 || actual.length === 0) return "unknown";
-
-  const operator = modConstraint.trim().startsWith("~")
-    ? "tilde"
-    : modConstraint.trim().startsWith("^")
-      ? "caret"
-      : modConstraint.trim().startsWith(">")
-        ? "atLeast"
-        : "exact";
-
-  // "^4.0" aceita qualquer 4.x; "~4.0.0" aceita qualquer 4.0.x; ">=4.0" aceita daí pra cima.
-  if (operator === "atLeast") {
-    for (let i = 0; i < Math.max(wanted.length, actual.length); i++) {
-      const a = actual[i] ?? 0;
-      const w = wanted[i] ?? 0;
-      if (a !== w) return a > w ? "compatible" : "incompatible";
-    }
-    return "compatible";
-  }
-
-  const precision = operator === "caret" ? 1 : Math.min(wanted.length, operator === "tilde" ? 2 : wanted.length);
-  for (let i = 0; i < precision; i++) {
-    if ((actual[i] ?? 0) !== (wanted[i] ?? 0)) return "incompatible";
-  }
-  return "compatible";
+  // Mesma regra do servidor do SPT (node-semver): ver semver.ts. A versão
+  // anterior lia só o primeiro pedaço da faixa e aprovava ">=4.0.0 <4.1.0"
+  // no 4.1.6.
+  const r = satisfaz(modConstraint, instanceVersion);
+  return r === null ? "unknown" : r ? "compatible" : "incompatible";
 }
 
 export function detectConflicts(clientRoot: string, serverRoot: string): ConflictReport {
@@ -2829,6 +2805,10 @@ export interface ForgeUpdateItem {
    * aceita. Vem pronto da fonte (blocking_mods); o app só ignorava o campo.
    */
   blockingMods?: BlockingMod[];
+  /** Só em incompatível: a faixa de SPT que a versão instalada declara na fonte. */
+  declaredSpt?: string;
+  /** Só em incompatível: serve noutro 4.1.x, só não neste (ex.: declara 4.1.5, instância 4.1.6). */
+  nearMiss?: boolean;
 }
 
 export interface BlockingMod {
@@ -3796,6 +3776,39 @@ export async function setManualForgeMatch(
   return { success: true, message: `Linked to "${achado.name}".`, modName: achado.name };
 }
 
+/** Nome que o scan usa como chave do cache (pasta sem prefixo de ordem, dll sem extensão). */
+export function nomeOriginalDaPasta(id: string, type: ModType): string {
+  if (type === "server") return stripLoadOrderPrefix(id).cleanName;
+  return id.replace(/\.dll$/i, "");
+}
+
+/** Tira só a versão informada à mão; o vínculo com a página fica. */
+export function esquecerVersaoManual(root: string, folderName: string): void {
+  try {
+    const cache = loadForgeMatchCache(root);
+    if (!cache[folderName]?.version) return;
+    delete cache[folderName].version;
+    saveForgeMatchCache(root, cache);
+  } catch {
+    // é anotação: falhar aqui não derruba a instalação
+  }
+}
+
+/**
+ * Só a versão instalada, sem mexer no vínculo com a página (pedido do raydenx:
+ * mod que o app já reconhece certo, mas que não informa a versão). Vazio apaga.
+ */
+export function setManualVersion(root: string, folderName: string, versao: string): { success: boolean; message: string } {
+  const v = versao.trim().slice(0, 64);
+  const cache = loadForgeMatchCache(root);
+  const entrada = cache[folderName] ?? { ids: {} };
+  if (v) entrada.version = v;
+  else delete entrada.version;
+  cache[folderName] = entrada;
+  saveForgeMatchCache(root, cache);
+  return { success: true, message: v ? `Installed version set to ${v}.` : "Installed version cleared." };
+}
+
 /** Desfaz o vínculo manual (e a versão informada) desta pasta. */
 export function clearManualForgeMatch(root: string, folderName: string): void {
   const cache = loadForgeMatchCache(root);
@@ -3872,6 +3885,44 @@ export function paraBloqueadores(
     });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Acrescenta aos incompatíveis a faixa de SPT que a versão instalada declara,
+ * e se ela serve noutro patch do mesmo 4.1 (pedido do Дмитрий: o UnityToolkit
+ * declara "4.1.5" exato e aparecia como incompatível no 4.1.6, sem dizer por
+ * quê). Uma consulta por até 50 mods; sem rede, devolve a lista como veio.
+ */
+async function comFaixaDeclarada(itens: ForgeUpdateItem[], sptVersion: string): Promise<ForgeUpdateItem[]> {
+  const ids = [...new Set(itens.map((i) => i.modId).filter((id): id is number => id !== undefined))].map(String);
+  if (ids.length === 0) return itens;
+  const faixaPorMod = new Map<string, Map<string, string>>();
+  try {
+    const budget = newForgeBudget(ids.length);
+    for (const fatia of fatiarPorTamanho(ids, 1500, 50)) {
+      const url = new URL(`${activeSource.apiBase}/mods`);
+      url.searchParams.set("filter[id]", fatia.join(","));
+      url.searchParams.set("include", "versions");
+      url.searchParams.set("per_page", "50");
+      const json = await forgeFetchJson(url.toString(), budget);
+      for (const mod of Array.isArray(json?.data) ? json.data : []) {
+        const porVersao = new Map<string, string>();
+        for (const v of Array.isArray(mod?.versions) ? mod.versions : []) {
+          if (typeof v?.version === "string" && typeof v?.spt_version_constraint === "string") {
+            porVersao.set(v.version, v.spt_version_constraint);
+          }
+        }
+        faixaPorMod.set(String(mod?.id), porVersao);
+      }
+    }
+  } catch {
+    return itens;
+  }
+  return itens.map((i) => {
+    const faixa = i.modId !== undefined && i.currentVersion ? faixaPorMod.get(String(i.modId))?.get(i.currentVersion) : undefined;
+    if (!faixa) return i;
+    return { ...i, declaredSpt: faixa, nearMiss: quaseSatisfaz(faixa, sptVersion) };
+  });
 }
 
 /**
@@ -4675,12 +4726,15 @@ export async function checkForgeUpdates(
       currentVersion: u.version,
       reason: "up_to_date"
     })),
-    incompatible: (primeiro.incompatible_with_spt || []).map((i: any) => ({
-      name: nameFor(i.guid, i.name),
-      currentVersion: i.version,
-      reason: i.reason,
-      modId: numeroOuNada(i.mod_id)
-    })),
+    incompatible: await comFaixaDeclarada(
+      (primeiro.incompatible_with_spt || []).map((i: any) => ({
+        name: nameFor(i.guid, i.name),
+        currentVersion: i.version,
+        reason: i.reason,
+        modId: numeroOuNada(i.mod_id)
+      })),
+      primeiro.spt_version || trimmedVersion
+    ),
     infoOnly,
     unmatched,
     skippedByBudget

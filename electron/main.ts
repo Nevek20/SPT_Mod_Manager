@@ -50,6 +50,7 @@ import {
   findSptExecutable,
   setManualForgeMatch,
   clearManualForgeMatch,
+  setManualVersion,
   fetchModFika,
   resolveVersionDownloadLink,
   SEVEN_ZIP_MISSING_MESSAGE
@@ -68,7 +69,9 @@ const store = new Store<InstanceConfig>({
     forgeCheckedAt: null,
     modSourceKey: null,
     downloadCacheGB: CACHE_DEFAULT_GB,
-    maxDownloads: 1
+    maxDownloads: 1,
+    hardwareAcceleration: true,
+    gpuAutoDisabled: false
   }
 });
 
@@ -85,6 +88,26 @@ function limiteCacheGB(): number {
 // Cache dos downloads na pasta de dados do app, não na do SPT: vale pra todas as
 // instâncias e sobrevive a reinstalar o SPT.
 configureDownloadCache(path.join(app.getPath("userData"), "download-cache"), limiteCacheGB() * GB);
+
+// Aceleração de hardware. Janela PRETA no Electron costuma ser a placa de vídeo
+// (driver, overlay, placa híbrida de notebook): o processo de GPU cai e nada mais
+// é desenhado. Foi um dos relatos do ronpo. Desligada, o Chromium desenha pelo
+// processador: um pouco mais lento, mas aparece. Tem que ser antes do app ficar
+// pronto, então vale a partir da próxima abertura.
+const aceleracaoNaAbertura = store.get("hardwareAcceleration") !== false;
+if (!aceleracaoNaAbertura) app.disableHardwareAcceleration();
+
+// O processo da placa de vídeo caiu: desliga a aceleração e reabre uma vez. Sem
+// isso a janela fica preta e reinstalar não adianta, porque a causa é o driver.
+app.on("child-process-gone", (_evento, detalhes) => {
+  if (detalhes.type !== "GPU" || detalhes.reason === "clean-exit") return;
+  if (store.get("hardwareAcceleration") === false) return; // já desligada: não entra em loop
+  if (instalandoAgora()) return; // não interrompe uma instalação; vale na próxima abertura
+  store.set("hardwareAcceleration", false);
+  store.set("gpuAutoDisabled", true);
+  app.relaunch();
+  app.exit(0);
+});
 
 // Rolagem suave da rodinha, SEMPRE ligada. O Chromium tem isso pronto, mas o
 // Electron no Windows rola "aos trancos" sem o switch, que só vale se for ligado
@@ -171,6 +194,27 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+
+  // A interface caiu (falta de memória, travou): recarrega em vez de deixar a
+  // janela vazia. Mais de duas quedas num minuto é problema que recarregar não
+  // resolve; aí explica em vez de ficar num laço.
+  const quedas: number[] = [];
+  mainWindow.webContents.on("render-process-gone", (_evento, detalhes) => {
+    if (detalhes.reason === "clean-exit") return;
+    const agora = Date.now();
+    while (quedas.length && agora - quedas[0] > 60_000) quedas.shift();
+    quedas.push(agora);
+    if (quedas.length <= 2) {
+      mainWindow?.reload();
+      return;
+    }
+    void dialog.showMessageBox({
+      type: "error",
+      title: "SPT Mod Manager",
+      message: "The SPT Mod Manager window keeps crashing.",
+      detail: `Reason: ${detalhes.reason} (code ${detalhes.exitCode}). If the window is black, turn off hardware acceleration in Settings, or start the app once with the --disable-gpu option.`
+    });
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -473,6 +517,34 @@ ipcMain.handle("open-forge-mod-page", async (_event, modId: number, secao?: unkn
 });
 
 ipcMain.handle("check-app-update", () => checkAppUpdate(app.getVersion()));
+
+// --- IPC: aceleração de hardware (janela preta) ---
+ipcMain.handle("get-hardware-acceleration", () => ({
+  enabled: store.get("hardwareAcceleration") !== false,
+  // O que vale AGORA pode diferir do salvo: a troca só vale ao reabrir.
+  active: aceleracaoNaAbertura,
+  autoDisabled: store.get("gpuAutoDisabled") === true
+}));
+
+ipcMain.handle("set-hardware-acceleration", (_evento, ligada: unknown) => {
+  if (typeof ligada !== "boolean") return { success: false };
+  store.set("hardwareAcceleration", ligada);
+  store.set("gpuAutoDisabled", false);
+  return { success: true };
+});
+
+ipcMain.handle("ack-gpu-notice", () => {
+  store.set("gpuAutoDisabled", false);
+});
+
+// Reabre o app (pra uma troca de aceleração valer). Nunca no meio de uma
+// instalação: o mod ficaria pela metade.
+ipcMain.handle("relaunch-app", () => {
+  if (instalandoAgora()) return { success: false, message: "An installation is still running. Try again when it finishes." };
+  app.relaunch();
+  app.exit(0);
+  return { success: true };
+});
 
 // Dados pro relato de erro. O renderer não tem acesso a nada disso (sandbox), e
 // são justamente as três perguntas que todo relato precisa responder: qual versão
@@ -813,6 +885,14 @@ ipcMain.handle("set-manual-forge-match", async (_event, folderName: unknown, ref
   } catch (err) {
     return { success: false, message: err instanceof Error ? err.message : String(err) };
   }
+});
+
+ipcMain.handle("set-manual-version", (_event, folderName: unknown, versao: unknown) => {
+  const sptPath = store.get("sptPath");
+  if (!sptPath) return { success: false, message: "No SPT instance configured." };
+  if (typeof folderName !== "string" || !folderName || folderName.length > 260) return { success: false, message: "Invalid mod." };
+  if (typeof versao !== "string" || versao.length > 64) return { success: false, message: "Invalid mod." };
+  return setManualVersion(sptPath, folderName, versao);
 });
 
 ipcMain.handle("clear-manual-forge-match", (_event, folderName: unknown) => {

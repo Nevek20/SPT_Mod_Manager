@@ -104,6 +104,10 @@ export interface ForgeUpdateItem {
   modId?: number;
   /** Só em atualização bloqueada: quem trava e o que aceita. */
   blockingMods?: { name: string; modId?: number; version?: string; constraint?: string }[];
+  /** Só em incompatível: a faixa de SPT que a versão instalada declara. */
+  declaredSpt?: string;
+  /** Só em incompatível: serve noutro patch do mesmo 4.1 (ex.: declara 4.1.5). */
+  nearMiss?: boolean;
 }
 
 export interface DownloadQueueJob {
@@ -321,12 +325,19 @@ export interface ModManagerAPI {
   controlDownload: (action: "pause" | "resume" | "cancel" | "up" | "down", jobId: string) => Promise<boolean>;
   /** Cancela o que está esperando (na fila ou pausado). Devolve quantos. */
   cancelWaitingDownloads: () => Promise<number>;
+  /** enabled = escolha salva; active = o que vale agora (muda só ao reabrir). */
+  getHardwareAcceleration: () => Promise<{ enabled: boolean; active: boolean; autoDisabled: boolean }>;
+  setHardwareAcceleration: (ligada: boolean) => Promise<{ success: boolean }>;
+  ackGpuNotice: () => Promise<void>;
+  relaunchApp: () => Promise<{ success: boolean; message?: string }>;
   /** Quais executáveis existem nesta instância. */
   getLaunchTargets: () => Promise<{ server: boolean; launcher: boolean }>;
   launchSpt: (alvo: "server" | "launcher") => Promise<{ success: boolean; message: string }>;
   /** Vincula o mod (pelo nome original da pasta) a uma página do catálogo; versão opcional. */
   setManualForgeMatch: (folderName: string, referencia: string, versao?: string) => Promise<{ success: boolean; message: string; modName?: string }>;
   clearManualForgeMatch: (folderName: string) => Promise<{ success: boolean }>;
+  /** Só a versão instalada (sem vínculo com a página). Texto vazio apaga. */
+  setManualVersion: (folderName: string, versao: string) => Promise<{ success: boolean; message: string }>;
   /** id do catálogo -> compatível com Fika (null = a página não informa / não existe). */
   fetchModFika: (ids: number[]) => Promise<Record<string, boolean | null>>;
   /** Link de download de uma versão específica (pra forçar uma atualização bloqueada). */

@@ -44,6 +44,8 @@ export interface InstanceConfig {
   modSourceKey: string | null; // fonte de mods escolhida; null = padrão
   downloadCacheGB: number; // limite do cache de downloads, 0 = desligado
   maxDownloads: number; // downloads simultâneos na fila (1 a 3)
+  hardwareAcceleration: boolean; // false = desenha sem a placa de vídeo (janela preta, ver main.ts)
+  gpuAutoDisabled: boolean; // o app desligou sozinho depois de a placa de vídeo travar; avisa uma vez
 }
 
 export interface RegistryEntry {
